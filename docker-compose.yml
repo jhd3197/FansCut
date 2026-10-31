@@ -1,0 +1,27 @@
+name: fanscut
+
+# 1. mkdir -p config data output && chown 1000:1000 config data output
+# 2. cp config.docker.example.yaml config/config.yaml   (then edit it)
+# 3. point the /media volume below at your library
+# 4. docker compose up -d --build, then open http://localhost:6464
+
+services:
+  fanscut:
+    build: .
+    image: fanscut:latest
+    container_name: fanscut
+    restart: unless-stopped
+    ports:
+      - "6464:6464"
+    volumes:
+      # config.yaml lives here (see config.docker.example.yaml)
+      - ./config:/config
+      # SQLite db, filler snapshot, render scratch space
+      - ./data:/data
+      # your library, read-only: FansCut only reads from it
+      - /path/to/your/media:/media:ro
+      # finished cuts are written here
+      - ./output:/output
+    extra_hosts:
+      # reach Sonarr/Plex running on the Docker host as http://host.docker.internal:<port>
+      - "host.docker.internal:host-gateway"
