@@ -11,6 +11,7 @@ services:
     image: fanscut:latest
     container_name: fanscut
     restart: unless-stopped
+    # No auth in the app: keep this on a trusted network or behind a reverse proxy.
     ports:
       - "6464:6464"
     volumes:
@@ -22,6 +23,17 @@ services:
       - /path/to/your/media:/media:ro
       # finished cuts are written here
       - ./output:/output
+    environment:
+      # optional; override config.yaml and are never written back to it
+      # (set them in .env, your shell, or `doppler run -- docker compose up -d`)
+      FANSCUT_SONARR_URL: ${FANSCUT_SONARR_URL:-}
+      FANSCUT_SONARR_API_KEY: ${FANSCUT_SONARR_API_KEY:-}
+      FANSCUT_PLEX_URL: ${FANSCUT_PLEX_URL:-}
+      FANSCUT_PLEX_TOKEN: ${FANSCUT_PLEX_TOKEN:-}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     extra_hosts:
       # reach Sonarr/Plex running on the Docker host as http://host.docker.internal:<port>
       - "host.docker.internal:host-gateway"

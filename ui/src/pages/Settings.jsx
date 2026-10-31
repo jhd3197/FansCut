@@ -36,7 +36,9 @@ export function Settings() {
   };
   const text = (path, label, props = {}) => {
     const v = path.split('.').reduce((o, k) => o?.[k], cfg);
-    return <label className="field">{label}<input className="input" value={v ?? ''} onChange={set(path)} {...props} /></label>;
+    const locked = cfg.env_locked?.includes(path);
+    return <label className="field">{label}<input className="input" value={locked ? '' : v ?? ''} onChange={set(path)} {...props}
+      {...(locked && { disabled: true, placeholder: 'set by environment' })} /></label>;
   };
   const select = (path, label, options) => {
     const v = path.split('.').reduce((o, k) => o?.[k], cfg);

@@ -81,3 +81,12 @@ def test_connection_error_and_bad_json():
     responses.add(responses.GET, f"{S}/html", body="<html>", status=200)
     with pytest.raises(ClientError, match="non-JSON"):
         BaseClient(S)._get("/html")
+
+
+@responses.activate
+def test_errors_never_contain_credentials():
+    url = "http://plex.test:32400/"
+    responses.add(responses.GET, url, body=requests.ConnectionError(f"failed {url}?X-Plex-Token=sekrit"))
+    with pytest.raises(ClientError) as ei:
+        PlexClient("http://plex.test:32400", "sekrit").identity()
+    assert "sekrit" not in str(ei.value)

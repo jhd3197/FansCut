@@ -29,7 +29,7 @@ def get_doctor(core: CoreDep) -> dict[str, Any]:
 
 @router.get("/api/settings", tags=["settings"])
 def get_settings(core: CoreDep) -> dict[str, Any]:
-    return config.masked(core.cfg)
+    return config.masked(core.cfg) | {"env_locked": config.env_locked()}
 
 
 @router.put("/api/settings", tags=["settings"])
@@ -41,7 +41,7 @@ def put_settings(core: CoreDep, body: dict[str, Any], request: Request) -> dict[
     except OSError as exc:
         raise FansCutError(f"could not write {path}: {exc.strerror}") from exc
     core.apply_config(new)
-    return config.masked(new)
+    return config.masked(new) | {"env_locked": config.env_locked()}
 
 
 class TestBody(BaseModel):
