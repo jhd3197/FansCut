@@ -8,6 +8,7 @@ on load and never written back by save().
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 from typing import Any, Literal
@@ -217,10 +218,8 @@ def save(cfg: Config, path: Path | str) -> None:
                 src = src.get(k) if isinstance(src, dict) else None
             d[leaf] = src if isinstance(src, str) else ""
     p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    try:
+    with contextlib.suppress(OSError):
         p.chmod(0o600)  # may hold secrets; best effort, fails quietly on Windows
-    except OSError:
-        pass
 
 
 def masked(cfg: Config) -> dict[str, Any]:
