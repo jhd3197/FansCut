@@ -1,0 +1,17 @@
+{
+  "shows": [
+    {
+      "title": "Harbor Lights",
+      "mal_id": 900001,
+      "anilist_id": 800001,
+      "episodes": [
+        {"episode": 1, "title": "The Lighthouse Keeper", "type": "manga-canon", "aired_date": "2020-01-05"},
+        {"episode": 2, "title": "Kaito's Day Off", "type": "filler", "aired_date": "2020-01-12"},
+        {"episode": 3, "title": "Mina Sets Sail", "type": "mixed-manga", "aired_date": "2020-01-19"},
+        {"episode": 4, "title": "The Storm", "type": "anime-canon", "aired_date": "2020-01-26"},
+        {"episode": 5, "title": "Beach Episode", "type": "filler", "aired_date": "2020-02-02"},
+        {"episode": 6, "title": "Ren's Secret", "type": "manga-canon", "aired_date": "2020-02-09"}
+      ]
+    }
+  ]
+}
