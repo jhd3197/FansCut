@@ -1,5 +1,5 @@
 # FansCut: UI build stage, then a slim Python image with ffmpeg.
-FROM node:22-slim AS ui
+FROM node:25-slim AS ui
 WORKDIR /src/ui
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci --no-audit --no-fund
