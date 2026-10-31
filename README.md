@@ -1,5 +1,7 @@
 # FansCut
 
+[![ci](https://github.com/jhd3197/FansCut/actions/workflows/ci.yml/badge.svg)](https://github.com/jhd3197/FansCut/actions/workflows/ci.yml)
+
 FansCut makes "fan cuts" of shows you already own: skip the filler, keep the
 canon, trim recaps, openings and endings, and render what's left as one file
 with a chapter per episode. It's a small self-hosted web app that sits next to
@@ -70,8 +72,8 @@ There's also a small CLI: `fanscut serve | scan | doctor | fillers refresh`.
 
 Copy `config.example.yaml` to `config.yaml` (or set `FANSCUT_CONFIG`). Every key
 is optional. Most of it can also be changed on the Settings page, which writes
-the same file. Secrets (Sonarr key, Plex token) live in that file, so keep it
-private. The settings API masks them.
+the same file. Secrets (Sonarr key, Plex token) can live in that file or come
+from the environment, see [Secrets](#secrets).
 
 | Section | What it's for |
 | --- | --- |
@@ -86,6 +88,38 @@ private. The settings API masks them.
 
 Folder mode expects one subfolder per series, with files named like
 `Harbor Lights - S01E03.mkv` (or `1x03`, or an absolute number).
+
+## Secrets
+
+Only four values are secret or environment-specific: the Sonarr URL and API
+key, and the Plex URL and token. You have three ways to provide them:
+
+1. **`config.yaml`**: simplest. Keep it private; FansCut saves it with mode 0600.
+2. **Environment variables**: `FANSCUT_SONARR_URL`, `FANSCUT_SONARR_API_KEY`,
+   `FANSCUT_PLEX_URL`, `FANSCUT_PLEX_TOKEN`. A non-empty variable beats
+   `config.yaml`, and is never written back to it, even when you save on the
+   Settings page (those fields show "set by environment"). See `.env.example`.
+3. **`*_FILE` variables**: the same names with a `_FILE` suffix
+   (`FANSCUT_PLEX_TOKEN_FILE=/run/secrets/plex_token`) point at a file whose
+   trimmed contents are the value. This is the Docker/Compose secrets style. If
+   both `NAME` and `NAME_FILE` are set, `NAME` wins.
+
+### Doppler
+
+Any secret manager that can inject environment variables works; with
+[Doppler](https://www.doppler.com/) create the four `FANSCUT_*` secrets above
+in a project and config of your choosing, then:
+
+```bash
+doppler setup
+doppler run -- ./dev.sh serve
+doppler run -- docker compose up -d
+```
+
+`docker-compose.yml` passes the variables through to the container.
+
+The settings API masks secrets (`***`), and FansCut never logs them or puts
+them in error messages.
 
 ## How filler data works
 
@@ -185,6 +219,15 @@ season + episode number (episodes it can't find are reported and skipped).
   catalogue entry. Check the match, especially for shows with several seasons
   in one catalogue entry.
 - The Docker image is written but I haven't built it on every platform.
+
+## Security
+
+FansCut has no login, so keep it on a trusted network. How to report a problem
+is in [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
