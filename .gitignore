@@ -1,16 +1,27 @@
 *.db
 *.egg-info/
 *.pyc
-.env
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
 .venv/
 __pycache__/
-config.yaml
-config/
 data/
 dist/
 node_modules/
+
+# local config and secrets
+.env
+.env.*
+!.env.example
+config.yaml
+config/
+*.pem
+*.key
+client_secret*.json
+.doppler/
+
+# scratch
 output/
 work/
+docs/plans/
