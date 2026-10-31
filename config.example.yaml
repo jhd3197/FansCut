@@ -1,0 +1,63 @@
+# FansCut config. Copy to config.yaml (next to where you run it) or point
+# FANSCUT_CONFIG at the file. Every key is optional; these are the defaults
+# unless a comment says otherwise.
+
+server:
+  host: 127.0.0.1        # use 0.0.0.0 inside a container
+  port: 6464
+
+paths:
+  data_dir: ./data       # SQLite db, filler snapshot, scratch space
+  output_dir: ./output   # finished cuts land here
+
+library:
+  # Any of these can be on at once; a source is "on" when its url/path is set.
+  sonarr:
+    url: ""              # e.g. http://sonarr:8989
+    api_key: ""
+  plex:
+    url: ""              # e.g. http://plex:32400
+    token: ""
+    sections: []         # section keys or titles; empty = every show library
+  folder:
+    path: ""             # plain mode: one subfolder per series, no Sonarr needed
+  # Sonarr/Plex report paths as they see them. If FansCut sees the same files
+  # somewhere else, map the prefix (longest match wins).
+  path_mappings: []
+  #  - remote: /tv
+  #    local: /media/tv
+
+catalogues:
+  offline: false         # true = never call AniList/Jikan/GitHub, use caches only
+  cache_days: 14
+
+fillers:
+  dir: ""                # default <data_dir>/fillers; every *.json in it is read
+  url: https://raw.githubusercontent.com/AniraTeam/AniFiller/main/anifiller.min.json
+  use_jikan: true        # fall back to Jikan filler/recap flags when AniFiller has no entry
+
+fingerprint:             # OP/ED/recap detection
+  sample_rate: 8000
+  head_minutes: 5        # audio analysed from the start of each episode
+  tail_minutes: 5        # ...and from the end
+  min_segment_seconds: 15
+  max_segment_seconds: 180
+  threshold: 0.75        # frame similarity counted as "the same audio"
+
+ffmpeg:
+  binary: ffmpeg
+  probe_binary: ffprobe
+  nvenc: false           # true = h264_nvenc instead of libx264 when re-encoding
+  crf: 20
+  preset: medium         # x264 preset
+  audio_bitrate: 192k
+  container: mkv         # mkv | mp4
+
+cut:                     # defaults for every series; each series can override
+  preset: canon_only     # canon_only | canon_mixed | everything | custom
+  unknown_policy: keep   # episodes with no label: keep | skip
+  keep_intro_first_episode: true
+  pad: 0.5               # seconds kept around every trimmed edge
+  merge_gap: 1.0         # pieces closer than this (same file) are joined
+  min_segment: 5.0       # shorter pieces are dropped
+  transition: none       # none | fade (fade re-encodes)
