@@ -19,6 +19,7 @@ export function parseTime(text) {
 
 export function fmtDuration(sec) {
   if (sec == null) return '–';
+  if (sec < 120) return `${Math.round(sec)}s`;
   const m = Math.round(sec / 60);
   return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`;
 }

@@ -52,3 +52,10 @@ describe('time formatting', () => {
     expect(parseTime('')).toBeNull();
   });
 });
+
+it('formats runtimes, short ones in seconds', async () => {
+  const { fmtDuration } = await import('./time.js');
+  expect(fmtDuration(45)).toBe('45s');
+  expect(fmtDuration(1440)).toBe('24m');
+  expect(fmtDuration(5400)).toBe('1h 30m');
+});
