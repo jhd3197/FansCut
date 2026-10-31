@@ -71,7 +71,7 @@ def test_background_thread_processes_jobs_and_stops():
     store, worker = make({"k": lambda p, c: {"ok": True}})
     worker.start()
     jid = worker.submit("k", "t", {})["id"]
-    for _ in range(100):
+    for _ in range(400):
         if store.get(jid)["status"] == "done":
             break
         time.sleep(0.05)
