@@ -5,8 +5,10 @@
 #   ./dev.sh serve          run the app (http://127.0.0.1:6464)
 #   ./dev.sh test           pytest, in parallel
 #   ./dev.sh lint           ruff + mypy
-#   ./dev.sh validate       everything CI runs: ruff, mypy, pytest, and the UI
-#                           lint/test/build when ui/ exists
+#   ./dev.sh ui             UI dev server with live reload (http://127.0.0.1:5464,
+#                           proxies /api to a running `./dev.sh serve`)
+#   ./dev.sh validate       everything CI runs: ruff, mypy, pytest, UI lint,
+#                           UI tests and the UI build
 #   ./dev.sh cli <args...>  pass through to the fanscut CLI
 #
 # Set FANSCUT_VENV to use a venv outside the repo.
@@ -56,19 +58,24 @@ case "$cmd" in
         step "ruff" "$PYTHON" -m ruff check .
         step "mypy" "$PYTHON" -m mypy fanscut/
         ;;
+    ui)
+        [ -d ui/node_modules ] || ui npm ci
+        ui npm run dev -- "$@"
+        ;;
     validate)
         step "ruff" "$PYTHON" -m ruff check .
         step "mypy" "$PYTHON" -m mypy fanscut/
         step "pytest" "$PYTHON" -m pytest -q -n auto
-        ui npm run lint
-        ui npm test
-        ui npm run build
+        [ -d ui/node_modules ] || step "npm ci" ui npm ci
+        step "ui lint" ui npm run lint
+        step "ui test" ui npm test
+        step "ui build" ui npm run build
         printf '\nall good\n'
         ;;
     cli)
         exec "$PYTHON" -m fanscut "$@"
         ;;
     *)
-        sed -n '2,13p' "$0"
+        sed -n '2,15p' "$0"
         ;;
 esac

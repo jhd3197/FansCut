@@ -8,8 +8,8 @@ Run what CI runs, from the repo root:
 ./dev.sh validate
 ```
 
-It runs `ruff check .`, `mypy fanscut/`, `pytest`, and (once `ui/` exists) the
-UI lint, unit tests and build. Commit when it ends with `all good`. Checking
+It runs `ruff check .`, `mypy fanscut/`, `pytest`, and the UI lint, unit tests
+(Vitest) and build. Commit when it ends with `all good`. Checking
 only the files you touched is not enough: CI checks the whole package, and mypy
 catches what ruff does not.
 
@@ -44,5 +44,6 @@ fanscut/        the Python package
   jobs.py       SQLite job queue and worker thread
   core.py       ties it together; routes/ stay thin
   server.py     FastAPI app, docs at /docs
+ui/             React + Vite web UI (npm run dev / lint / test / build)
 tests/
 ```
