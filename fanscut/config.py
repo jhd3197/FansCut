@@ -1,7 +1,9 @@
 """config.yaml schema and loading.
 
 Everything has a default, so a missing or empty file still boots. Secrets
-(Sonarr key, Plex token) live in the same file; the settings API masks them.
+(Sonarr key, Plex token) can live in the file or come from the environment
+(see ENV_FIELDS); the settings API masks them. Environment values are applied
+on load and never written back by save().
 """
 
 from __future__ import annotations
@@ -16,6 +18,15 @@ from pydantic import BaseModel, Field, ValidationError
 from .errors import ConfigError
 
 MASK = "***"
+
+# env var -> dotted config path. NAME_FILE holds a path to a file with the value
+# (Docker secrets); if both NAME and NAME_FILE are set, NAME wins.
+ENV_FIELDS = {
+    "FANSCUT_SONARR_URL": "library.sonarr.url",
+    "FANSCUT_SONARR_API_KEY": "library.sonarr.api_key",
+    "FANSCUT_PLEX_URL": "library.plex.url",
+    "FANSCUT_PLEX_TOKEN": "library.plex.token",
+}
 
 
 class ServerCfg(BaseModel):
@@ -132,6 +143,29 @@ def default_path() -> Path:
     return Path("config.yaml")
 
 
+def env_overrides() -> dict[str, str]:
+    """Dotted config path -> value for every field set through the environment."""
+    out: dict[str, str] = {}
+    for name, path in ENV_FIELDS.items():
+        val = os.environ.get(name, "").strip()
+        file = os.environ.get(f"{name}_FILE", "").strip()
+        if not val and file:
+            try:
+                val = Path(file).read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise ConfigError(f"{name}_FILE: cannot read {file}: {exc.strerror}") from exc
+        if val:
+            out[path] = val
+    return out
+
+
+def _dig(d: dict[str, Any], path: str) -> tuple[dict[str, Any], str]:
+    *parents, leaf = path.split(".")
+    for k in parents:
+        d = d.setdefault(k, {})
+    return d, leaf
+
+
 def parse(raw: dict[str, Any] | None) -> Config:
     try:
         return Config.model_validate(raw or {})
@@ -141,21 +175,52 @@ def parse(raw: dict[str, Any] | None) -> Config:
 
 def load(path: Path | str | None = None) -> Config:
     p = Path(path) if path else default_path()
-    if not p.is_file():
-        return Config()
-    try:
-        raw = yaml.safe_load(p.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        raise ConfigError(f"{p}: {exc}") from exc
-    if raw is not None and not isinstance(raw, dict):
-        raise ConfigError(f"{p}: top level must be a mapping")
+    raw = _read_raw(p)
+    for path_, val in env_overrides().items():
+        d, leaf = _dig(raw, path_)
+        d[leaf] = val
     return parse(raw)
 
 
+def _read_raw(p: Path) -> dict[str, Any]:
+    if not p.is_file():
+        return {}
+    try:
+        raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        # str(exc) quotes the offending line, which may hold a secret
+        mark = getattr(exc, "problem_mark", None)
+        where = f" (line {mark.line + 1})" if mark else ""
+        problem = getattr(exc, "problem", None) or "parse error"
+        raise ConfigError(f"{p}: invalid YAML{where}: {problem}") from exc
+    if raw is not None and not isinstance(raw, dict):
+        raise ConfigError(f"{p}: top level must be a mapping")
+    return raw or {}
+
+
 def save(cfg: Config, path: Path | str) -> None:
+    """Write the config. Environment-provided values are not persisted: those
+    fields keep what the file already had (or empty)."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(yaml.safe_dump(cfg.model_dump(), sort_keys=False), encoding="utf-8")
+    data = cfg.model_dump()
+    env = env_overrides()
+    if env:
+        try:
+            old = _read_raw(p)
+        except ConfigError:
+            old = {}
+        for path_ in env:
+            d, leaf = _dig(data, path_)
+            src: Any = old
+            for k in path_.split("."):
+                src = src.get(k) if isinstance(src, dict) else None
+            d[leaf] = src if isinstance(src, str) else ""
+    p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    try:
+        p.chmod(0o600)  # may hold secrets; best effort, fails quietly on Windows
+    except OSError:
+        pass
 
 
 def masked(cfg: Config) -> dict[str, Any]:
@@ -165,6 +230,10 @@ def masked(cfg: Config) -> dict[str, Any]:
     if d["library"]["plex"]["token"]:
         d["library"]["plex"]["token"] = MASK
     return d
+
+
+def env_locked() -> list[str]:
+    return sorted(env_overrides())
 
 
 def merge_update(current: Config, incoming: dict[str, Any]) -> Config:
