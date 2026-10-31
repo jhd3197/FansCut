@@ -1,0 +1,7 @@
+# Runtime dependencies. Keep in sync with pyproject.toml.
+requests>=2.31
+PyYAML>=6.0
+fastapi>=0.110
+uvicorn>=0.27
+pydantic>=2
+numpy>=1.26

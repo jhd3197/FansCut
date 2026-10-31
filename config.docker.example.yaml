@@ -1,0 +1,35 @@
+# FansCut config for the container. Copy to ./config/config.yaml (mounted at
+# /config). The paths below match the volumes in docker-compose.yml. The full
+# list of options, with comments, is in config.example.yaml.
+
+server:
+  host: 0.0.0.0
+  port: 6464
+
+paths:
+  data_dir: /data
+  output_dir: /output
+
+library:
+  # Plain folder mode needs no Sonarr or Plex: one subfolder per series.
+  folder:
+    path: /media
+  # Or use Sonarr / Plex (any combination can be on at once):
+  sonarr:
+    url: ""              # e.g. http://host.docker.internal:8989
+    api_key: ""
+  plex:
+    url: ""              # e.g. http://host.docker.internal:32400
+    token: ""
+  # Sonarr and Plex report paths as they see them. If their /tv is this
+  # container's /media/tv, map it:
+  path_mappings: []
+  #  - remote: /tv
+  #    local: /media/tv
+
+catalogues:
+  offline: false         # true = never call AniList, Jikan or GitHub
+
+ffmpeg:
+  nvenc: false           # needs an NVIDIA runtime in the container
+  container: mkv
