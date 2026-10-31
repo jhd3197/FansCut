@@ -14,6 +14,36 @@ FansCut is a sibling of [Doblarr](https://github.com/jhd3197/Doblarr): same
 stack, same config style, same port convention. Doblarr dubs, FansCut cuts.
 They don't depend on each other.
 
+## Screenshots
+
+All of these use an invented show ("Harbor Lights") and generated test clips.
+
+![Episode table with filler labels, per-episode overrides and OP/ED/recap trims](docs/screenshots/02-episodes-filler-labels.png)
+
+*The episode table: filler labels from the snapshot, your overrides, the keep
+checkbox, and the OP/ED/recap ranges found by audio fingerprinting.*
+
+![Cut plan with a timeline of kept and trimmed parts per episode](docs/screenshots/03-cut-plan-timeline.png)
+
+*The cut plan: what's kept, what's trimmed, and how much time you save.*
+
+![Dry run showing the cut list and the exact ffmpeg command](docs/screenshots/04-dry-run.png)
+
+*A dry run shows the cut list and the exact ffmpeg command before anything renders.*
+
+![Library of series from a media folder](docs/screenshots/01-library.png)
+
+*The library: Sonarr, Plex and plain folders, matched to MAL / AniList.*
+
+![Jobs page with finished OP/ED detection and render jobs](docs/screenshots/05-jobs.png)
+
+*Detection and renders run as background jobs.*
+
+![Settings page](docs/screenshots/06-settings.png)
+
+*Settings: sources, path mapping, ffmpeg and cut defaults. Secrets can come
+from the environment instead; see [Secrets](#secrets).*
+
 ## What it does
 
 - **Library**: reads series from Sonarr, Plex, or a plain media folder (any mix
