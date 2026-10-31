@@ -72,3 +72,21 @@ def test_cli_doctor_scan_and_help(cfg, tmp_path, capsys):
 def test_module_entrypoint_prints_help():
     out = subprocess.run([sys.executable, "-m", "fanscut", "--help"], capture_output=True, text=True)
     assert out.returncode == 0 and "serve" in out.stdout
+
+
+def test_render_with_relative_media_path(cfg, tmp_path, monkeypatch):
+    root = tmp_path / "media" / "Harbor Lights"
+    root.mkdir(parents=True)
+    for n in (1, 2):
+        make_video(root / f"Harbor Lights - S01E{n:02d}.mkv", seconds=4)
+    monkeypatch.chdir(tmp_path)
+    cfg.library.folder.path = "./media"
+    cfg.paths.data_dir = "./data"
+    cfg.paths.output_dir = "./output"
+    cfg.catalogues.offline = True
+    with TestClient(create_app(cfg, tmp_path / "config.yaml", start_worker=False)) as c:
+        key = "folder:Harbor Lights"
+        job = c.post(f"/api/series/{key}/render", json={"mode": "copy"}).json()
+        c.app.state.core.worker.run_pending()
+        done = c.get(f"/api/jobs/{job['id']}").json()
+        assert done["status"] == "done", done["message"]

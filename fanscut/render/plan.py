@@ -8,6 +8,7 @@ re-encodes (libx264, or NVENC if configured), which is frame accurate.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -58,7 +59,8 @@ def unique_path(directory: Path, stem: str, ext: str) -> Path:
 
 
 def _concat_quote(path: str) -> str:
-    return "'" + path.replace("'", "'\\''") + "'"
+    # the demuxer resolves relative entries against the list file, not the cwd
+    return "'" + os.path.abspath(path).replace("'", "'\\''") + "'"
 
 
 def _meta_escape(text: str) -> str:
