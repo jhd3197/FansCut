@@ -103,3 +103,22 @@ def test_detect_recap_and_preview():
 def test_single_episode_finds_nothing():
     rng = np.random.default_rng(6)
     assert detect(clips_of([noise(rng, 100)]), FP) == [{}]
+
+
+def test_preview_after_ending_is_not_mistaken_for_a_recap():
+    rng = np.random.default_rng(8)
+    op, ed = theme(50, 30), theme(51, 25)
+    previews = [theme(60 + i, 15) for i in range(3)]  # the end of ep i shows the start of ep i+1
+    eps = []
+    for i in range(4):
+        start = [previews[i - 1]] if i > 0 else []
+        end = [previews[i]] if i < 3 else [noise(rng, 15)]
+        eps.append(np.concatenate([*start, noise(rng, 20), op, noise(rng, 150), ed, *end,
+                                   noise(rng, 5)]))
+    res = detect(clips_of(eps), FP)
+    for i in range(3):
+        s, e = res[i]["preview"]
+        dur = len(eps[i]) / SR
+        assert abs(s - (dur - 20)) < 1.5 and e >= dur - 5.5
+    for i in range(1, 4):
+        assert "recap" not in res[i]

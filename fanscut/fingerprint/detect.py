@@ -109,7 +109,11 @@ def detect(clips: list[EpisodeClips], fp: FingerprintCfg) -> list[dict[str, Rang
         ms = find_shared(clips[i].head, clips[i - 1].tail, fp.threshold, RECAP_MIN,
                          fp.max_segment_seconds)
         intro = out[i].get("intro")
-        ms = [m for m in ms if not intro or m.a_start < intro[0] + CLUSTER_TOL]
+        prev_outro, prev_shift = out[i - 1].get("outro"), clips[i - 1].tail_start
+        # Only story before the previous ending can be recapped; what follows that
+        # ending is a preview of this very episode, not a recap.
+        ms = [m for m in ms if (not intro or m.a_start < intro[0] + CLUSTER_TOL)
+              and (not prev_outro or m.b_end + prev_shift <= prev_outro[0] + CLUSTER_TOL)]
         if ms and (r := _join(ms, lambda m: (m.a_start, m.a_end))):
             if intro:
                 r = (r[0], min(r[1], intro[0]))
