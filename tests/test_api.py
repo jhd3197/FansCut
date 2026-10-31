@@ -391,3 +391,26 @@ def test_no_ui_dir_means_no_root_route(app_cfg, tmp_path, monkeypatch, sonarr_mo
     monkeypatch.setenv("FANSCUT_UI_DIR", str(tmp_path / "missing"))
     with TestClient(create_app(app_cfg, tmp_path / "c.yaml", start_worker=False)) as c:
         assert c.get("/").status_code == 404
+
+
+# -- built UI ------------------------------------------------------------------
+def test_serves_ui_with_spa_fallback(app_cfg, tmp_path, monkeypatch, sonarr_mock):
+    from fastapi.testclient import TestClient
+
+    from fanscut.server import create_app
+
+    ui = tmp_path / "dist"
+    (ui / "assets").mkdir(parents=True)
+    (ui / "index.html").write_text("<html>shell</html>")
+    (ui / "assets" / "app.js").write_text("console.log(1)")
+    (tmp_path / "secret.txt").write_text("nope")
+    monkeypatch.setenv("FANSCUT_UI_DIR", str(ui))
+    with TestClient(create_app(app_cfg, tmp_path / "c.yaml", start_worker=False)) as c:
+        assert c.get("/").text == "<html>shell</html>"
+        assert c.get("/series/folder%3AHarbor%20Lights/cut").text == "<html>shell</html>"
+        assert c.get("/assets/app.js").text == "console.log(1)"
+        assert c.get("/healthz").json()["status"] == "ok"
+        assert c.get("/api/nope").status_code == 404  # API misses stay JSON 404s
+        assert "shell" not in c.get("/api/nope").text
+        assert c.get("/docs").status_code == 200
+        assert c.get("/%2e%2e/secret.txt").text == "<html>shell</html>"  # no escaping the dist dir

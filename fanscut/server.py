@@ -8,9 +8,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 
 from . import __version__, config
 from .config import Config
@@ -26,6 +25,20 @@ def ui_dir() -> Path:
     return Path(
         os.environ.get("FANSCUT_UI_DIR") or Path(__file__).resolve().parent.parent / "ui" / "dist"
     )
+
+
+def _mount_ui(app: FastAPI, ui: Path) -> None:
+    """Serve the built UI; unknown non-API paths get index.html so client-side routes reload."""
+    root = ui.resolve()
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def spa(path: str) -> FileResponse:
+        if path.split("/", 1)[0] in ("api", "docs", "redoc", "openapi.json", "healthz"):
+            raise HTTPException(404, "Not Found")
+        f = (root / path).resolve()
+        if path and f.is_file() and f.is_relative_to(root):
+            return FileResponse(f)
+        return FileResponse(root / "index.html")
 
 
 def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
@@ -67,6 +80,6 @@ def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
         app.include_router(r)
 
     ui = ui_dir()
-    if ui.is_dir():  # mounted last, so it never shadows /api, /docs or /healthz
-        app.mount("/", StaticFiles(directory=str(ui), html=True), name="ui")
+    if (ui / "index.html").is_file():
+        _mount_ui(app, ui)
     return app
