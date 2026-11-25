@@ -1,6 +1,7 @@
 import { Link, Navigate, NavLink, Route, Routes, useParams } from 'react-router';
 import { api } from './lib/api.js';
 import { useLoad, usePoll } from './lib/hooks.js';
+import { sourceSummary } from './lib/labels.js';
 import { Discover } from './pages/Discover.jsx';
 import { LibraryPage } from './pages/LibraryPage.jsx';
 import { CollectionPage } from './pages/Collection.jsx';
@@ -45,6 +46,8 @@ function useCounts() {
 
 function Nav() {
   const n = useCounts();
+  const settings = useLoad(() => api('/settings').catch(() => null));
+  const src = sourceSummary(settings.data);
   const items = [
     ['/', 'Discover', n.discover, true],
     ['/library', 'Library'],
@@ -65,6 +68,8 @@ function Nav() {
         ))}
       </div>
       <div className="side-foot">
+        {src && <span title="Library source">{src.label}</span>}
+        {src?.root && <span className="mono" title={src.root} style={{ fontSize: 11 }}>{src.root}</span>}
         <a href="/docs" target="_blank" rel="noreferrer" className="muted">API docs</a>
       </div>
     </nav>
