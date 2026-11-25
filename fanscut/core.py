@@ -24,6 +24,7 @@ from .errors import FansCutError, NotFoundError
 from .fillers import anifiller, jikan_flags
 from .fillers import labels as labelling
 from .fingerprint import detect
+from .fingerprint.cache import FingerprintCache
 from .jobs import JobContext, JobStore, Worker
 from .library.service import Library
 from .models import LABELS, TRIM_KINDS, Episode
@@ -411,7 +412,8 @@ class Core:
             raise FansCutError("need at least two episodes with files in the season")
         files = [(e.id, e.file or "", e.duration or 0.0) for e in eps]
         found = detect.analyze_files(files, self.cfg.fingerprint, self.cfg.ffmpeg,
-                                     lambda p: ctx.progress(p))
+                                     lambda p: ctx.progress(p),
+                                     cache=FingerprintCache(self.db))
         self.store_detected(key, found)
         return {"episodes": len(eps), "message": f"analysed {len(eps)} episodes",
                 "found": {k: {t: list(r) for t, r in v.items()} for k, v in found.items()}}

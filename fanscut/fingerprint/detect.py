@@ -14,6 +14,7 @@ import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -21,6 +22,9 @@ from ..config import FFmpegCfg, FingerprintCfg
 from ..render import ffmpeg
 from .audio import FRAME_RATE, features
 from .match import Match, find_shared
+
+if TYPE_CHECKING:
+    from .cache import FingerprintCache
 
 PARTNERS = 3  # other episodes each one is compared against
 CLUSTER_TOL = 3.0  # seconds: matches this close count as the same stretch
@@ -142,17 +146,27 @@ def analyze_files(
     fp: FingerprintCfg,
     ff: FFmpegCfg,
     progress: Callable[[float], None] = lambda _p: None,
+    cache: FingerprintCache | None = None,
 ) -> dict[str, dict[str, Range]]:
-    """files = [(episode_id, path, duration)] in episode order -> {episode_id: ranges}."""
+    """files = [(episode_id, path, duration)] in episode order -> {episode_id: ranges}.
+
+    With a `cache`, per-file decode+features results are reused across runs until
+    the file or the fingerprint settings change.
+    """
     clips = []
     for n, (_eid, path, duration) in enumerate(files):
-        head_len = min(fp.head_minutes * 60, duration)
-        tail_len = min(fp.tail_minutes * 60, duration)
-        tail_start = max(duration - tail_len, 0.0)
-        head = ffmpeg.decode_audio(ff, path, 0, head_len, fp.sample_rate)
-        tail = ffmpeg.decode_audio(ff, path, tail_start, tail_len, fp.sample_rate)
-        clips.append(EpisodeClips(features(head, fp.sample_rate), features(tail, fp.sample_rate),
-                                  tail_start, duration))
+        clip = cache.get(path, fp) if cache else None
+        if clip is None or clip.duration != duration:
+            head_len = min(fp.head_minutes * 60, duration)
+            tail_len = min(fp.tail_minutes * 60, duration)
+            tail_start = max(duration - tail_len, 0.0)
+            head = ffmpeg.decode_audio(ff, path, 0, head_len, fp.sample_rate)
+            tail = ffmpeg.decode_audio(ff, path, tail_start, tail_len, fp.sample_rate)
+            clip = EpisodeClips(features(head, fp.sample_rate), features(tail, fp.sample_rate),
+                                tail_start, duration)
+            if cache:
+                cache.put(path, clip, fp)
+        clips.append(clip)
         progress(0.7 * (n + 1) / len(files))
     result = detect(clips, fp)
     progress(1.0)

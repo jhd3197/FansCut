@@ -94,7 +94,21 @@ def _v2(conn: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2, _v3]
+def _v4(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE fingerprint_cache (
+            key        TEXT PRIMARY KEY,        -- file identity + fingerprint settings
+            head       BLOB NOT NULL,           -- float32 feature frames, head_rows x 40
+            head_rows  INTEGER NOT NULL,
+            tail       BLOB NOT NULL,
+            tail_rows  INTEGER NOT NULL,
+            tail_start REAL NOT NULL,
+            duration   REAL NOT NULL
+        );
+    """)
+
+
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2, _v3, _v4]
 
 
 class Database:
