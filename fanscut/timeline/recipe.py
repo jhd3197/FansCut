@@ -107,8 +107,8 @@ def validate(doc: Any) -> dict[str, Any]:
             clean_series[k] = v
 
     raw_sources = doc.get("sources")
-    if not isinstance(raw_sources, dict) or not raw_sources:
-        raise TimelineError("sources must be a non-empty object")
+    if not isinstance(raw_sources, dict):
+        raise TimelineError("sources must be an object")  # may be empty: an editor draft
     if len(raw_sources) > MAX_SOURCES:
         raise TimelineError(f"over {MAX_SOURCES} sources")
     sources = {}
@@ -126,8 +126,8 @@ def validate(doc: Any) -> dict[str, Any]:
         sources[src] = entry
 
     parts_raw = doc.get("parts")
-    if not isinstance(parts_raw, list) or not parts_raw:
-        raise TimelineError("parts must be a non-empty list")
+    if not isinstance(parts_raw, list):
+        raise TimelineError("parts must be a list")  # may be empty: an editor draft
     if len(parts_raw) > MAX_PARTS:
         raise TimelineError(f"over {MAX_PARTS} parts")
     total_segments = 0
@@ -137,8 +137,8 @@ def validate(doc: Any) -> dict[str, Any]:
             raise TimelineError(f"part {pi}: expected an object")
         ptitle = _text(p.get("title"), f"part {pi} title", MAX_TITLE)
         segs_raw = p.get("segments")
-        if not isinstance(segs_raw, list) or not segs_raw:
-            raise TimelineError(f"part {pi}: segments must be a non-empty list")
+        if not isinstance(segs_raw, list):
+            raise TimelineError(f"part {pi}: segments must be a list")
         segs = []
         for si, seg in enumerate(segs_raw, start=1):
             what = f"part {pi} segment {si}"

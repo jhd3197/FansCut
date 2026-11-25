@@ -2,6 +2,8 @@ import { NavLink, Route, Routes } from 'react-router';
 import { Library } from './pages/Library.jsx';
 import { SeriesPage } from './pages/Series.jsx';
 import { CutPage } from './pages/Cut.jsx';
+import { Timelines } from './pages/Timelines.jsx';
+import { TimelineEdit } from './pages/TimelineEdit.jsx';
 import { Jobs } from './pages/Jobs.jsx';
 import { Settings } from './pages/Settings.jsx';
 import { Doctor } from './pages/Doctor.jsx';
@@ -26,6 +28,8 @@ export function App() {
           <Route path="/" element={<Library />} />
           <Route path="/series/:key" element={<SeriesPage />} />
           <Route path="/series/:key/cut" element={<CutPage />} />
+          <Route path="/series/:key/timelines" element={<Timelines />} />
+          <Route path="/series/:key/timelines/:tid" element={<TimelineEdit />} />
           <Route path="/jobs" element={<Jobs />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/doctor" element={<Doctor />} />
