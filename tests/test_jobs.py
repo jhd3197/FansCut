@@ -67,16 +67,39 @@ def test_cancel_running_job_via_event():
     assert store.get(jid)["status"] == "cancelled"
 
 
+def _thread_stacks() -> str:
+    """Every live thread's stack, for a failure that only shows up on CI."""
+    import sys
+    import traceback
+
+    names = {t.ident: t.name for t in threading.enumerate()}
+    return "\n".join(f"--- {names.get(tid, tid)}\n{''.join(traceback.format_stack(frame))}"
+                     for tid, frame in sys._current_frames().items())
+
+
 def test_background_thread_processes_jobs_and_stops():
-    store, worker = make({"k": lambda p, c: {"ok": True}})
+    ran = threading.Event()
+
+    def handler(_p, _c):
+        ran.set()
+        return {"ok": True}
+
+    store, worker = make({"k": handler})
     worker.start()
     jid = worker.submit("k", "t", {})["id"]
-    for _ in range(400):
+    # This failed on CI a few times with the job still queued after 20 s and
+    # nothing logged; if it happens again, say what the worker was doing.
+    if not ran.wait(30):
+        alive = worker._thread is not None and worker._thread.is_alive()
+        pytest.fail(f"job never started (status {store.get(jid)['status']}, worker alive: "
+                    f"{alive})\n{_thread_stacks()}")
+    for _ in range(100):  # the handler returned; the store update follows
         if store.get(jid)["status"] == "done":
             break
         time.sleep(0.05)
     worker.stop()
     assert store.get(jid)["status"] == "done"
+    assert worker._thread is not None and not worker._thread.is_alive()
 
 
 def test_running_jobs_requeued_on_start():
