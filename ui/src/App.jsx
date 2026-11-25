@@ -12,6 +12,7 @@ import { ShowPage } from './pages/Show.jsx';
 import { SeasonPage } from './pages/Season.jsx';
 import { EpisodePage } from './pages/Episode.jsx';
 import { CutDetail } from './pages/CutDetail.jsx';
+import { SuggestionPage } from './pages/Suggestion.jsx';
 import { MyCuts } from './pages/MyCuts.jsx';
 import { Jobs } from './pages/Jobs.jsx';
 import { Health } from './pages/Health.jsx';
@@ -60,6 +61,7 @@ function navItems(n) {
 }
 
 function Nav({ items }) {
+  const { pathname } = useLocation();
   const settings = useApi('/settings', { quiet: true });
   const src = sourceSummary(settings.data);
   return (
@@ -67,7 +69,8 @@ function Nav({ items }) {
       <Link to="/" className="brand" aria-label="FansCut home"><Logo /></Link>
       <div className="nav">
         {items.map(([to, name, count, accent]) => (
-          <NavLink key={to} to={to} end={to === '/'}>
+          <NavLink key={to} to={to} end={to === '/'}
+            className={to === '/' && pathname.startsWith('/discover/') ? 'active' : undefined}>
             <span>{name}</span>
             {count != null && <span className={`count${accent ? ' count-accent' : ''}`}>{count}</span>}
           </NavLink>
@@ -164,6 +167,7 @@ export function App() {
         <Suspense fallback={<div className="page"><Loading /></div>}>
         <Routes>
           <Route path="/" element={<Discover />} />
+          <Route path="/discover/:id" element={<SuggestionPage />} />
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/collections/:name" element={<CollectionPage />} />
           <Route path="/movies/:key" element={<MoviePage />} />

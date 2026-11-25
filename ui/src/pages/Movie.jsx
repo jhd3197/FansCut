@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { ErrorBox, Loading } from '../components/ui.jsx';
 import { Crumbs, KV, Section, enc, hm } from '../components/kit.jsx';
-import { SuggestionDialog, SuggestionTile, TimelineTile } from './Discover.jsx';
+import { SuggestionTile, TimelineTile } from './Discover.jsx';
 import { FilmTile, ShowTile } from './Collection.jsx';
 import { movieTag } from './LibraryPage.jsx';
 import { TemplateDialog } from '../components/TemplateDialog.jsx';
@@ -65,7 +65,6 @@ function Health({ findings }) {
 export function MoviePage() {
   const { key } = useParams();
   const [tpl, setTpl] = useState(false);
-  const [open, setOpen] = useState(null);
   const { data: m, error, loading, reload } = useApi(`/library/movies/${encodeURIComponent(key)}`);
   const sugg = useApi('/suggestions', { quiet: true });
   usePageTitle(m?.title);
@@ -128,11 +127,11 @@ export function MoviePage() {
         <Section id="m-cuts" title="Cuts and playlists with this film" count={shelf}>
           <div className="shelf">
             {m.cuts.map((c) => <TimelineTile key={c.id} c={c} />)}
-            {ideas.map((s) => <SuggestionTile key={s.id} s={s} onOpen={setOpen} />)}
+            {ideas.map((s) => <SuggestionTile key={s.id} s={s} />)}
           </div>
         </Section>
       )}
-      {open && <SuggestionDialog s={open} onClose={() => setOpen(null)} />}
+
 
       {(() => {
         const shows = [...new Map(m.collection_films.flatMap((c) => c.shows || []).map((s) => [s.key, s])).values()];

@@ -8,7 +8,7 @@ import { MatchDialog } from '../components/MatchDialog.jsx';
 import { RecipeDialog, downloadJson, recipeFileName } from '../components/Recipe.jsx';
 import { audioSummary, showFolder, subtitleSummary } from './Episode.jsx';
 import { useApi } from '../lib/store.js';
-import { SuggestionDialog, SuggestionTile } from './Discover.jsx';
+import { SuggestionTile } from './Discover.jsx';
 import { FilmTile } from './Collection.jsx';
 
 const BLANK = (title) => ({
@@ -78,7 +78,7 @@ export function ShowPage() {
   const colls = useApi('/library/collections', { quiet: true });
   const franchise = (colls.data?.collections || []).find((c) => c.shows?.includes(key));
   const also = useApi(franchise ? `/library/collections/${enc(franchise.name)}` : null, { quiet: true });
-  const [idea, setIdea] = useState(null);
+
   const eps = view.data?.episodes || [];
   const first = (eps.find((e) => e.has_file && e.season > 0) || eps.find((e) => e.has_file))?.id;
   const probe = useLoad(() => (first ? api(`${base}/episodes/${enc(first)}/info`).catch(() => null) : Promise.resolve(null)), [key, first]);
@@ -216,11 +216,11 @@ export function ShowPage() {
                 </span>
               </div>
             ))}
-            {ideas.map((x) => <SuggestionTile key={x.id} s={x} onOpen={setIdea} />)}
+            {ideas.map((x) => <SuggestionTile key={x.id} s={x} />)}
           </div>
         )}
       </Section>
-      {idea && <SuggestionDialog s={idea} onClose={() => setIdea(null)} />}
+
 
       {also.data?.films?.length > 0 && (
         <Section id="s-also" title="Also in your library" count={also.data.films.length}

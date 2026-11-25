@@ -1,20 +1,20 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useFrom, useLoad, useUrlState, useDebounced, useShelfLayout } from '../lib/hooks.js';
+import { useAct, useLoad, useUrlState, useDebounced, useShelfLayout } from '../lib/hooks.js';
 import { Dialog, Empty, ErrorBox, Loading, Notice, SkeletonTiles } from '../components/ui.jsx';
 import { Backdrop, CutTile, KV, Search, Seg, Shelf, enc, hm } from '../components/kit.jsx';
 
 // -- shared with the Collection and Movie pages --------------------------------------------
 
-const KIND_LABEL = {
+export const KIND_LABEL = {
   recipe: 'Community cut',
   collection_merge: 'Merge',
   watch_order: 'Watch order',
   canon_cut: 'Canon cut',
 };
 
-const POSTER_KIND = { recipe: 'supercut', collection_merge: 'merge', watch_order: 'order', canon_cut: 'canon' };
+export const POSTER_KIND = { recipe: 'supercut', collection_merge: 'merge', watch_order: 'order', canon_cut: 'canon' };
 
 function films(s) {
   return s.detail?.movies?.length || 0;
@@ -71,20 +71,20 @@ export function suggestionStatus(s) {
 }
 
 // On real artwork: a short badge, and how several films' posters are combined.
-const ART = {
+export const SUGGESTION_ART = {
   collection_merge: ['split', 'merge', (s) => `MERGE · ${films(s)}`],
   watch_order: ['stack', 'order', () => 'WATCH ORDER'],
   canon_cut: ['single', 'canon', () => 'CANON CUT'],
   recipe: ['split', 'cut', () => 'COMMUNITY CUT'],
 };
 
-export function SuggestionTile({ s, onOpen }) {
-  const [layout, badge, label] = ART[s.kind] || ['single', 'cut', () => suggestionTag(s)];
+export function SuggestionTile({ s }) {
+  const [layout, badge, label] = SUGGESTION_ART[s.kind] || ['single', 'cut', () => suggestionTag(s)];
   return (
     <CutTile title={s.name || s.title} sub={s.tagline} tag={s.art?.length ? label(s) : suggestionTag(s)}
       kind={POSTER_KIND[s.kind] || 'supercut'} art={s.art} layout={layout} badge={badge}
       meta={suggestionMeta(s) || KIND_LABEL[s.kind]}
-      status={s.status} note={suggestionStatus(s)} onClick={() => onOpen(s)} />
+      status={s.status} note={suggestionStatus(s)} to={suggestionTo(s)} />
   );
 }
 
@@ -99,69 +99,20 @@ export function TimelineTile({ c }) {
   );
 }
 
-const STATUS_CLASS = { ready: 'c-ready', partly: 'c-warn', missing: 'c-danger' };
+export const STATUS_CLASS = { ready: 'c-ready', partly: 'c-warn', missing: 'c-danger' };
 
-// What a suggestion is, its status, what is missing, and the install button.
-export function SuggestionDialog({ s, onClose }) {
-  const navigate = useNavigate();
-  const from = useFrom();
-  const { act, msg, busy, clear } = useAct();
-  const isPlaylist = s.kind === 'watch_order';
-
-  const install = async () => {
-    const repo = s.from_catalogue ? s.url || s.repo : null;
-    const res = await act(() => (repo
-      ? api('/cuts/install', { method: 'POST', body: { url: repo } })
-      : api(`/suggestions/${enc(s.id)}/install`, { method: 'POST' })),
-    (r) => (r?.action === 'playlist' ? 'Playlist created in Plex. Nothing was rendered.' : 'Queued. Watch the Jobs page.'));
-    if (!res) return;
-    if (res.action === 'playlist') return;
-    const tid = res.timeline || (repo ? res.id : null);
-    navigate(tid ? `/cuts/${enc(tid)}` : '/jobs', { state: from });
-  };
-
-  const d = s.detail || {};
-  const what = d.template || {
+// One sentence on what installing it makes.
+export function suggestionWhat(s) {
+  return s.detail?.template || {
     recipe: 'A community recipe: scenes from files you own, cut and joined into one new file.',
     collection_merge: 'One film made from every entry in the collection, in release order.',
     watch_order: 'A Plex playlist of the films in order. Nothing is rendered.',
     canon_cut: 'The show with filler episodes left out, rendered as new files.',
   }[s.kind];
-
-  return (
-    <Dialog title={s.title} onClose={onClose} wide>
-      <span className="mono tiny muted">{suggestionTag(s)}{s.category ? ` · ${s.category}` : ''}</span>
-      {s.tagline && <p className="muted" style={{ margin: 0 }}>{s.tagline}</p>}
-      {what && <p style={{ margin: 0 }}>{what}</p>}
-      <KV rows={[
-        ['Type', KIND_LABEL[s.kind] || s.kind],
-        suggestionMeta(s) && ['Contents', suggestionMeta(s)],
-        d.movies?.length && ['Films', d.movies.join(' · ')],
-        ['Status', <span key="st" className={STATUS_CLASS[s.status] || 'muted'}>{suggestionStatus(s)}</span>],
-        d.credits && Object.keys(d.credits).length > 0 && ['Credits', Object.entries(d.credits).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join(' · ')],
-      ]} />
-      {s.missing?.length > 0 && (
-        <div className="stack" style={{ gap: 6 }}>
-          <b style={{ fontSize: 13 }}>Missing pieces</b>
-          <ul className="tiny" style={{ margin: 0, paddingLeft: 18 }}>
-            {s.missing.map((m, i) => (
-              <li key={i}><span className="mono">{m.src}</span> <span className="muted">— {m.reason}</span></li>
-            ))}
-          </ul>
-          {s.status === 'partly' && <span className="tiny muted">Installing still works; the missing pieces are skipped or use another audio track.</span>}
-          <Link to="/health" className="tiny" onClick={onClose}>See what’s wrong in Health</Link>
-        </div>
-      )}
-      <Notice msg={msg} onClose={clear} />
-      <div className="row" style={{ justifyContent: 'flex-end' }}>
-        <button type="button" className="btn btn-ghost" onClick={onClose}>Close</button>
-        <button type="button" className="btn btn-primary" disabled={busy || s.status === 'missing'} onClick={install}>
-          {busy ? 'Working…' : isPlaylist ? 'Create playlist' : 'Install'}
-        </button>
-      </div>
-    </Dialog>
-  );
 }
+
+// A suggestion's own page (Discover / <name>).
+export const suggestionTo = (s) => `/discover/${enc(s.id)}`;
 
 // -- the page --------------------------------------------------------------------------------
 
@@ -217,7 +168,6 @@ export function Discover() {
   const [filter, setFilter] = useUrlState('show', 'all');
   const [q, setQ] = useUrlState('q');
   const dq = useDebounced(q);
-  const [open, setOpen] = useState(null);
   const [adding, setAdding] = useState(false);
 
   const needle = dq.trim().toLowerCase();
@@ -279,7 +229,7 @@ export function Discover() {
               <button type="button" className="btn btn-sm btn-ghost" aria-label={`Hide ${name}`} onClick={() => layout.hide(name)}>Hide</button>
             </span>
           )}>
-          {byName.get(name).map((s) => <SuggestionTile key={s.id} s={s} onOpen={setOpen} />)}
+          {byName.get(name).map((s) => <SuggestionTile key={s.id} s={s} />)}
         </Shelf>
       ))}
       {layout.hidden.length > 0 && (
@@ -296,7 +246,6 @@ export function Discover() {
         </p>
       )}
 
-      {open && <SuggestionDialog s={open} onClose={() => setOpen(null)} />}
       {adding && <AddByUrl onClose={() => setAdding(false)} />}
     </div>
   );

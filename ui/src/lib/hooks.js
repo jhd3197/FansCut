@@ -67,9 +67,9 @@ export function useFrom() {
 
 // Where the crumb root of a cut page goes: back to the page that opened it,
 // else My cuts. Carried along to the cut's Build and editor pages.
-export function useCrumbRoot() {
+export function useCrumbRoot(fallback = ['My cuts', '/my-cuts']) {
   const from = useLocation().state?.from;
-  return { root: from ? [from.label, from.to] : ['My cuts', '/my-cuts'], state: from ? { from } : undefined };
+  return { root: from ? [from.label, from.to] : fallback, state: from ? { from } : undefined };
 }
 
 // Scroll to the URL's #fragment once the page has the element (lists load late).

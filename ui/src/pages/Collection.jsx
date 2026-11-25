@@ -5,7 +5,7 @@ import { useAct, usePageTitle } from '../lib/hooks.js';
 import { Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import { Crumbs, MediaTile, Section, enc, hm, palette } from '../components/kit.jsx';
 import { movieTag, quality } from './LibraryPage.jsx';
-import { SuggestionDialog, SuggestionTile, TimelineTile } from './Discover.jsx';
+import { SuggestionTile, TimelineTile } from './Discover.jsx';
 import { TemplateDialog } from '../components/TemplateDialog.jsx';
 import { useApi } from '../lib/store.js';
 
@@ -34,7 +34,6 @@ export function CollectionPage() {
   const { data, error, loading, reload } = useApi(`/library/collections/${enc(name)}`);
   usePageTitle(name);
   const { act, msg, busy, clear } = useAct();
-  const [open, setOpen] = useState(null);
   const [tpl, setTpl] = useState(false);
 
   if (error && !data) return <div className="page"><Crumbs items={[['Library', '/library'], [name]]} /><ErrorBox error={error} onRetry={reload} /></div>;
@@ -93,12 +92,12 @@ export function CollectionPage() {
           : (
             <div className="shelf">
               {data.cuts.map((c) => <TimelineTile key={c.id} c={c} />)}
-              {data.suggestions.map((s) => <SuggestionTile key={s.id} s={s} onOpen={setOpen} />)}
+              {data.suggestions.map((s) => <SuggestionTile key={s.id} s={s} />)}
             </div>
           )}
       </Section>
 
-      {open && <SuggestionDialog s={open} onClose={() => setOpen(null)} />}
+
     </div>
   );
 }
