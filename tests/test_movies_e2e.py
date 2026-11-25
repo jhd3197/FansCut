@@ -126,10 +126,42 @@ def test_movie_source_sync_and_render(movie_client, movie_library, cfg):
     assert len(part["segments"]) == 3  # the missing scene is skipped
     assert "acrossfade=d=0.400" in part["files"]["filter.txt"]
 
+    # the estimate before any build on this machine uses typical speeds
+    est = movie_client.get(f"/api/timelines/{tid}/estimate").json()
+    assert est["basis"] == "typical" and est["label"] == "Quick build" and est["seconds"] > 0
+    assert est["reasons"][0] == "SD" and est["reasons"][1].startswith("re-encoded")
+
     job = movie_client.post(f"/api/timelines/{tid}/render", json={}).json()
     movie_client.core.worker.run_pending()
     done = movie_client.get(f"/api/jobs/{job['id']}").json()
     assert done["status"] == "done", done["message"]
+    # the Jobs page's five phases, ending on Add to Plex; the build's speed is kept
+    assert done["phase"]["n"] == 5 and done["phase"]["name"] == "Add to Plex"
+    st = done["result"]["stats"][0]
+    assert st["mode"] == "encode" and st["runtime"] > 0 and st["height"] == 240
+    assert movie_client.get(f"/api/timelines/{tid}/estimate").json()["basis"] == "measured"
+
+    # nudge a cut point: the report shows it, a bad nudge is refused, a re-sync keeps it
+    put = movie_client.put(f"/api/timelines/{tid}/cut-points",
+                           json={"part": 1, "segment": 4, "side": "start", "t": 17.25})
+    assert put.status_code == 200, put.text
+    nb = next(x for x in put.json()["sources"]["M555"]["boundaries"]
+              if x["segment"] == 4 and x["side"] == "start")
+    assert nb["corrected"] == 17.25 and nb["manual"] and abs(nb["auto"] - 17.0) <= 0.3
+    bad = movie_client.put(f"/api/timelines/{tid}/cut-points",
+                           json={"part": 1, "segment": 4, "side": "start", "t": 99})
+    assert bad.status_code == 400 and "before its end" in bad.json()["detail"]
+    movie_client.post(f"/api/timelines/{tid}/sync")
+    movie_client.core.worker.run_pending()
+    again = movie_client.get(f"/api/timelines/{tid}/sync").json()
+    kept = next(x for x in again["sources"]["M555"]["boundaries"]
+                if x["segment"] == 4 and x["side"] == "start")
+    assert kept["corrected"] == 17.25
+    movie_client.put(f"/api/timelines/{tid}/cut-points",
+                     json={"part": 1, "segment": 4, "side": "start", "t": None})
+    back = movie_client.get(f"/api/timelines/{tid}/sync").json()
+    assert not next(x for x in back["sources"]["M555"]["boundaries"]
+                    if x["segment"] == 4 and x["side"] == "start").get("manual")
     out = Path(done["result"]["outputs"][0])
     assert out.name == "Tide Pool (Film Cut).mkv" and out.is_file()
     assert out.with_suffix(".nfo").read_text().startswith('<?xml version="1.0"')
@@ -185,3 +217,28 @@ def test_check_frame_only_serves_flagged_files(movie_client, movie_library, tmp_
     other.write_bytes(b"x")
     assert movie_client.get("/api/library/check/frame",
                             params={"file": str(other)}).status_code == 404
+
+
+def test_hdr_frames_are_tone_mapped_with_a_plain_fallback(movie_client, movie_library, monkeypatch):
+    """An HDR still shown as is looks grey: grab it through zscale/tonemap, and fall back
+    to the plain frame on an ffmpeg without zscale."""
+    from fanscut.errors import FFmpegError
+    from fanscut.render import ffmpeg as ff
+
+    core = movie_client.core
+    film = str(movie_library["extended"])
+    monkeypatch.setattr(core, "prober", lambda p: {"duration": 30.0, "video": {"hdr": "HDR10"}})
+    chains: list[str] = []
+
+    def fake(cmd, timeout=300):
+        chain = cmd[cmd.index("-vf") + 1]
+        chains.append(chain)
+        if "tonemap" in chain:
+            raise FFmpegError("No such filter: 'zscale'")
+        Path(cmd[-1]).write_bytes(b"\xff\xd8jpeg")
+        return b""
+
+    monkeypatch.setattr(ff, "run_capture", fake)
+    out = core._frame(film, 5.0)
+    assert out.read_bytes().startswith(b"\xff\xd8")
+    assert "tonemap=hable" in chains[0] and "tonemap" not in chains[1]

@@ -84,6 +84,36 @@ def render_timeline(core: CoreDep, tid: str, body: TimelineRenderBody | None = N
                                        collection=body.collection)
 
 
+class CutPointBody(BaseModel):
+    part: int = Field(ge=1)
+    segment: int = Field(ge=1)
+    side: Literal["start", "end"]
+    t: float | None = Field(default=None, ge=0, le=86_400)  # None = what sync found
+
+
+@router.put("/timelines/{tid}/cut-points")
+def set_cut_point(core: CoreDep, tid: str, body: CutPointBody) -> dict[str, Any]:
+    """Nudge one cut point in the user's copy; the report comes back with it applied."""
+    return core.set_cut_point(tid, body.part, body.segment, body.side, body.t)
+
+
+@router.get("/timelines/{tid}/estimate")
+def timeline_estimate(core: CoreDep, tid: str, variant: str | None = None) -> dict[str, Any]:
+    """About how long a build takes on this machine, and why."""
+    return core.timeline_estimate(tid, variant or None)
+
+
+class OptionsBody(BaseModel):
+    auto_rebuild: bool
+
+
+@router.put("/timelines/{tid}/options")
+def timeline_options(core: CoreDep, tid: str, body: OptionsBody) -> dict[str, Any]:
+    """auto_rebuild: when an update changes the recipe, sync and rebuild (unchanged parts
+    are reused from the cache)."""
+    return core.set_timeline_options(tid, body.auto_rebuild)
+
+
 @router.get("/timelines/{tid}/variants")
 def timeline_variants(core: CoreDep, tid: str) -> dict[str, Any]:
     """Toggles (disabled ones name the film they need) and each variant's runtime."""

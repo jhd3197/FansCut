@@ -42,3 +42,22 @@
 .nle .dot { width:9px; height:9px; border-radius:2px; flex:none; }
 .nle .wide { padding:12px 14px; display:flex; flex-direction:column; gap:12px; }
 .nle .table { font-size:12px; }
+/* menu bar, transport, extra tracks */
+.nle .menubar { display:flex; gap:2px; padding:4px 6px 0; border-bottom:1px solid var(--nl); }
+.nle .menubar .bt { border-color:transparent; background:transparent; }
+.nle .menubar .bt[aria-expanded=true], .nle .menubar .bt:hover { background:#262626; border-color:#333; }
+.nle .menu-list { background:#262626; border-color:#333; }
+.nle .menu-item { color:var(--nt); }
+.nle .menu-item:hover, .nle .menu-item:focus-visible { background:#333; }
+.nle .menu-keys { color:var(--nm); }
+.nle .tl-h { grid-template-columns:22px 30px minmax(0,1fr) auto; }
+.nle .sw-btn { all:unset; cursor:pointer; width:20px; text-align:center; color:var(--nm); font-size:12px; }
+.nle .sw-btn[aria-pressed=false] { opacity:.35; }
+.nle .lane.hidden { opacity:.2; }
+.nle .mark { position:absolute; top:7px; bottom:7px; border-radius:3px; padding:0 5px; font-size:11px; line-height:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#141414; }
+.nle .fxdot { display:inline-block; margin-left:4px; padding:0 3px; border-radius:2px; background:rgba(0,0,0,.35); font-size:10px; }
+.nle .transport { display:inline-flex; gap:4px; }
+.nle .screen.zoomed { overflow:auto; }
+.nle .shortcuts { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; margin:0; font-size:12px; }
+.nle .shortcuts dt { font-family:var(--mono); color:var(--nlink); }
+.nle .shortcuts dd { margin:0; color:var(--nc); }

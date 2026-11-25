@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bar, checkRange, episodeTrack, groupSegments, nudge } from './timeline.js';
+import { bar, checkRange, episodeTrack, fxList, gradeFilter, groupSegments, nudge, setFx } from './timeline.js';
 import { fmtTime, parseTime } from './time.js';
 
 describe('timeline math', () => {
@@ -58,4 +58,33 @@ it('formats runtimes, short ones in seconds', async () => {
   expect(fmtDuration(45)).toBe('45s');
   expect(fmtDuration(1440)).toBe('24m');
   expect(fmtDuration(5400)).toBe('1h 30m');
+});
+
+describe('segment effects', () => {
+  const seg = () => ({ src: 'AUJ', start: 0, end: 10 });
+
+  it('sets nested fields and prunes them when they go back to neutral', () => {
+    const s = setFx(seg(), 'video.grade.exposure', 0.3);
+    expect(s.video).toEqual({ grade: { exposure: 0.3 } });
+    setFx(s, 'video.grade.exposure', 0);
+    expect(s.video).toBeUndefined();
+    expect(setFx(seg(), 'speed', 1)).toEqual(seg());
+  });
+
+  it('keeps J- and L-cuts exclusive and fills transition and title defaults', () => {
+    const s = setFx(setFx(seg(), 'j_cut', 0.4), 'l_cut', 0.2);
+    expect(s.j_cut).toBeUndefined();
+    expect(s.l_cut).toBe(0.2);
+    setFx(s, 'transition.type', 'dissolve');
+    expect(s.transition).toEqual({ type: 'dissolve', duration: 0.5 });
+    setFx(s, 'transition.type', 'cut');
+    expect(s.transition).toBeUndefined();
+    expect(setFx(seg(), 'title.text', 'Sixty years later').title).toEqual({ text: 'Sixty years later', duration: 3 });
+  });
+
+  it('names the effects and previews a grade as a CSS filter', () => {
+    expect(fxList({ speed: 0.9, video: { grade: { saturation: 0.8 } }, audio: { src: 'X' } }))
+      .toEqual(['0.9×', 'grade', 'music']);
+    expect(gradeFilter({ exposure: 1 })).toContain('brightness(2.000)');
+  });
 });

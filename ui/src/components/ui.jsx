@@ -140,7 +140,7 @@ export function StatusTag({ status }) {
 
 // A "More" button with a short list of secondary actions. Items: [label, onSelect | {to}, {danger}].
 // Closes on Escape, a click outside, or picking an item; arrow keys move between items.
-export function MoreMenu({ label = 'More', items, LinkAs }) {
+export function MoreMenu({ label = 'More', items, LinkAs, className = 'btn', align = 'right' }) {
   const [open, setOpen] = useState(false);
   const box = useRef(null);
   useEffect(() => {
@@ -162,15 +162,17 @@ export function MoreMenu({ label = 'More', items, LinkAs }) {
   }, [open]);
   return (
     <span className="menu" ref={box}>
-      <button type="button" className="btn" style={{ height: 32 }} aria-haspopup="menu" aria-expanded={open}
+      <button type="button" className={className} style={className === 'btn' ? { height: 32 } : undefined} aria-haspopup="menu" aria-expanded={open}
         onClick={() => setOpen((o) => !o)}>{label}</button>
       {open && (
-        <span className="menu-list" role="menu">
+        <span className="menu-list" role="menu" style={align === 'left' ? { left: 0, right: 'auto' } : undefined}>
           {items.filter(Boolean).map(([text, act, opts = {}]) => (act?.to && LinkAs
             ? <LinkAs key={text} to={act.to} role="menuitem" className="menu-item" onClick={() => setOpen(false)}>{text}</LinkAs>
             : (
               <button key={text} type="button" role="menuitem" className={`menu-item${opts.danger ? ' c-danger' : ''}`}
-                onClick={() => { setOpen(false); act(); }}>{text}</button>
+                disabled={opts.disabled} onClick={() => { setOpen(false); act(); }}>
+                {text}{opts.keys && <kbd className="menu-keys">{opts.keys}</kbd>}
+              </button>
             )))}
         </span>
       )}

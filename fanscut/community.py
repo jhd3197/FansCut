@@ -1,6 +1,6 @@
 """Community catalogue: an index of cut repos, install by repo URL, pull updates.
 
-The index (index.json in the fanscut-recipes repo) only links to repos:
+The index (index.json in the fanscut-community repo) only links to repos:
 
     {"schema": 1, "cuts": [{
         "name": "Took", "repo": "https://github.com/jhd3197/took",
@@ -77,6 +77,19 @@ def _https(v: Any) -> str:
     return url
 
 
+def local_index_path(url: str) -> Path | None:
+    """The file behind a local index_url ("C:\\x\\index.json", "/x/index.json" or
+    "file:///x/index.json"); None for a web address."""
+    if url.startswith("file://"):
+        from urllib.parse import unquote, urlsplit
+        from urllib.request import url2pathname
+
+        return Path(url2pathname(unquote(urlsplit(url).path)))
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", url):
+        return None
+    return Path(url).expanduser()
+
+
 def validate_index(doc: Any) -> list[dict[str, Any]]:
     """Clean index entries; a bad entry is dropped, not fatal (one typo can't hide the rest)."""
     if not isinstance(doc, dict) or doc.get("schema") != 1 or not isinstance(doc.get("cuts"), list):
@@ -116,7 +129,8 @@ def _entry(raw: Any) -> dict[str, Any]:
             "tagline": _text(raw.get("tagline", ""), 80),
             "sources": sources,
             "variants": [_text(v, 60) for v in raw.get("variants", [])[:20]],
-            "poster": _https(raw["poster"]) if raw.get("poster") else ""}
+            "poster": _https(raw["poster"]) if raw.get("poster") else "",
+            "season": raw["season"] if raw.get("season") in ("christmas", "halloween") else None}
 
 
 class GitHub:

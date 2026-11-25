@@ -121,7 +121,27 @@ function Still({ tid, p }) {
   );
 }
 
-function Review({ tid, doc, weak, checked, onCheck, onPreview, editTo }) {
+const FRAME = 1 / 24; // one film frame; close enough to step a cut point in most sources
+
+// −1 s / −1 frame / +1 frame / +1 s on a cut point, saved in the sync report (a re-sync
+// keeps it), and Reset to what sync found.
+function Nudge({ tid, p, onSaved }) {
+  const { act, busy } = useAct();
+  const t = p.corrected ?? p.t;
+  const move = (to) => act(async () => {
+    onSaved(await api(`/timelines/${enc(tid)}/cut-points`, { method: 'PUT', body: { part: p.part, segment: p.segment, side: p.side, t: to } }));
+  });
+  return (
+    <span className="row" style={{ gap: 4 }} role="group" aria-label={`Nudge segment ${p.segment} ${p.side}`}>
+      {[[-1, '−1 s'], [-FRAME, '−1 frame'], [FRAME, '+1 frame'], [1, '+1 s']].map(([d, label]) => (
+        <button key={label} type="button" className="btn btn-sm btn-ghost" disabled={busy || t + d < 0} onClick={() => move(Math.round((t + d) * 1000) / 1000)}>{label}</button>
+      ))}
+      {p.manual && <button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={() => move(null)} title="Back to the time sync found">Reset</button>}
+    </span>
+  );
+}
+
+function Review({ tid, doc, weak, checked, onCheck, onPreview, editTo, onSaved }) {
   const { points, unanchored, gone } = weak;
   const open = points.filter((p) => !checked[p.key]);
   const shown = points.slice(0, 12);
@@ -147,7 +167,8 @@ function Review({ tid, doc, weak, checked, onCheck, onPreview, editTo }) {
                 <Still tid={tid} p={p} />
                 <span style={{ flex: '1 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
                   <span>{doc.parts.length > 1 ? `Part ${p.part} · ` : ''}Segment {p.segment} {p.side}{seg?.desc ? ` · ${seg.desc}` : ''}</span>
-                  <span className="mono tiny c-accent">{p.src} {fmtTime(p.corrected ?? p.t, 1)} · {p.why}</span>
+                  <span className="mono tiny c-accent">{p.src} {fmtTime(p.corrected ?? p.t, 1)} · {p.manual ? 'set by hand' : p.why}</span>
+                  <Nudge tid={tid} p={p} onSaved={onSaved} />
                 </span>
                 <button type="button" className="btn btn-sm" onClick={() => onPreview(p.src, p.corrected ?? p.t)}>Play 10 s around it</button>
                 <Link className="btn btn-sm btn-ghost" to={editTo}>Open in editor</Link>
@@ -248,6 +269,8 @@ export function Build() {
   const [job, setJob] = useState(null);
   const [preview, setPreview] = useState(null);
   const [collection, setCollection] = useState(true);
+  const [rebuild, setRebuild] = useState(null); // null = as saved
+  const cuts = useApi('/cuts', { quiet: true });
   const crumb = useCrumbRoot();
   const { act, msg, busy, clear } = useAct();
 
@@ -342,7 +365,7 @@ export function Build() {
       )}
 
       {report && (
-        <Review tid={id} doc={doc} weak={weak} checked={checked} onCheck={onCheck}
+        <Review tid={id} doc={doc} weak={weak} onSaved={() => { sync.reload(); dry.reload(); }} checked={checked} onCheck={onCheck}
           onPreview={(src, t) => setPreview({ src, t })} editTo={editTo} />
       )}
 
@@ -390,6 +413,13 @@ export function Build() {
             <label className="check">
               <input type="checkbox" checked={collection} onChange={(e) => setCollection(e.target.checked)} />
               Add it to the “{plexCollection}” collection in Plex
+            </label>
+          )}
+          {(cuts.data?.cuts || []).some((c) => c.id === id && c.repo) && (
+            <label className="check">
+              <input type="checkbox" checked={rebuild ?? Boolean(tl.data.auto_rebuild)}
+                onChange={(e) => { const on = e.target.checked; setRebuild(on); act(() => api(`/timelines/${enc(id)}/options`, { method: 'PUT', body: { auto_rebuild: on } })); }} />
+              When the recipe changes, rebuild only the parts that changed
             </label>
           )}
           {plex && <span className="tiny muted">Change what happens in Plex under <Link to="/settings?section=plex-out">Settings → Add to Plex</Link>.</span>}

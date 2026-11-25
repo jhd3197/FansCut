@@ -13,7 +13,7 @@ from fanscut.core import Core
 SHA1 = "a" * 40
 SHA2 = "b" * 40
 API = "https://api.github.com/repos/jhd3197/took"
-INDEX = "https://raw.githubusercontent.com/jhd3197/fanscut-recipes/main/index.json"
+INDEX = "https://raw.githubusercontent.com/jhd3197/fanscut-community/main/index.json"
 
 TOOK = {"schema": 2, "kind": "timeline", "id": "jhd3197/took", "version": "0.1.0",
         "title": "Took", "category": "Fantasy", "tagline": "The Hobbit, as one film",
@@ -95,6 +95,21 @@ def test_install_records_sha_poster_and_updates(client, sonarr_mock, tmp_path):
     up = client.post(f"/api/cuts/{out['id']}/update").json()
     assert up["id"] == out["id"] and up["changed"] and up["sha"] == SHA2
     assert up["summary"].startswith("1 film re-timed")
+    assert up["rebuild"] == []  # not asked for
+
+    # with "rebuild when the recipe changes" on, an update queues sync then render
+    assert client.put(f"/api/timelines/{out['id']}/options",
+                      json={"auto_rebuild": True}).json() == {"auto_rebuild": True}
+    newer = {**new, "parts": [{"title": "Took", "segments": [
+        {"src": "AUJ", "start": 3.0, "end": 9.0}]}]}
+    sha3 = "c" * 40
+    sonarr_mock.add(responses.GET, f"{API}/commits/dev", json={"sha": sha3})
+    sonarr_mock.add(responses.GET, f"{API}/contents/fanscut.json?ref={sha3}",
+                    body=json.dumps(newer))
+    up2 = client.post(f"/api/cuts/{out['id']}/update").json()
+    kinds = [client.get(f"/api/jobs/{j}").json()["kind"] for j in up2["rebuild"]]
+    assert kinds == ["timeline_sync", "timeline_render"]
+    assert client.put("/api/timelines/nope/options", json={"auto_rebuild": True}).status_code == 404
     assert client.get(f"/api/timelines/{out['id']}").json()["title"] == "Took (v2)"
 
 
@@ -138,3 +153,29 @@ def test_change_summary_words():
     assert community.change_summary(doc(a, b), doc(b, a)) == "2 scenes replaced"
     assert community.change_summary(doc(a), doc(a, variants=["x"])) == "1 new variant"
     assert community.change_summary(doc(a), doc(a)).startswith("details changed")
+
+
+def test_index_can_be_a_local_file(client, tmp_path):
+    """A draft index on disk, to try entries before they reach fanscut-community."""
+    core = _core(client)
+    f = tmp_path / "index.json"
+    f.write_text(json.dumps({"schema": 1, "cuts": [ENTRY]}))
+    for url in (str(f), f.as_uri()):
+        core.cfg.community.index_url = url
+        core._index_cache = None
+        cuts = client.get("/api/catalogue").json()["cuts"]
+        assert [c["id"] for c in cuts] == ["repo:jhd3197/took"], url
+    assert community.local_index_path(INDEX) is None
+
+
+def test_default_index_is_fanscut_community():
+    from fanscut.config import CommunityCfg
+
+    assert CommunityCfg().index_url == INDEX
+    assert "fanscut-community/main/index.json" in INDEX
+
+
+def test_index_season_field_is_kept_or_dropped():
+    good = community.validate_index({"schema": 1, "cuts": [{**ENTRY, "season": "christmas"}]})[0]
+    bad = community.validate_index({"schema": 1, "cuts": [{**ENTRY, "season": "easter"}]})[0]
+    assert good["season"] == "christmas" and bad["season"] is None

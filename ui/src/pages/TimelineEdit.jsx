@@ -1,12 +1,13 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router';
 import { api, seriesPath } from '../lib/api.js';
 import { useAct, useCrumbRoot, useLoad, usePoll } from '../lib/hooks.js';
+import { SegmentFx, GradePanel } from '../components/SegmentFx.jsx';
 import { fmtDuration, fmtTime, parseTime } from '../lib/time.js';
 import {
-  flatSegments, moveItem, recipeIssues, rulerTicks, segmentSync, sourceJoins, syncCounts,
+  flatSegments, fxList, moveItem, recipeIssues, rulerTicks, segmentSync, setFx, sourceJoins, syncCounts,
 } from '../lib/timeline.js';
-import { Dialog, ErrorBox, Loading, Notice, Progress, StatusTag } from '../components/ui.jsx';
+import { Dialog, ErrorBox, Loading, MoreMenu, Notice, Progress, StatusTag } from '../components/ui.jsx';
 import { enc } from '../components/kit.jsx';
 import './TimelineEdit.css';
 import { useApi } from '../lib/store.js';
@@ -83,9 +84,23 @@ function SyncReport({ report, onPreview }) {
   );
 }
 
+// J/K/L, I/O, Ctrl+S, Ctrl+Z for the whole page: one window listener that always calls
+// the editor's latest handler.
+function KeyListener({ onKey }) {
+  const ref = useRef(onKey);
+  useEffect(() => { ref.current = onKey; });
+  useEffect(() => {
+    const on = (e) => ref.current(e);
+    window.addEventListener('keydown', on);
+    return () => window.removeEventListener('keydown', on);
+  }, []);
+  return null;
+}
+
 export function TimelineEdit() {
   const { id } = useParams();
   const crumb = useCrumbRoot();
+  const navigate = useNavigate();
   const tl = useApi(`/timelines/${enc(id)}`);
   const seriesKey = tl.data?.series_key;
   const base = seriesKey ? seriesPath(seriesKey) : null;
@@ -110,14 +125,34 @@ export function TimelineEdit() {
   const [drag, setDrag] = useState(null); // {kind:'seg', pi, si} | {kind:'part', pi}
   const [over, setOver] = useState(null);
   const file = useRef(null);
+  const video = useRef(null);
+  const history = useRef([]); // earlier docs, for Undo (Ctrl+Z)
+  const [zoom, setZoom] = useState('fit');
+  const [rate, setRate] = useState(1);
+  const [hiddenLanes, setHiddenLanes] = useState({}); // lane id -> hidden
+  const [help, setHelp] = useState(false);
+  const [undoable, setUndoable] = useState(0);
 
-  const edit = useCallback((fn) => {
+  const lastEdit = useRef({ key: null, at: 0 });
+  // `key` groups a burst of changes to one field (a slider drag) into one Undo step
+  const edit = useCallback((fn, key = null) => {
     setDirty(true);
+    const now = Date.now();
+    const burst = key && lastEdit.current.key === key && now - lastEdit.current.at < 1500;
+    lastEdit.current = { key, at: now };
     setDoc((d) => {
+      if (!burst) history.current = [...history.current.slice(-49), d];
+      setUndoable(history.current.length);
       const next = structuredClone(d);
       fn(next);
       return next;
     });
+  }, []);
+  const openImport = useCallback(() => file.current?.click(), []);
+  const undo = useCallback(() => {
+    const prev = history.current.pop();
+    setUndoable(history.current.length);
+    if (prev) { setDoc(prev); setDirty(true); }
   }, []);
   const data = tl.data;
   if (data && !doc) setDoc(data.doc);
@@ -186,6 +221,29 @@ export function TimelineEdit() {
     const segs = d.parts[p].segments;
     segs.splice(at ?? segs.length, 0, seg || { src, start: 0, end: 60 });
   });
+  const setSegFx = (path, v) => sel && edit((d) => { setFx(d.parts[sel.pi].segments[sel.si], path, v); }, `${sel.pi}:${sel.si}:${path}`);
+  const copyGrade = () => sel && selSeg?.video?.grade && edit((d) => {
+    const g = d.parts[sel.pi].segments[sel.si].video.grade;
+    for (const p of d.parts) {
+      for (const sg of p.segments) {
+        if (sg.src === selSeg.src) { sg.video = { ...(sg.video || {}), grade: { ...g } }; }
+      }
+    }
+  });
+  // transport: J back 2 s (to the previous clip at its start), K play/pause, L play, faster on repeat
+  const jkl = (key) => {
+    const v = video.current;
+    if (key === 'k') { if (v) { if (v.paused) v.play(); else v.pause(); } return; }
+    if (key === 'j') {
+      if (v && v.currentTime > 2) { v.currentTime -= 2; return; }
+      if (viewer) look(viewer.src, Math.max(0, viewerT - 7));
+      return;
+    }
+    if (key === 'l' && v) {
+      const next = v.paused ? 1 : Math.min((v.playbackRate || 1) * 2, 4);
+      v.playbackRate = next; setRate(next); v.play();
+    }
+  };
   const delSeg = () => { if (sel) { edit((d) => { d.parts[sel.pi].segments.splice(sel.si, 1); }); setSel(null); } };
   const shift = (by) => {
     if (!sel) return;
@@ -264,6 +322,51 @@ export function TimelineEdit() {
     }, 'Looking for this scene in the other episodes');
   };
   const isMovie = (src) => doc.sources?.[src]?.kind === 'movie';
+  const onKey = (e) => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName || '') || e.target?.isContentEditable;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return; }
+    if (mod && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); undo(); return; }
+    if (typing || mod || e.altKey || view !== 'edit') return;
+    const k = e.key.toLowerCase();
+    if (k === 'j' || k === 'k' || k === 'l') { e.preventDefault(); jkl(k); }
+    else if (k === 'i') markIn();
+    else if (k === 'o') markOut();
+    else if (k === '?') setHelp((h) => !h);
+  };
+  const lane = (id) => !hiddenLanes[id];
+  const toggleLane = (id) => setHiddenLanes((h) => ({ ...h, [id]: !h[id] }));
+  const titled = flat.segs.filter((x) => x.seg.title);
+  const music = flat.segs.filter((x) => x.seg.audio?.src);
+  const withFx = flat.segs.filter((x) => fxList(x.seg).length);
+  const menus = [
+    ['File', [
+      ['Save', save, { keys: 'Ctrl+S', disabled: busy }],
+      ['Import recipe…', openImport],
+      ['Export recipe', exportRecipe, { disabled: busy }],
+      ['Render…', () => navigate(`/cuts/${enc(id)}/build`, { state: crumb.state })],
+      ['Back to the cut', () => navigate(`/cuts/${enc(id)}`, { state: crumb.state })],
+    ]],
+    ['Edit', [
+      ['Undo', undo, { keys: 'Ctrl+Z', disabled: !undoable }],
+      ['Move earlier', () => shift(-1), { disabled: !sel || sel.si === 0 }],
+      ['Move later', () => shift(1), { disabled: !sel || sel.si >= (doc.parts[sel.pi]?.segments.length || 1) - 1 }],
+      ['Delete segment', delSeg, { disabled: !sel, danger: true }],
+    ]],
+    ['Cut', [
+      ['Add part', () => edit((d) => d.parts.push({ title: `Part ${d.parts.length + 1}`, segments: [] }))],
+      ['Add segment', () => addSeg(sel ? sel.pi : undefined), { disabled: !srcOptions.length && !srcKeys.length }],
+      ['Mark in', markIn, { keys: 'I', disabled: !selSeg || viewer?.src !== selSeg.src }],
+      ['Mark out', markOut, { keys: 'O', disabled: !selSeg || viewer?.src !== selSeg.src }],
+      ['AI outline…', () => setAiOpen(true), { disabled: !base }],
+    ]],
+    ['View', [
+      ['Edit', () => setView('edit')], ['Sync', () => setView('sync')],
+      ['Colour', () => setView('colour')], ['Render plan', () => setView('render')],
+      ['Viewer: fit', () => setZoom('fit')], ['Viewer: 100 %', () => setZoom('100')], ['Viewer: 200 %', () => setZoom('200')],
+    ]],
+    ['Help', [['Keyboard shortcuts', () => setHelp((h) => !h), { keys: '?' }]]],
+  ];
 
   // Assist: real things to look at, from validation, missing files and the sync report.
   const assist = [];
@@ -317,6 +420,26 @@ export function TimelineEdit() {
     <div className="page page-wide">
       <Notice msg={msg} onClose={clear} />
       <div className="nle">
+        <KeyListener onKey={onKey} />
+        <nav className="menubar" aria-label="Editor menu">
+          {/* menu items run on click (edit/undo touch the undo history ref then), never during render */}
+          {/* eslint-disable-next-line react-hooks/refs */}
+          {menus.map(([name, items]) => <MoreMenu key={name} label={name} items={items} className="bt" align="left" />)}
+        </nav>
+        {help && (
+          <div className="pn" style={{ margin: '0 6px', padding: '10px 14px' }}>
+            <div className="row"><b className="grow">Keyboard shortcuts</b><button type="button" className="bt" onClick={() => setHelp(false)} aria-label="Close shortcuts">✕</button></div>
+            <dl className="shortcuts">
+              <dt>J</dt><dd>Back 2 seconds (keep pressing to go further back)</dd>
+              <dt>K</dt><dd>Play or pause</dd>
+              <dt>L</dt><dd>Play; press again for 2× and 4×</dd>
+              <dt>I / O</dt><dd>Mark the selected segment's in / out at the viewer time</dd>
+              <dt>Ctrl+S</dt><dd>Save</dd>
+              <dt>Ctrl+Z</dt><dd>Undo</dd>
+              <dt>?</dt><dd>Show or hide this list</dd>
+            </dl>
+          </div>
+        )}
         <div className="bar">
           <div className="bar-l">
             <Link to="/" className="bt" aria-label="FansCut home" title="FansCut home">⌂</Link>
@@ -326,7 +449,7 @@ export function TimelineEdit() {
           </div>
           <div className="bar-r">
             <div role="tablist" aria-label="Mode" style={{ display: 'flex', gap: 16 }}>
-              {[['edit', 'Edit'], ['sync', 'Sync'], ['render', 'Render']].map(([v, t]) => (
+              {[['edit', 'Edit'], ['sync', 'Sync'], ['colour', 'Colour'], ['render', 'Render']].map(([v, t]) => (
                 <button key={v} type="button" role="tab" className="mtab" aria-selected={view === v} onClick={() => setView(v)}>{t}</button>
               ))}
             </div>
@@ -438,9 +561,11 @@ export function TimelineEdit() {
                   <span>Source: {viewer ? `${viewer.src} ${fmtTime(viewerT)}` : '–'}</span>
                 </div>
                 <div className="viewer">
-                  <div className="screen">
+                  <div className={`screen${zoom === 'fit' ? '' : ' zoomed'}`}>
                     {viewer && !videoErr ? (
-                      <video key={`${viewer.src}@${viewer.t}`} controls autoPlay
+                      <video ref={video} key={`${viewer.src}@${viewer.t}`} controls autoPlay
+                        style={zoom === 'fit' ? undefined : { width: `${zoom}%`, height: 'auto', maxWidth: 'none' }}
+                        onRateChange={(e) => setRate(e.currentTarget.playbackRate)}
                         src={`/api/timelines/${enc(id)}/sources/${enc(viewer.src)}/preview?t=${viewer.t}`}
                         onLoadedMetadata={(e) => { e.currentTarget.currentTime = viewer.t - clipBase; }}
                         onTimeUpdate={(e) => setNow(clipBase + e.currentTarget.currentTime)}
@@ -455,7 +580,14 @@ export function TimelineEdit() {
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '6px 12px', borderTop: '1px solid var(--nl)', color: 'var(--nc)' }}>
                   <span className="tc">{fmtTime(viewerT, 1)}</span>
-                  <span className="tiny" style={{ color: 'var(--nm)' }}>10 s preview around the point</span>
+                  <span className="transport" role="group" aria-label="Transport">
+                    <button type="button" className="bt" onClick={() => jkl('j')} disabled={!viewer} title="Back 2 s (J)">J ◀</button>
+                    <button type="button" className="bt" onClick={() => jkl('k')} disabled={!viewer} title="Play / pause (K)">K ❚❚</button>
+                    <button type="button" className="bt" onClick={() => jkl('l')} disabled={!viewer} title="Play, faster on repeat (L)">L ▶{rate > 1 ? ` ${rate}×` : ''}</button>
+                  </span>
+                  <select className="sel" aria-label="Viewer zoom" value={zoom} onChange={(e) => setZoom(e.target.value)} style={{ width: 96 }}>
+                    <option value="fit">Fit</option><option value="50">50 %</option><option value="100">100 %</option><option value="200">200 %</option>
+                  </select>
                   {selSeg && (
                     <span style={{ display: 'flex', gap: 6 }}>
                       <button type="button" className="bt" onClick={() => look(selSeg.src, selSeg.start)}>Go to in</button>
@@ -541,6 +673,7 @@ export function TimelineEdit() {
                           onChange={(e) => setSeg('desc', e.target.value)} /></dd>
                       </dl>
                     </div>
+                    <SegmentFx seg={selSeg} set={setSegFx} first={sel.pi === 0 && sel.si === 0} />
                     <div className="grp">
                       <b>Part</b>
                       <dl className="kvp">
@@ -590,9 +723,24 @@ export function TimelineEdit() {
                     <span className="tc" style={{ fontSize: 18 }}>{fmtTime(selFlat?.at ?? 0)}</span>
                   </div>
                   <div style={{ height: 24, borderBottom: '1px solid var(--nl)', padding: '0 12px', color: 'var(--nm)', fontSize: 12, display: 'flex', alignItems: 'center' }}>Joins</div>
-                  <div className="tl-h"><span className="mono" style={{ color: 'var(--nm)' }}>P</span><span>Parts</span><span style={{ color: 'var(--nm)', fontSize: 12 }}>{doc.parts.length}</span></div>
-                  <div className="tl-h" style={{ background: '#222A36' }}><span className="mono" style={{ color: 'var(--nm)' }}>V1</span><span>Picture</span><span style={{ color: 'var(--nm)', fontSize: 12 }}>{flat.segs.length} segments</span></div>
-                  <div className="tl-h"><span className="mono" style={{ color: 'var(--nm)' }}>A1</span><span>Crossfades</span><span style={{ color: 'var(--nm)', fontSize: 12 }}>{flat.segs.filter((x) => x.seg.xfade_ms).length}</span></div>
+                  <div className="tl-h" style={{ height: 22, color: 'var(--nm)', fontSize: 11 }} aria-hidden="true">
+                    <span>On</span><span>#</span><span>Contents</span><span>fx</span>
+                  </div>
+                  {[
+                    ['parts', 'P', 'Parts', `${doc.parts.length}`, null],
+                    ['v2', 'V2', 'Titles', `${titled.length}`, '👁'],
+                    ['v1', 'V1', 'Picture', `${withFx.length}/${flat.segs.length}`, '👁'],
+                    ['a1', 'A1', 'Crossfades', `${flat.segs.filter((x) => x.seg.xfade_ms).length}`, '🔈'],
+                    ['a2', 'A2', 'Music bridges', `${music.length}`, '🔈'],
+                  ].map(([lid, num, name, fx, icon]) => (
+                    <div key={lid} className="tl-h" style={lid === 'v1' ? { background: '#222A36' } : undefined}>
+                      {icon ? <button type="button" className="sw-btn" aria-pressed={lane(lid)} aria-label={`Show ${name}`}
+                        onClick={() => toggleLane(lid)}>{icon}</button> : <span />}
+                      <span className="mono" style={{ color: 'var(--nm)' }}>{num}</span>
+                      <span className="ell">{name}</span>
+                      <span style={{ color: 'var(--nm)', fontSize: 12 }} title={lid === 'v1' ? 'segments with effects / all segments' : undefined}>{fx}</span>
+                    </div>
+                  ))}
                 </div>
                 <div style={{ position: 'relative', padding: '0 12px', minWidth: 0 }}>
                   <div className="mono" style={{ position: 'relative', height: 40, borderBottom: '1px solid var(--nl)', fontSize: 11, color: 'var(--nm)' }}>
@@ -602,6 +750,7 @@ export function TimelineEdit() {
                     {joins.map((j) => <span key={j.i} className="join" style={{ left: `${pct(j.at)}%`, top: 3 }} title={`${j.from} → ${j.to}`}>{j.from} → {j.to}</span>)}
                   </div>
                   <div style={{ position: 'relative' }}>
+                    <div style={{ height: 22, borderBottom: '1px solid #242424' }} aria-hidden="true" />
                     <div className="lane">
                       {(() => {
                         let at = 0;
@@ -616,7 +765,17 @@ export function TimelineEdit() {
                         });
                       })()}
                     </div>
-                    <div className="lane" style={{ background: '#1E232B' }}>
+                    <div className={`lane${lane('v2') ? '' : ' hidden'}`} aria-label="Titles">
+                      {titled.map((x) => (
+                        <button key={`t${x.pi}-${x.si}`} type="button" className="mark" onClick={() => select(x.pi, x.si)}
+                          title={`Title card on segment ${x.n}: “${x.seg.title.text}” for ${x.seg.title.duration} s`}
+                          style={{ all: 'unset', cursor: 'pointer', position: 'absolute', top: 7, bottom: 7, borderRadius: 3, padding: '0 5px', fontSize: 11, lineHeight: '20px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', color: '#141414',
+                            left: `${pct(x.at)}%`, width: `max(40px, ${pct(Math.min(x.seg.title.duration, x.dur))}%)`, background: '#E6D3A3' }}>
+                          T {x.seg.title.text}
+                        </button>
+                      ))}
+                    </div>
+                    <div className={`lane${lane('v1') ? '' : ' hidden'}`} style={{ background: '#1E232B' }}>
                       {flat.segs.map((x) => {
                         const tgt = { kind: 'seg', pi: x.pi, si: x.si };
                         const st = report?.synced ? report.sources?.[x.seg.src]?.segments?.[`${x.pi + 1}:${x.si + 1}`] : null;
@@ -629,14 +788,21 @@ export function TimelineEdit() {
                             style={{ left: `${pct(x.at)}%`, width: `${pct(x.dur)}%`, background: missingSet.has(x.seg.src) ? '#444' : colorOf(x.seg.src) }}
                             onClick={() => select(x.pi, x.si)}>
                             {x.n} {x.seg.desc || x.seg.src}
+                            {fxList(x.seg).length > 0 && <span className="fxdot" title={fxList(x.seg).join(', ')}>fx</span>}
                           </button>
                         );
                       })}
                     </div>
-                    <div className="lane">
+                    <div className={`lane${lane('a1') ? '' : ' hidden'}`}>
                       {flat.segs.filter((x) => x.seg.xfade_ms).map((x) => (
                         <span key={`${x.pi}-${x.si}`} title={`${x.seg.xfade_ms} ms crossfade into segment ${x.n}`}
                           style={{ position: 'absolute', top: 10, left: `${pct(x.at)}%`, width: 9, height: 9, background: '#E6E6E6', transform: 'translateX(-4px) rotate(45deg)' }} />
+                      ))}
+                    </div>
+                    <div className={`lane${lane('a2') ? '' : ' hidden'}`} aria-label="Music bridges">
+                      {music.map((x) => (
+                        <span key={`a${x.pi}-${x.si}`} className="mark" title={`Music from ${x.seg.audio.src} at ${fmtTime(x.seg.audio.start || 0)} under segment ${x.n}`}
+                          style={{ left: `${pct(x.at)}%`, width: `${pct(x.dur)}%`, background: '#9CC8A6' }}>♪ {x.seg.audio.src}</span>
                       ))}
                     </div>
                     {joins.map((j) => (
@@ -651,6 +817,37 @@ export function TimelineEdit() {
               </div>
             </section>
           </>
+        )}
+
+        {view === 'colour' && (
+          <section className="pn" aria-label="Colour" style={{ margin: '0 6px' }}>
+            <div className="ph">
+              <span className="on">Colour</span>
+              <span>{flat.segs.filter((x) => x.seg.video?.grade).length} of {flat.segs.length} segments graded</span>
+            </div>
+            {flat.segs.length === 0 ? <p style={{ padding: 14, margin: 0, color: 'var(--nm)' }}>No segments yet.</p> : (
+              <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+                <ol className="list" style={{ flex: '0 1 260px', maxHeight: 520, overflowY: 'auto', borderRight: '1px solid var(--nl)' }}>
+                  {flat.segs.map((x) => (
+                    <li key={`${x.pi}-${x.si}`}>
+                      <button type="button" className="prow" aria-pressed={sel?.pi === x.pi && sel?.si === x.si} onClick={() => select(x.pi, x.si)}>
+                        <span className="mono" style={{ color: 'var(--nm)', fontSize: 11 }}>{x.n}</span>
+                        <span className="sw" style={{ background: colorOf(x.seg.src) }} />
+                        <span className="ell">{x.seg.desc || `${x.seg.src} ${fmtTime(x.seg.start)}`}</span>
+                        <span style={{ color: x.seg.video?.grade ? 'var(--nlink)' : 'var(--nm)', fontSize: 12 }}>{x.seg.video?.grade ? 'graded' : ''}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+                <div style={{ flex: '1 1 520px', minWidth: 0 }}>
+                  {selSeg
+                    ? <GradePanel tid={id} seg={selSeg} set={setSegFx} onCopy={copyGrade} saved={!dirty || Boolean(data?.doc?.sources?.[selSeg.src])}
+                        sameSource={flat.segs.filter((x) => x.seg.src === selSeg.src).length} />
+                    : <p style={{ padding: 14, margin: 0, color: 'var(--nm)' }}>Pick a segment to grade it.</p>}
+                </div>
+              </div>
+            )}
+          </section>
         )}
 
         {view === 'sync' && (

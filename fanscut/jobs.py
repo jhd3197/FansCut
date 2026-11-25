@@ -50,6 +50,12 @@ class JobContext:
         extra = {"message": message} if message else {}
         self.store.update(self.job_id, progress=round(p, 4), **extra)
 
+    def phase(self, i: int, n: int, name: str, detail: str = "") -> None:
+        """Step i of n (1-based) with a name and a line of detail, for the Jobs page."""
+        self.check()
+        self.store.update(self.job_id, phase={"i": i, "n": n, "name": name, "detail": detail},
+                          message=f"{name}{' · ' + detail if detail else ''}")
+
     def check(self) -> None:
         """Raise JobCancelled if the job was cancelled; call between units of work."""
         if self.cancel.is_set():
@@ -72,6 +78,7 @@ class JobStore:
         d = dict(row)
         d["payload"] = json.loads(d["payload"])
         d["result"] = json.loads(d["result"])
+        d["phase"] = json.loads(d.get("phase") or "{}")
         return d
 
     def add(self, kind: str, title: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -115,7 +122,7 @@ class JobStore:
             " GROUP BY status")}
 
     def update(self, jid: str, **fields: Any) -> None:
-        for k in ("payload", "result"):
+        for k in ("payload", "result", "phase"):
             if k in fields:
                 fields[k] = dumps(fields[k])
         fields["updated_at"] = _now()

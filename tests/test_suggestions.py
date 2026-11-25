@@ -184,3 +184,45 @@ def test_cut_opens_in_plex_once_scanned(client, took_library):
     url = client.get(f"/api/cuts/{tid}/plex").json()["url"]
     assert url.endswith("%2Flibrary%2Fmetadata%2F4242")
     assert core.db.one("SELECT rating_key FROM plex_items WHERE ref = ?", (tid,))[0] == "4242"
+
+
+def test_genre_and_season_helpers():
+    from fanscut import suggest
+
+    assert suggest.rank_genres([["Adventure", "Fantasy"], ["Fantasy", "Action"], ["Fantasy"]]) \
+        == ["Fantasy", "Adventure"]
+    assert suggest.rank_genres([]) == []
+    assert suggest.season_of(["Home Alone", "The Santa Clause 2"]) == "christmas"
+    assert suggest.season_of(["Hocus Pocus"]) == "halloween"
+    assert suggest.season_of(["The Hobbit"]) is None
+    assert suggest.season_of(["The Hobbit"], "halloween") == "halloween"
+    assert suggest.season_of(["Santana"]) is None  # whole words only
+    beauty = ["Beauty and the Beast", "Beauty and the Beast: The Enchanted Christmas",
+              "Belle's Magical World"]
+    assert suggest.season_for("Beauty and the Beast", beauty) is None  # one sequel is not enough
+    assert suggest.season_for("The Santa Clause", ["The Santa Clause", "The Santa Clause 2"])         == "christmas"
+    assert suggest.season_for("Alien", ["Alien"], "halloween") == "halloween"
+
+
+def test_suggestions_carry_genres_from_the_library(client, took_library):
+    films = [plex_movie(i, t, y, tmdb, "The Hobbit Collection") for i, (t, y, tmdb) in enumerate(HOBBIT)]
+    for f in films:
+        f["Genre"] = [{"tag": "Adventure"}, {"tag": "Fantasy"}]
+    films[0]["Genre"] = [{"tag": "Fantasy"}, {"tag": "Adventure"}]
+    took_library.replace(responses.GET, f"{PLEX}/library/sections/2/all",
+                         json={"MediaContainer": {"Metadata": films}})
+    client.app_ref.state.core.library.refresh()
+    sugg = client.get("/api/suggestions").json()["suggestions"]
+    merge = next(s for s in sugg if s["kind"] == "collection_merge")
+    assert merge["genres"] == ["Adventure", "Fantasy"] and merge["season"] is None
+
+
+def test_library_reads_genres_from_every_source():
+    from fanscut.library.service import Library
+
+    lib = Library.__new__(Library)
+    lib._map = lambda p: p
+    assert lib._radarr_movie({"id": 1, "title": "x", "genres": ["Fantasy", 3]}).genres == ["Fantasy"]
+    assert lib._plex_movie({"ratingKey": "1", "title": "x", "Genre": [{"tag": "Comedy"}]}).genres == ["Comedy"]
+    assert Library._sonarr_series({"id": 1, "title": "x", "genres": ["Anime"]}).genres == ["Anime"]
+    assert Library._plex_series({"ratingKey": "2", "title": "x", "Genre": [{"tag": "Drama"}]}).genres == ["Drama"]

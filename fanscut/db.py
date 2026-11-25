@@ -211,6 +211,15 @@ def _v9() -> str:
 
 
 def _v10() -> str:
+    # A running job's structured phase ({"i", "n", "name", "detail"}) for the Jobs page,
+    # and a cut's "rebuild only what changed when the recipe changes" option.
+    return """
+        ALTER TABLE jobs ADD COLUMN phase TEXT NOT NULL DEFAULT '{}';
+        ALTER TABLE timelines ADD COLUMN auto_rebuild INTEGER NOT NULL DEFAULT 0;
+    """
+
+
+def _v11() -> str:
     # Scene tagging: each film's index (shots, subtitle lines, scenes), tagged
     # ranges with the people in them, and the cast from Plex or TMDB.
     return """
@@ -243,7 +252,7 @@ def _v10() -> str:
     """
 
 
-MIGRATIONS: list[Callable[[], str]] = [_v1, _v2, _v3, _v4, _v5, _v6, _v7, _v8, _v9, _v10]
+MIGRATIONS: list[Callable[[], str]] = [_v1, _v2, _v3, _v4, _v5, _v6, _v7, _v8, _v9, _v10, _v11]
 
 
 class Database:

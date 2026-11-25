@@ -23,6 +23,7 @@ class Series:
     season_count: int = 0  # regular seasons, specials not counted
     is_anime: bool = False
     collections: list[str] = field(default_factory=list)  # Plex collection tags
+    genres: list[str] = field(default_factory=list)  # TMDB genres, main first
     # where its art lives: an https URL (TMDB, via Sonarr) or a Plex path
     poster: str | None = None
     backdrop: str | None = None
@@ -54,6 +55,7 @@ class Movie:
     duration: float | None = None  # seconds
     collections: list[str] = field(default_factory=list)  # Plex collection tags
     plex_key: str | None = None  # Plex ratingKey, kept when Radarr's entry absorbs Plex's
+    genres: list[str] = field(default_factory=list)  # TMDB genres, main first
     tmdb_collection: int | None = None  # TMDB collection id (Radarr), e.g. 119 for LOTR
     # where its art lives: an https URL (TMDB, via Radarr) or a Plex path
     poster: str | None = None
