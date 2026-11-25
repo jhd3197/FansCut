@@ -15,6 +15,7 @@ from typing import Any
 
 import requests
 
+from . import ai as ai_mod
 from . import recipe as recipe_mod
 from .catalogues import match as catalogue_match
 from .catalogues.http import CachedHttp
@@ -468,6 +469,17 @@ class Core:
                 self.db.execute(
                     "INSERT OR IGNORE INTO trims (series_key, episode_id, kind, start, end, source)"
                     " VALUES (?,?,?,?,?,'auto')", (key, eid, kind, s, e))
+
+    # -- AI-assisted recipes ----------------------------------------------------
+    def ai_recipe(self, key: str, notes: str, apply: bool = False) -> dict[str, Any]:
+        """Community cut notes -> validated recipe (schema 2); optionally applied."""
+        series = self.library.get_series(key)
+        doc = ai_mod.generate_recipe(self.cfg.ai, series, self.library.episodes(key),
+                                     notes, session=self.session)
+        out: dict[str, Any] = {"recipe": doc}
+        if apply:
+            out["import"] = self.import_recipe(key, doc)
+        return out
 
     # -- recipes --------------------------------------------------------------
     def export_recipe(self, key: str) -> dict[str, Any]:

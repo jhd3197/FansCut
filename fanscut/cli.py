@@ -53,6 +53,20 @@ def _scan(_args: argparse.Namespace, cfg: config.Config) -> int:
     return 1 if errors else 0
 
 
+def _recipe_ai(args: argparse.Namespace, cfg: config.Config) -> int:
+    """fanscut recipe ai --series KEY --notes notes.txt [--apply]"""
+    from pathlib import Path
+
+    core = Core(cfg, Database(cfg.db_path))
+    notes = Path(args.notes).read_text(encoding="utf-8")
+    out = core.ai_recipe(args.series, notes, apply=args.apply)
+    print(json.dumps(out["recipe"], indent=2))
+    if "import" in out:
+        print(f"applied: {out['import']['applied']}, skipped: {out['import']['skipped']}",
+              file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="fanscut", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -68,6 +82,12 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("action", choices=["refresh"])
     f.set_defaults(fn=_fillers)
     sub.add_parser("scan", help="list series from the configured sources").set_defaults(fn=_scan)
+    r = sub.add_parser("recipe", help="cut recipes")
+    r.add_argument("action", choices=["ai"])
+    r.add_argument("--series", required=True, help="series key, e.g. sonarr:12")
+    r.add_argument("--notes", required=True, help="text file with community cut notes")
+    r.add_argument("--apply", action="store_true", help="import the result, not just print it")
+    r.set_defaults(fn=_recipe_ai)
     args = ap.parse_args(argv)
     logging.basicConfig(
         level=logging.INFO,

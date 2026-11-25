@@ -50,3 +50,14 @@ def export_recipe(core: CoreDep, key: str) -> dict[str, Any]:
 @router.post("/series/{key}/recipe")
 def import_recipe(core: CoreDep, key: str, body: dict[str, Any]) -> dict[str, Any]:
     return core.import_recipe(key, body)
+
+
+class AIRecipeBody(BaseModel):
+    notes: str = Field(min_length=1)
+    apply: bool = False
+
+
+@router.post("/series/{key}/recipe/ai")
+def ai_recipe(core: CoreDep, key: str, body: AIRecipeBody) -> dict[str, Any]:
+    """Community cut notes -> recipe via the configured LLM; apply=true imports it."""
+    return core.ai_recipe(key, body.notes, body.apply)

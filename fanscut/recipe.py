@@ -109,4 +109,5 @@ def validate(doc: Any) -> dict[str, Any]:
                 trims[kind] = None if rng is None else _range(rng, f"{eid}.{kind}")
             clean["trims"] = trims
         episodes[str(eid)] = clean
-    return {"series": series, "preset": preset, "options": options, "episodes": episodes}
+    return {"schema": doc["schema"], "series": series, "preset": preset,
+            "options": options, "episodes": episodes}
