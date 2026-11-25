@@ -1,3 +1,4 @@
+// @ts-check
 // "1:05:09" / "24:03" / "0:07.5" for display; parse accepts the same plus plain seconds.
 export function fmtTime(sec, decimals = 0) {
   if (sec == null || Number.isNaN(sec)) return '–';

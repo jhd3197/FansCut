@@ -11,6 +11,7 @@ on:
       - 'tests/**'
       - 'pyproject.toml'
       - 'requirements.txt'
+      - 'requirements.lock'
       - '.github/scripts/**'
       - '.github/workflows/backend-ci.yml'
   workflow_call:
@@ -26,18 +27,36 @@ permissions:
 
 jobs:
   check:
-    name: ruff, mypy, pytest
+    name: ruff, mypy, pytest (${{ matrix.python }})
     if: github.event_name != 'pull_request' || github.head_ref != 'dev'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pyproject says >=3.11: test the oldest and the newest it claims.
+        python: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: mypy fanscut/
-      - run: pytest -q -n auto
+      # Coverage was 88% when the floor went in; raise it as tests grow.
+      - run: >-
+          pytest -q -n auto --junitxml=pytest-junit.xml
+          --cov=fanscut --cov-report=term-missing:skip-covered --cov-fail-under=85
+      # Failed tests as annotations on the run (annotate_only: no checks permission needed,
+      # so this also works when release.yml calls this workflow).
+      - name: Test report
+        if: always()
+        uses: mikepenz/action-junit-report@a16be3a69023e9bd7e748ede768b3282ea7b30ce # v6.7.1
+        with:
+          report_paths: pytest-junit.xml
+          annotate_only: true
+          detailed_summary: true
+          include_passed: false

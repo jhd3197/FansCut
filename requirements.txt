@@ -1,4 +1,6 @@
 # Runtime dependencies. Keep in sync with pyproject.toml.
+# After changing this file, refresh the lock the Docker image installs:
+#   uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes -o requirements.lock
 requests>=2.31
 PyYAML>=6.0
 fastapi>=0.110

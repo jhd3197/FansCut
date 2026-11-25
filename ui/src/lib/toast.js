@@ -1,3 +1,4 @@
+// @ts-check
 // Global toasts: toast('Saved') from anywhere; <Toasts /> in the shell shows them.
 // Success toasts close after 4 s, errors after 8 s; both can be dismissed.
 const listeners = new Set();
@@ -13,6 +14,10 @@ export function dismiss(id) {
   emit();
 }
 
+/**
+ * @param {string} text
+ * @param {{ ok?: boolean, ms?: number }} [opts]
+ */
 export function toast(text, { ok = true, ms } = {}) {
   const id = next++;
   items = [...items.slice(-3), { id, text, ok }];

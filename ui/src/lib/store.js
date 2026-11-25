@@ -1,3 +1,4 @@
+// @ts-check
 // A small shared cache for GET requests, in the spirit of SWR:
 // - one entry per path, shared by every component that reads it;
 // - a component that mounts gets the cached data at once (no "Loading…"

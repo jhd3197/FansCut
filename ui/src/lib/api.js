@@ -1,3 +1,4 @@
+// @ts-check
 // Thin fetch wrapper: JSON in, JSON out, errors carry the server's `detail`.
 
 export class ApiError extends Error {
@@ -25,6 +26,10 @@ let onWrite = null;
 export function setOnWrite(fn) { onWrite = fn; }
 
 // `read: true` marks a POST that only computes (a dry run): it changes nothing.
+/**
+ * @param {string} path
+ * @param {{ method?: string, body?: unknown, read?: boolean }} [opts]
+ */
 export async function api(path, { method = 'GET', body, read = false } = {}) {
   const init = { method, headers: {} };
   if (body !== undefined) {

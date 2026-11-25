@@ -1,3 +1,4 @@
+// @ts-check
 export const LABELS = ['canon', 'mixed', 'filler', 'unknown'];
 
 export const PRESET_NAMES = {

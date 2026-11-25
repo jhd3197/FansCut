@@ -7,7 +7,7 @@
 #   ./dev.sh lint           ruff + mypy
 #   ./dev.sh ui             UI dev server with live reload (http://127.0.0.1:5464,
 #                           proxies /api to a running `./dev.sh serve`)
-#   ./dev.sh validate       everything CI runs: ruff, mypy, pytest, UI lint,
+#   ./dev.sh validate       everything CI runs: ruff, mypy, pytest, UI lint, typecheck,
 #                           UI tests and the UI build
 #   ./dev.sh check          same as validate
 #   ./dev.sh test-web       UI lint and UI tests (Vitest)
@@ -70,6 +70,7 @@ case "$cmd" in
         step "pytest" "$PYTHON" -m pytest -q -n auto
         [ -d ui/node_modules ] || step "npm ci" ui npm ci
         step "ui lint" ui npm run lint
+        step "ui typecheck" ui npm run typecheck
         step "ui test" ui npm test
         step "ui build" ui npm run build
         printf '\nall good\n'

@@ -24,7 +24,7 @@ jobs:
     steps:
       - name: Require a merged dev promotion for stable releases
         if: github.ref_name != 'dev'
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -90,58 +90,171 @@ jobs:
             echo "::notice::$BRANCH has moved on to ${head:0:7}; that run publishes instead."
           fi
 
-  publish:
-    name: Publish container and release
+  # Each architecture builds on its own native runner (no QEMU emulation) and
+  # pushes by digest only; `publish` then joins the two into one tagged image.
+  build:
+    name: Build ${{ matrix.platform }}
     needs: freshness
     if: needs.freshness.outputs.current == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
-      contents: write
+      contents: read
       packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
+      # Deterministic from the tags and run number, so both runners agree.
       - name: Resolve version and stamp the container source
         id: version
         run: python .github/scripts/release_version.py
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and publish both architectures
-        uses: docker/build-push-action@v7
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ steps.version.outputs.image }}:${{ steps.version.outputs.channel }}
-            ${{ steps.version.outputs.image }}:${{ steps.version.outputs.version }}
-            ${{ steps.version.outputs.image }}:sha-${{ github.sha }}
+          platforms: ${{ matrix.platform }}
+          build-args: FANSCUT_COMMIT=${{ github.sha }}
           labels: |
             org.opencontainers.image.title=fanscut
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=${{ github.ref_name }}
-          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}
+          outputs: type=image,name=${{ steps.version.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ github.ref_name }}-${{ matrix.runner }}
+          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}-${{ matrix.runner }}
+      - name: Save the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digest-${{ matrix.runner }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish container and release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+      id-token: write  # keyless cosign signing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - name: Resolve version
+        id: version
+        run: python .github/scripts/release_version.py
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Join the architectures under the release tags
+        id: manifest
+        env:
+          IMAGE: ${{ steps.version.outputs.image }}
+          VERSION: ${{ steps.version.outputs.version }}
+          CHANNEL: ${{ steps.version.outputs.channel }}
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          # :0.1 and :0 follow the newest stable release of that line (not on dev)
+          extra=()
+          if [ "$CHANNEL" = latest ]; then
+            minor="${VERSION%.*}"; major="${VERSION%%.*}"
+            extra=(-t "$IMAGE:$minor" -t "$IMAGE:$major")
+          fi
+          # shellcheck disable=SC2046  # one argument per digest file, on purpose
+          docker buildx imagetools create \
+            -t "$IMAGE:$CHANNEL" -t "$IMAGE:$VERSION" -t "$IMAGE:sha-$GITHUB_SHA" "${extra[@]}" \
+            $(printf "$IMAGE@sha256:%s " *)
+          digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      # Sign the image and attach its SBOM, both keyless (Sigstore, via this
+      # workflow's OIDC identity). Verify with:
+      #   cosign verify ghcr.io/jhd3197/fanscut:latest \
+      #     --certificate-identity-regexp 'https://github.com/jhd3197/FansCut/' \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      - uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
+      - name: Make an SBOM (CycloneDX)
+        uses: anchore/sbom-action@dfcb83b97731532d72be422cbc51ee64adb6fd56 # v0.24.4
+        with:
+          image: ${{ steps.version.outputs.image }}@${{ steps.manifest.outputs.digest }}
+          format: cyclonedx-json
+          output-file: ${{ runner.temp }}/sbom.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Sign the image and attest the SBOM
+        env:
+          REF: ${{ steps.version.outputs.image }}@${{ steps.manifest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$REF"
+          cosign attest --yes --type cyclonedx --predicate "$RUNNER_TEMP/sbom.cdx.json" "$REF"
+      - name: Check the signature
+        env:
+          REF: ${{ steps.version.outputs.image }}@${{ steps.manifest.outputs.digest }}
+        run: |
+          cosign verify "$REF" \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          echo "signature verified for $REF"
+      # Release notes from the commits since the last stable tag, grouped by
+      # what they did (cliff.toml), rather than a bare list of merged PRs.
+      - name: Write release notes
+        if: github.ref_name != 'dev'
+        id: notes
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
+        with:
+          config: .github/cliff.toml
+          args: --unreleased --tag ${{ steps.version.outputs.tag }} --strip header
+        env:
+          OUTPUT: ${{ runner.temp }}/NOTES.md
       # Tag and release only after the image is out. GITHUB_TOKEN tag pushes
       # do not start another workflow.
       - name: Create stable tag and GitHub release
         if: github.ref_name != 'dev'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          generate_release_notes: true
+          body_path: ${{ runner.temp }}/NOTES.md
+          files: ${{ runner.temp }}/sbom.cdx.json
           make_latest: true
       - name: Verify anonymous access to the published image
         env:

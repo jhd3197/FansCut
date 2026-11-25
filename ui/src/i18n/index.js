@@ -1,3 +1,4 @@
+// @ts-check
 // A small message layer: t('nav.jobs'), t('nav.running', { n: 2 }).
 // The language follows the browser (navigator.languages); a locale file only
 // has to list the keys it translates, the rest stay English.
