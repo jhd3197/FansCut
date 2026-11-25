@@ -129,3 +129,27 @@ def _arr_extras(client: Any) -> dict[str, Any]:
         with contextlib.suppress(ClientError, AttributeError):
             out[name] = getattr(client, fn)()
     return out
+
+
+# -- caches -----------------------------------------------------------------------
+@router.get("/api/system/cache", tags=["system"])
+def cache_stats(core: CoreDep) -> dict[str, Any]:
+    """Sizes and hit counts of the art cache, the library listing cache and the
+    catalogue HTTP cache."""
+    row = core.db.one("SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(body)), 0) AS b FROM http_cache")
+    return {"art": core.art.stats(), "library": core.library.cache.summary(),
+            "http": {"rows": row["n"] if row else 0, "bytes": row["b"] if row else 0}}
+
+
+@router.post("/api/system/cache/{name}/clear", tags=["system"])
+def cache_clear(core: CoreDep, name: str) -> dict[str, Any]:
+    if name == "art":
+        return {"removed": core.art.clear()}
+    if name == "library":
+        core.library.refresh()
+        return {"removed": 0}
+    if name == "http":
+        n = core.db.one("SELECT COUNT(*) AS n FROM http_cache")
+        core.db.execute("DELETE FROM http_cache")
+        return {"removed": n["n"] if n else 0}
+    raise FansCutError(f"unknown cache {name!r}")

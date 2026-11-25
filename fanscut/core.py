@@ -18,6 +18,7 @@ from typing import Any
 import requests
 
 from . import ai as ai_mod
+from . import art
 from . import recipe as recipe_mod
 from .art import ArtStore, art_ref
 from .catalogues import match as catalogue_match
@@ -32,6 +33,7 @@ from .fingerprint.cache import FingerprintCache
 from .jobs import JobContext, JobStore, Worker
 from .library.service import Library
 from .models import LABELS, TRIM_KINDS, Episode
+from .net import apply_proxy
 from .planner import PRESETS, CutOptions, CutPlan, PlanEpisode, plan_cut
 from .render import ffmpeg, plan, run
 from .render.cache import RenderStore, render_hash
@@ -56,7 +58,8 @@ def _opts_from(base: dict[str, Any], extra: dict[str, Any] | None) -> CutOptions
 class Core:
     def __init__(self, cfg: Config, db: Database, session: requests.Session | None = None):
         self.db = db
-        self.session = session
+        self._own_session = session is None
+        self.session = session or requests.Session()
         self.jobs = JobStore(db)
         self.renders = RenderStore(db)
         self.worker = Worker(self.jobs, {"render": self._job_render, "detect": self._job_detect,
@@ -70,7 +73,13 @@ class Core:
         self.cfg = cfg
         self.prober = ffmpeg.Prober(cfg.ffmpeg, self.db)
         self.library = Library(cfg, self.prober)
-        self.art = ArtStore(self.library, cfg.data_dir / "art")
+        art.CACHE_REMOTE = cfg.art.cache_remote
+        self.art = ArtStore(self.library, cfg.data_dir / "art",
+                            max_bytes=max(16, cfg.art.cache_mb) * 1024 * 1024,
+                            session=self.session)
+        if self._own_session:  # internet calls (catalogues, GitHub) go through network.proxy
+            self.session.proxies = {}
+            apply_proxy(self.session, cfg.network)
         cat = cfg.catalogues
         self.http_jikan = CachedHttp(self.db, 0.4, cat.cache_days, cat.offline, self.session)
         self.http_anilist = CachedHttp(self.db, 0.8, cat.cache_days, cat.offline, self.session)

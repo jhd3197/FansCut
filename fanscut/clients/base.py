@@ -8,6 +8,9 @@ from typing import Any
 import requests
 
 from ..errors import ClientError
+from ..net import read_capped
+
+MAX_IMAGE = 20_000_000  # bytes; a bigger "poster" is not one
 
 
 class BaseClient:
@@ -24,16 +27,23 @@ class BaseClient:
             self.session.headers.update(headers)
 
     def get_image(self, path: str, params: dict[str, Any] | None = None) -> bytes | None:
-        """An image's bytes, or None when the server has none (no retries: art is optional)."""
+        """An image's bytes, or None when the server has none (no retries: art is optional).
+
+        Raises ClientError when the server could not be asked (down, timeout, 5xx,
+        429): that is not "no art", and callers must not remember it as such."""
         try:
             resp = self.session.get(f"{self.base_url}{path}", params=params, timeout=self.timeout,
-                                    headers={"Accept": "image/*"})
-        except requests.RequestException:
-            return None
-        ctype = resp.headers.get("Content-Type", "")
-        if resp.status_code != 200 or not ctype.startswith("image/") or not resp.content:
-            return None
-        return resp.content
+                                    headers={"Accept": "image/*"}, stream=True)
+        except requests.RequestException as exc:
+            raise ClientError(f"{self.service} unreachable: {exc.__class__.__name__}") from exc
+        with resp:
+            if resp.status_code == 429 or resp.status_code >= 500:
+                raise ClientError(f"{self.service} returned HTTP {resp.status_code}",
+                                  resp.status_code)
+            ctype = resp.headers.get("Content-Type", "")
+            if resp.status_code != 200 or not ctype.startswith("image/"):
+                return None
+            return read_capped(resp, MAX_IMAGE) or None
 
     def _once(self, path: str, params: dict[str, Any] | None) -> Any:
         url = f"{self.base_url}{path}"

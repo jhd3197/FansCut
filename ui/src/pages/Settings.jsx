@@ -12,8 +12,34 @@ export function setPath(obj, path, value) {
 
 const SECTIONS = [
   ['sources', 'Sources'], ['output', 'Output'], ['render', 'Rendering'], ['cut', 'Cut defaults'],
-  ['ai', 'AI'], ['auto', 'Automation'], ['data', 'Filler data'],
+  ['ai', 'AI'], ['auto', 'Automation'], ['data', 'Filler data'], ['system', 'Caches & network'],
 ];
+
+const mb = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`);
+
+// Cache sizes and hit counts, each with a clear button.
+function CachePanel() {
+  const c = useLoad(() => api('/system/cache'));
+  const { act, busy } = useAct();
+  const clear = (name) => act(() => api(`/system/cache/${name}/clear`, { method: 'POST' })).then(c.reload);
+  if (!c.data) return null;
+  const { art, library, http } = c.data;
+  const rows = [
+    ['art', 'Posters and backdrops', `${art.images} images · ${mb(art.bytes)} of ${mb(art.max_bytes)} · ${art.counts.hit} hits, ${art.counts.miss} fetched, ${art.counts.error} failed`],
+    ['library', 'Library listings', `${library.entries} lists · ${library.hits} hits, ${library.stale} served while refreshing, ${library.failures} failures`],
+    ['http', 'Catalogue lookups', `${http.rows} replies · ${mb(http.bytes)}`],
+  ];
+  return (
+    <div className="stack10" style={{ paddingTop: 8 }}>
+      {rows.map(([name, label, detail]) => (
+        <div key={name} style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-sm" type="button" disabled={busy} onClick={() => clear(name)}>Clear</button>
+          <span><b>{label}</b> <span className="muted tiny">{detail}</span></span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const CODECS = [
   ['auto', 'Automatic (HEVC 10-bit for HDR, H.264 otherwise)'],
@@ -294,6 +320,18 @@ export function Settings() {
                 </div>
               </div>
             </Row>
+          </section>
+
+          <section id="system" aria-labelledby="system-h">
+            <h2 id="system-h" className="sh">Caches & network</h2>
+            <Row label="Caches"><CachePanel /></Row>
+            <Row label="Remote art" hint="Fetch TMDB/TVDB posters through FansCut and keep them, so browsers never contact those sites. Good for offline or private setups.">
+              <div style={{ paddingTop: 8 }}>{check('art.cache_remote', 'Cache TMDB and TVDB art here')}</div>
+            </Row>
+            {text('art.cache_mb', 'Art cache size', 'MB. The oldest images go first past this.', { type: 'number', min: 16, className: 'inp mono', style: { width: 110 } })}
+            {text('network.timeout', 'Server timeout', 'Seconds to wait for Sonarr, Radarr and Plex.', { type: 'number', min: 2, className: 'inp mono', style: { width: 90 } })}
+            {text('network.proxy', 'Outbound proxy', 'For internet calls (catalogues, GitHub, TMDB). Empty = none.', { placeholder: 'http://proxy:3128', className: 'inp mono' })}
+            <Row label="Proxy bypass"><div style={{ paddingTop: 8 }}>{check('network.proxy_bypass_local', 'Reach LAN servers (Plex, Sonarr, Radarr) directly')}</div></Row>
           </section>
         </div>
       </div>

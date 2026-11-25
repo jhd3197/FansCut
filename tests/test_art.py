@@ -93,8 +93,9 @@ def test_radarr_remote_urls_go_to_the_browser_directly():
                          "poster") is None  # the *arr-local path is not reachable
     m = Movie("radarr:1", "radarr", "The Long Voyage", poster=_remote_image(images, "poster"),
               backdrop=_remote_image(images, "fanart"))
-    assert art_ref(m) == "https://image.tmdb.org/t/p/original/p.jpg"
-    assert art_ref(m, "backdrop").endswith("/f.jpg")
+    # the fragment names the item, so the UI can fall back to /api/art if the CDN fails
+    assert art_ref(m) == "https://image.tmdb.org/t/p/original/p.jpg#k=radarr%3A1"
+    assert art_ref(m, "backdrop").startswith("https://image.tmdb.org/t/p/original/f.jpg#k=")
     # a Plex path (or nothing) stays a key, served through /api/art
     assert art_ref(Movie("plexmovie:9", "plex", "X", poster="/library/metadata/9/thumb/1")) == \
         "plexmovie:9"
@@ -107,3 +108,110 @@ def test_plex_skips_overlaid_uploads_for_the_clean_agent_poster():
         {"key": "upload://posters/kometa-overlay", "provider": "upload", "selected": True},
         {"key": "https://image.tmdb.org/t/p/original/clean.jpg", "provider": "tmdb"}]}})
     assert PlexClient(PLEX, "t").clean_art_path("9") == "https://image.tmdb.org/t/p/original/clean.jpg"
+
+
+# -- cache behaviour ------------------------------------------------------------
+def _store(tmp_path, fetch):
+    from fanscut import art as art_mod
+
+    store = ArtStore(None, tmp_path / "art")  # type: ignore[arg-type]
+    store.fetch = fetch  # type: ignore[method-assign]
+    return store, art_mod
+
+
+def test_transient_error_is_not_remembered_as_no_art(tmp_path):
+    from fanscut.errors import ClientError
+
+    calls = []
+
+    def fetch(key, kind, width):
+        calls.append(key)
+        if len(calls) == 1:
+            raise ClientError("Plex unreachable")
+        return JPEG
+
+    store, _ = _store(tmp_path, fetch)
+    assert store.get("plex:1") is None  # down: nothing to show...
+    assert store.get("plex:1") == JPEG  # ...but the next view asks again
+    assert not list((tmp_path / "art").glob("*.none"))
+
+
+def test_stale_art_is_served_and_kept_when_the_refresh_fails(tmp_path):
+    import os
+    import time
+
+    from fanscut.errors import ClientError
+
+    state = {"fail": False}
+
+    def fetch(key, kind, width):
+        if state["fail"]:
+            raise ClientError("Plex unreachable")
+        return JPEG
+
+    store, art_mod = _store(tmp_path, fetch)
+    assert store.lookup("plex:1").status == "MISS"
+    path = store._path("plex:1", "poster", 500)
+    old = time.time() - art_mod.HIT_TTL - 10
+    os.utime(path, (old, old))
+    state["fail"] = True
+    art = store.lookup("plex:1")
+    assert art.status == "STALE" and art.data == JPEG  # served at once, not dropped
+    store._pool.shutdown(wait=True)
+    assert path.exists()  # the failed refresh kept the old file
+    assert store.lookup("plex:1").data == JPEG
+
+
+def test_one_fetch_per_image_under_concurrency(tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    calls = []
+    lock = threading.Lock()
+
+    def fetch(key, kind, width):
+        with lock:
+            calls.append(key)
+        threading.Event().wait(0.05)  # time.sleep is stubbed in tests
+        return JPEG
+
+    store, _ = _store(tmp_path, fetch)
+    with ThreadPoolExecutor(8) as ex:
+        results = list(ex.map(lambda _i: store.get("plex:1"), range(8)))
+    assert results == [JPEG] * 8 and len(calls) == 1
+
+
+def test_eviction_trims_the_oldest(tmp_path):
+    import os
+    import time
+
+    store, _ = _store(tmp_path, lambda k, kind, w: b"x" * 1000)
+    store.max_bytes = 2500
+    for i in range(4):
+        store.get(f"plex:{i}")
+        p = store._path(f"plex:{i}", "poster", 500)
+        os.utime(p, (time.time() - 100 + i, time.time() - 100 + i))
+    store.evict()
+    left = {i for i in range(4) if store._path(f"plex:{i}", "poster", 500).exists()}
+    assert left == {2, 3}
+    assert store.stats()["images"] == 2
+
+
+def test_art_route_etag_and_cache_header(client, sonarr_mock):
+    sonarr_mock.add(responses.GET, f"{SONARR}/api/v3/MediaCover/7/poster-500.jpg",
+                    body=JPEG, content_type="image/jpeg")
+    r = client.get(f"/api/art/poster/{SERIES}")
+    assert r.headers["x-art-cache"] == "MISS" and r.headers["etag"]
+    again = client.get(f"/api/art/poster/{SERIES}", headers={"If-None-Match": r.headers["etag"]})
+    assert again.status_code == 304 and again.headers["x-art-cache"] == "HIT"
+
+
+def test_remote_keys_only_fetch_the_image_cdns(tmp_path):
+    store = ArtStore(None, tmp_path / "art")  # type: ignore[arg-type]
+    with responses.RequestsMock() as rsps:
+        rsps.add(responses.GET, "https://image.tmdb.org/t/p/w342/p.jpg", body=JPEG,
+                 content_type="image/jpeg")
+        assert store.get("remote:https://image.tmdb.org/t/p/original/p.jpg", "poster",
+                         300) == JPEG
+        assert store.get("remote:http://169.254.169.254/latest", "poster", 300) is None
+        assert len(rsps.calls) == 1

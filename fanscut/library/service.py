@@ -6,23 +6,27 @@ Durations missing from the source come from ffprobe, cached in SQLite.
 
 from __future__ import annotations
 
+import copy
 import os
-import time
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Any
 
+from ..cache import SourceCache
 from ..clients.plex import PlexClient
 from ..clients.radarr import RadarrClient
 from ..clients.sonarr import SonarrClient
 from ..config import Config
 from ..errors import ClientError, NotFoundError
 from ..models import Episode, Movie, Series
+from ..net import apply_proxy
 from . import scan
 from .paths import map_path
 
-TTL = 30.0  # seconds a source listing is reused
+# Seconds a listing is fresh. Older ones are still served while a background
+# refresh runs (see cache.SourceCache), so these only bound how stale a page can be.
+TTLS = {"series": 300.0, "movies": 300.0, "eps": 120.0}
 
 
 def _hms(text: str | None) -> float | None:
@@ -39,31 +43,39 @@ class Library:
     def __init__(self, cfg: Config, prober: Callable[[str], dict[str, Any]] | None = None):
         self.cfg = cfg
         self.prober = prober
-        self._cache: dict[str, tuple[float, Any]] = {}
+        self.cache = SourceCache(TTLS, max_entries=400)
+        self._clients: dict[tuple[str, str, str, float], Any] = {}
 
     # -- plumbing -----------------------------------------------------------
     def _cached(self, key: str, fn: Callable[[], Any]) -> Any:
-        hit = self._cache.get(key)
-        if hit and time.monotonic() - hit[0] < TTL:
-            return hit[1]
-        val = fn()
-        self._cache[key] = (time.monotonic(), val)
-        return val
+        return self.cache.get(key, fn)
 
     def refresh(self) -> None:
-        self._cache.clear()
+        self.cache.clear()
+
+    def _client(self, cls: type[Any], url: str, secret: str) -> Any:
+        """One client (and so one pooled HTTP session) per server, reused across calls."""
+        timeout = self.cfg.network.timeout
+        k = (cls.__name__, url, secret, timeout)
+        c = self._clients.get(k)
+        if c is None:
+            if len(self._clients) > 16:
+                self._clients.clear()
+            c = self._clients[k] = cls(url, secret, timeout=timeout)
+            apply_proxy(c.session, self.cfg.network, url)
+        return c
 
     def sonarr(self) -> SonarrClient | None:
         c = self.cfg.library.sonarr
-        return SonarrClient(c.url, c.api_key) if c.url else None
+        return self._client(SonarrClient, c.url, c.api_key) if c.url else None
 
     def radarr(self) -> RadarrClient | None:
         c = self.cfg.library.radarr
-        return RadarrClient(c.url, c.api_key) if c.url else None
+        return self._client(RadarrClient, c.url, c.api_key) if c.url else None
 
     def plex(self) -> PlexClient | None:
         c = self.cfg.library.plex
-        return PlexClient(c.url, c.token) if c.url else None
+        return self._client(PlexClient, c.url, c.token) if c.url else None
 
     def sources(self) -> list[str]:
         lib = self.cfg.library
@@ -85,7 +97,9 @@ class Library:
         errors: dict[str, str] = {}
         for src in self.sources():
             try:
-                out.extend(self._cached(f"series:{src}", partial(self._series_of, src)))
+                # copies: merging fills ids and art in, and must not edit the cached list
+                out.extend(copy.copy(x) for x in
+                           self._cached(f"series:{src}", partial(self._series_of, src)))
             except ClientError as exc:
                 errors[src] = str(exc)
         if merged:
@@ -155,7 +169,8 @@ class Library:
         errors: dict[str, str] = {}
         for src in self._movie_sources():
             try:
-                out.extend(self._cached(f"movies:{src}", partial(self._movies_of, src)))
+                out.extend(copy.copy(x) for x in
+                           self._cached(f"movies:{src}", partial(self._movies_of, src)))
             except ClientError as exc:
                 errors[src] = str(exc)
         if merged:

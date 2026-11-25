@@ -1,7 +1,7 @@
 // Shared building blocks of the FansCut design: posters, tiles, sections, crumbs.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { artSrcSet, artUrl } from '../lib/api.js';
+import { artFallback, artSrcSet, artUrl } from '../lib/api.js';
 
 // Poster palettes: [background, shade, accent, title colour]. Picked by a hash of the title,
 // so a cut always gets the same art. No images: the recipe never ships artwork.
@@ -242,10 +242,26 @@ function useFailed() {
   return [failed, fail];
 }
 
+// A CDN image that fails gets one more try from FansCut's own copy (Plex,
+// files), then the drawn fallback. Fades in once loaded.
+function useArtSrc(k, kind, w, onFail) {
+  const [useLocal, setUseLocal] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const fallback = artFallback(k, kind, w);
+  const src = useLocal ? fallback : artUrl(k, kind, w);
+  const onError = () => {
+    if (!useLocal && fallback) setUseLocal(true);
+    else onFail(k);
+  };
+  return { src, local: useLocal, loaded, onLoad: () => setLoaded(true), onError };
+}
+
 function ArtImg({ k, onFail, style, className }) {
+  const a = useArtSrc(k, 'poster', 500, onFail);
   return (
-    <img className={className} src={artUrl(k, 'poster', 500)} srcSet={POSTER_SRCSET(k)} sizes={POSTER_SIZES}
-      alt="" loading="lazy" decoding="async" onError={() => onFail(k)} style={style} />
+    <img className={`${className || ''} art-fade${a.loaded ? ' is-loaded' : ''}`} src={a.src}
+      srcSet={a.local ? undefined : POSTER_SRCSET(k)} sizes={POSTER_SIZES}
+      alt="" loading="lazy" decoding="async" onLoad={a.onLoad} onError={a.onError} style={style} />
   );
 }
 
@@ -261,7 +277,7 @@ export function ArtPoster({ keys = [], layout = 'single', fallback }) {
     // whole posters in a 2-column collage (2:3 cells fit a 2:3 tile), over a blur of the first
     body = (
       <div className="art-grid" data-n={ok.length}>
-        <img className="art-blur" src={artUrl(ok[0], 'poster', 300)} alt="" aria-hidden="true" />
+        <img className="art-blur" src={artUrl(ok[0], 'poster', 300)} alt="" aria-hidden="true" loading="lazy" decoding="async" />
         {ok.map((k) => <div key={k} className="art-cell"><ArtImg k={k} onFail={fail} /></div>)}
       </div>
     );
@@ -289,11 +305,14 @@ export function ArtPoster({ keys = [], layout = 'single', fallback }) {
 export function Backdrop({ k, name, children }) {
   const [failed, setFailed] = useState(false);
   const [bg] = palette(name);
+  const a = useArtSrc(k, 'backdrop', 800, () => setFailed(true));
   return (
     <div className="bdrop" style={{ background: bg }}>
       {k && !failed && (
-        <img src={artUrl(k, 'backdrop', 800)} srcSet={artSrcSet(k, 'backdrop')}
-          sizes="(min-width: 3334px) 570px, (min-width: 1667px) 17vw, 285px" alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />
+        <img className={`art-fade${a.loaded ? ' is-loaded' : ''}`} src={a.src}
+          srcSet={a.local ? undefined : artSrcSet(k, 'backdrop')}
+          sizes="(min-width: 3334px) 570px, (min-width: 1667px) 17vw, 285px" alt="" loading="lazy" decoding="async"
+          onLoad={a.onLoad} onError={a.onError} />
       )}
       <span className="bdrop-shade" style={{ '--tint': bg }} />
       <span className="bdrop-name">{name}</span>

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
@@ -216,11 +216,18 @@ def delete_segments(core: CoreDep, key: str, episode_id: str) -> dict[str, bool]
     return {"ok": True}
 
 @router.get("/art/{kind}/{key:path}")
-def artwork(core: CoreDep, kind: str, key: str, w: int = Query(500, ge=50, le=2000)) -> Response:
-    """A library item's poster or backdrop, from Plex, Radarr/Sonarr or files beside it."""
-    data = core.art.get(key, kind, w)
-    if not data:
+def artwork(core: CoreDep, kind: str, key: str, request: Request,
+            w: int = Query(500, ge=50, le=2000)) -> Response:
+    """A library item's poster or backdrop, from Plex, Radarr/Sonarr or files beside it.
+
+    X-Art-Cache says HIT, STALE (served while it refreshes) or MISS (fetched now).
+    The browser may keep it as long as the server cache will, and revalidates
+    with If-None-Match for a cheap 304 after that."""
+    art = core.art.lookup(key, kind, w)
+    if art is None:
         raise NotFoundError(f"no {kind} for {key}")
-    # Art for a key rarely changes; the browser can keep it for a day.
-    return Response(data, media_type=media_type(data),
-                    headers={"Cache-Control": "public, max-age=86400"})
+    headers = {"Cache-Control": f"public, max-age={max(60, art.max_age)}",
+               "ETag": art.etag, "X-Art-Cache": art.status}
+    if request.headers.get("if-none-match") == art.etag:
+        return Response(status_code=304, headers=headers)
+    return Response(art.data, media_type=media_type(art.data), headers=headers)

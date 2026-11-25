@@ -11,6 +11,15 @@ server:
   allowed_hosts: []      # extra Host names to answer to (e.g. fanscut.lan); "*" = any
   trusted_proxies: []    # reverse proxy IPs whose X-Forwarded-For is believed
 
+network:
+  timeout: 10            # seconds to wait for Sonarr/Radarr/Plex
+  proxy: ""              # outbound proxy for internet calls, e.g. http://proxy:3128
+  proxy_bypass_local: true  # LAN servers skip the proxy
+
+art:
+  cache_remote: false    # fetch TMDB/TVDB art through FansCut (browsers never contact them)
+  cache_mb: 1024         # art cache size cap; oldest images go first
+
 paths:
   data_dir: ./data       # SQLite db, filler snapshot, scratch space
   output_dir: ./output   # finished cuts land here

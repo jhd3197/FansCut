@@ -51,6 +51,12 @@ class ServerCfg(BaseModel):
     trusted_proxies: list[str] = Field(default_factory=list)  # IPs whose X-Forwarded-* count
 
 
+class NetworkCfg(BaseModel):
+    timeout: float = 10.0  # seconds for Sonarr/Radarr/Plex calls (tests use 8)
+    proxy: str = ""  # outbound HTTP(S) proxy for internet calls, e.g. http://proxy:3128
+    proxy_bypass_local: bool = True  # LAN/loopback servers (Plex, *arr) skip the proxy
+
+
 class PathsCfg(BaseModel):
     data_dir: str = "./data"
     output_dir: str = "./output"
@@ -93,6 +99,11 @@ class LibraryCfg(BaseModel):
     folder: FolderCfg = Field(default_factory=FolderCfg)
     movies: MoviesFolderCfg = Field(default_factory=MoviesFolderCfg)
     path_mappings: list[PathMapping] = Field(default_factory=list)
+
+
+class ArtCfg(BaseModel):
+    cache_remote: bool = False  # fetch TMDB/TVDB art through FansCut (offline/private setups)
+    cache_mb: int = 1024  # the art cache folder is trimmed past this size
 
 
 class CataloguesCfg(BaseModel):
@@ -167,8 +178,10 @@ class AICfg(BaseModel):
 class Config(BaseModel):
     server: ServerCfg = Field(default_factory=ServerCfg)
     paths: PathsCfg = Field(default_factory=PathsCfg)
+    network: NetworkCfg = Field(default_factory=NetworkCfg)
     library: LibraryCfg = Field(default_factory=LibraryCfg)
     catalogues: CataloguesCfg = Field(default_factory=CataloguesCfg)
+    art: ArtCfg = Field(default_factory=ArtCfg)
     fillers: FillersCfg = Field(default_factory=FillersCfg)
     fingerprint: FingerprintCfg = Field(default_factory=FingerprintCfg)
     ffmpeg: FFmpegCfg = Field(default_factory=FFmpegCfg)
