@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAct, useLoad } from '../lib/hooks.js';
 import { Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
-import { Backdrop, MediaTile, Search, Section, enc } from '../components/kit.jsx';
+import { Backdrop, MediaTile, Search, Section, Shelf, enc } from '../components/kit.jsx';
 
 async function loadLibrary() {
   const [series, movies, collections] = await Promise.all([
@@ -70,11 +70,9 @@ export function LibraryPage() {
       )}
 
       {collections.length > 0 && (
-        <Section id="coll-h" title="Collections">
-          <div className="grid grid-wide">
-            {collections.map((c) => <CollectionTile key={c.name} c={c} />)}
-          </div>
-        </Section>
+        <Shelf id="coll-h" title="Collections" count={collections.length} wide>
+          {collections.map((c) => <CollectionTile key={c.name} c={c} />)}
+        </Shelf>
       )}
 
       {series.length > 0 && (
