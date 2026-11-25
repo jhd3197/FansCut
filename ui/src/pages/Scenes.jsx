@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAct, useLoad, usePoll } from '../lib/hooks.js';
@@ -197,13 +197,27 @@ function XRay({ fkey, t, cast }) {
 
 export function ScenesPage() {
   const { key } = useParams();
-  const { data, error, loading, reload } = useLoad(() => api(`/scenes/film?${q({ key })}`), [key]);
-  const settings = useLoad(() => api('/settings').catch(() => null));
-  const { act, msg, busy, clear } = useAct();
   const [t, setT] = useState(0);
   const [sel, setSel] = useState(null); // selected tag id
   const [range, setRange] = useState(null); // [start, end] being viewed
   const [tab, setTab] = useState('proposed');
+  // open on the first proposal, else the first tag, instead of the black frame at 0:00
+  const opened = useRef(null);
+  const { data, error, loading, reload } = useLoad(() => api(`/scenes/film?${q({ key })}`).then((d) => {
+    if (opened.current !== key) {
+      opened.current = key;
+      const all = d.tags || [];
+      const first = all.find((x) => x.status === 'proposed') || all.find((x) => x.status === 'accepted');
+      if (first) {
+        setSel(first.id);
+        setT(first.start);
+        if (first.status !== 'proposed') setTab('tags');
+      }
+    }
+    return d;
+  }), [key]);
+  const settings = useLoad(() => api('/settings').catch(() => null));
+  const { act, msg, busy, clear } = useAct();
   const [play, setPlay] = useState(false);
   const onDone = useCallback(() => { reload(); }, [reload]);
   const [job, setJob] = useJob(key, onDone);
@@ -225,6 +239,7 @@ export function ScenesPage() {
   }, [sceneAt]);
 
   const pick = useCallback((x) => { setSel(x.id); setT(x.start); setRange(null); setPlay(false); }, []);
+
   const setTag = useCallback((x, changes) => act(async () => {
     await api(`/scenes/tags/${x.id}`, { method: 'PATCH', body: changes });
     await reload();
