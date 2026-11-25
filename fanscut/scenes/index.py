@@ -151,6 +151,18 @@ def _quiet_edge(doc: dict[str, Any], t: float, reach: float, later: bool) -> flo
     for c in near + (far if later else far[::-1]):
         if not _talking(lines, c, 0.3):
             return round(c, 3)
+    # No quiet cut in reach (people talk straight through): stop in the first
+    # pause between lines instead, just after a line ends (or before one starts).
+    if _talking(lines, t, 0.0):
+        if later:
+            gaps = sorted(ln.end + 0.3 for ln in lines if t <= ln.end + 0.3 <= t + reach)
+        else:
+            gaps = sorted(
+                (ln.start - 0.3 for ln in lines if t - reach <= ln.start - 0.3 <= t), reverse=True
+            )
+        for g in gaps:
+            if not _talking(lines, g, 0.25):
+                return round(g, 3)
     return snap(doc, t)
 
 
@@ -158,8 +170,9 @@ def quiet_end(doc: dict[str, Any], t: float, reach: float = QUIET_REACH) -> floa
     """A camera cut near *t*, or up to *reach* later, that nobody talks across.
 
     An end chosen by looking at frames can fall mid-sentence; a supercut that
-    stops there sounds broken. Falls back to the nearest cut when every cut in
-    reach has someone talking.
+    stops there sounds broken. When every cut in reach has someone talking, it
+    ends in the first pause between lines instead; with no pause either, on
+    the nearest cut.
     """
     return _quiet_edge(doc, t, reach, later=True)
 

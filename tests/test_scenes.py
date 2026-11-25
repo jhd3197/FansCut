@@ -107,7 +107,15 @@ def test_edges_wait_for_the_dialogue():
            "lines": [{"start": 18.0, "end": 22.0, "text": "a line across the 20 s cut"},
                      {"start": 9.0, "end": 11.0, "text": "a line across the 10 s cut"}]}
     assert idx.quiet_end(doc, 19.0) == 30  # 20 s has someone talking; 30 s is quiet
-    assert idx.quiet_end(doc, 19.0, reach=5) == 20  # nothing quiet in reach: nearest cut
+    # nothing quiet in reach: the pause after the line ends (22.3), not mid-line at 20
+    assert idx.quiet_end(doc, 19.0, reach=5) == 22.3
+    talky = {"shots": [[0, 10], [10, 40]],
+             "lines": [{"start": 5, "end": 12, "text": "a"}, {"start": 12, "end": 16, "text": "b"},
+                       {"start": 18, "end": 25, "text": "c"}]}
+    assert idx.quiet_end(talky, 9.0, reach=10) == 16.3  # after "b", in the 16-18 s pause
+    assert idx.quiet_start(talky, 20.0, reach=10) == 17.7  # before "c"
+    assert idx.quiet_end({"shots": [[0, 10], [10, 30]], "lines": [{"start": 0, "end": 30, "text": "x"}]},
+                         9.0) == 10  # no pause at all: nearest cut
     assert idx.quiet_start(doc, 19.0) == 0  # 20 and 10 are talked across
     assert idx.quiet_end(doc, 29.0) == 30  # a quiet cut in snapping distance wins
     assert idx.quiet_start(doc, 35.0) == 30
