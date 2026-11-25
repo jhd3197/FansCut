@@ -29,7 +29,7 @@ function SeasonTile({ to, season, eps }) {
   const special = season === 0;
   return (
     <Link to={to} style={{ display: 'flex', flexDirection: 'column', gap: 8, color: 'var(--text)', textDecoration: 'none' }}>
-      <div style={{ aspectRatio: '16 / 9', borderRadius: 6, background: special && missing ? '#1A1416' : 'var(--poster)', border: '1px solid var(--line)', display: 'flex', alignItems: 'flex-end', padding: 14, boxSizing: 'border-box' }}>
+      <div style={{ aspectRatio: '16 / 9', borderRadius: 6, background: special && missing ? 'color-mix(in srgb, var(--danger) 8%, var(--panel))' : 'var(--poster)', border: '1px solid var(--line)', display: 'flex', alignItems: 'flex-end', padding: 14, boxSizing: 'border-box' }}>
         <span className="display" style={{ fontSize: 24, lineHeight: 1, color: special && missing ? 'var(--danger)' : 'var(--text)' }}>
           {special ? 'Specials' : `Season ${season}`}
         </span>

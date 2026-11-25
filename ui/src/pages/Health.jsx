@@ -132,7 +132,7 @@ export function Health() {
       <Notice msg={msg} onClose={clear} />
       <section aria-labelledby="find-h" style={{ border: '1px solid var(--line)', borderRadius: 10, overflow: 'hidden' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-          padding: '10px 12px 10px 18px', borderBottom: '1px solid var(--line)', background: 'var(--side)' }}>
+          padding: '10px 12px 10px 18px', borderBottom: '1px solid var(--line)', background: 'var(--panel2)' }}>
           <h2 id="find-h">
             {data ? `${findings.length} finding${findings.length === 1 ? '' : 's'}` : 'Library health'}
             {data?.summary && (

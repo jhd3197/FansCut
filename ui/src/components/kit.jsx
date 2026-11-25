@@ -201,8 +201,8 @@ export function Search({ value, onChange, label = 'Search' }) {
   return (
     <label className="search">
       <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-        <circle cx="7" cy="7" r="5" fill="none" stroke="#9A9EA6" strokeWidth="1.5" />
-        <path d="M11 11l3.5 3.5" stroke="#9A9EA6" strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
       <input aria-label={label} placeholder="Search" value={value} onChange={(e) => onChange(e.target.value)} />
     </label>

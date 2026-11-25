@@ -2,6 +2,7 @@ import { Link, Navigate, NavLink, Route, Routes, useParams } from 'react-router'
 import { api } from './lib/api.js';
 import { useLoad, usePoll } from './lib/hooks.js';
 import { sourceSummary } from './lib/labels.js';
+import logoWhite from './brand/logo-white.svg';
 import { Discover } from './pages/Discover.jsx';
 import { LibraryPage } from './pages/LibraryPage.jsx';
 import { CollectionPage } from './pages/Collection.jsx';
@@ -18,13 +19,9 @@ import { Health } from './pages/Health.jsx';
 import { Settings } from './pages/Settings.jsx';
 import { Empty } from './components/ui.jsx';
 
+// The Framehouse logo (brand kit: white horizontal logo, for the Deep Teal sidebar).
 function Logo() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-      <rect x="2" y="4" width="7" height="12" rx="1.5" fill="#F2A93B" />
-      <rect x="11" y="4" width="7" height="12" rx="1.5" fill="none" stroke="#F2A93B" strokeWidth="1.5" />
-    </svg>
-  );
+  return <img src={logoWhite} alt="FansCut" width="160" height="39" />;
 }
 
 // Nav counts: ready suggestions, cuts, running jobs, open health findings.
@@ -58,7 +55,7 @@ function Nav() {
   ];
   return (
     <nav className="side" aria-label="Main">
-      <Link to="/" className="brand"><Logo /><span>FansCut</span></Link>
+      <Link to="/" className="brand" aria-label="FansCut home"><Logo /></Link>
       <div className="nav">
         {items.map(([to, name, count, accent]) => (
           <NavLink key={to} to={to} end={to === '/'}>
