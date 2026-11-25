@@ -28,6 +28,31 @@ KNOWN_MOVIES: list[dict[str, Any]] = [
     {"tmdb": 122, "title": "The Lord of the Rings: The Return of the King", "year": 2003,
      "set": "The Lord of the Rings", "lang": "eng", "forced_subs": True,
      "editions": {"Theatrical": 201, "Extended": 263}},
+    {"tmdb": 671, "title": "Harry Potter and the Philosopher's Stone", "year": 2001,
+     "set": "Harry Potter", "lang": "eng", "forced_subs": False,
+     "aka": ["Harry Potter and the Sorcerer's Stone"],
+     "editions": {"Theatrical": 152, "Extended": 159}},
+    {"tmdb": 672, "title": "Harry Potter and the Chamber of Secrets", "year": 2002,
+     "set": "Harry Potter", "lang": "eng", "forced_subs": False,
+     "editions": {"Theatrical": 161, "Extended": 174}},
+    {"tmdb": 673, "title": "Harry Potter and the Prisoner of Azkaban", "year": 2004,
+     "set": "Harry Potter", "lang": "eng", "forced_subs": False,
+     "editions": {"Theatrical": 142}},
+    {"tmdb": 674, "title": "Harry Potter and the Goblet of Fire", "year": 2005,
+     "set": "Harry Potter", "lang": "eng", "forced_subs": False,
+     "editions": {"Theatrical": 157}},
+    {"tmdb": 675, "title": "Harry Potter and the Order of the Phoenix", "year": 2007,
+     "set": "Harry Potter", "lang": "eng", "forced_subs": False,
+     "editions": {"Theatrical": 138}},
+    {"tmdb": 767, "title": "Harry Potter and the Half-Blood Prince", "year": 2009,
+     "set": "Harry Potter", "lang": "eng", "forced_subs": False,
+     "editions": {"Theatrical": 153}},
+    {"tmdb": 12444, "title": "Harry Potter and the Deathly Hallows: Part 1", "year": 2010,
+     "set": "Harry Potter", "lang": "eng", "forced_subs": False,
+     "editions": {"Theatrical": 146}},
+    {"tmdb": 12445, "title": "Harry Potter and the Deathly Hallows: Part 2", "year": 2011,
+     "set": "Harry Potter", "lang": "eng", "forced_subs": False,
+     "editions": {"Theatrical": 130}},
 ]
 
 # seasons: TVDB aired order, episodes per season. extras: named pieces fans expect.
@@ -51,7 +76,8 @@ def movie(tmdb: int | None, title: str = "", year: int | None = None) -> dict[st
             return k
     n = norm(title)
     for k in KNOWN_MOVIES:
-        if n and norm(k["title"]) == n and (not year or year == k["year"]):
+        names = [k["title"], *k.get("aka", [])]
+        if n and n in {norm(x) for x in names} and (not year or year == k["year"]):
             return k
     return None
 
