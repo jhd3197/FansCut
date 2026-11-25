@@ -183,7 +183,9 @@ class Library:
         return Movie(key=f"plexmovie:{m['ratingKey']}", source="plex", title=m.get("title", ""),
                      year=m.get("year"), tmdb_id=tmdb,
                      file=self._map(part["file"]) if part.get("file") else None,
-                     duration=ms / 1000 if ms else None)
+                     duration=ms / 1000 if ms else None,
+                     collections=[c.get("tag", "") for c in m.get("Collection", [])
+                                  if c.get("tag")])
 
     def find_movie(self, tmdb_id: int | None, title: str = "", edition: str = "") -> Movie | None:
         """Resolve a movie source: by TMDB id, then title; edition prefers a matching name."""

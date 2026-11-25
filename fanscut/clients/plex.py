@@ -52,3 +52,59 @@ class PlexClient(BaseClient):
             raise ClientError(f"Plex unreachable: {exc.__class__.__name__}") from exc
         if resp.status_code >= 400:
             raise ClientError(f"Plex returned HTTP {resp.status_code}", resp.status_code)
+
+    def find_in_section(self, section_key: str, title: str) -> dict[str, Any] | None:
+        """First item in a section with this exact title."""
+        data = self._get(f"/library/sections/{section_key}/all", {"title": title})
+        items = data["MediaContainer"].get("Metadata", [])
+        return items[0] if items else None
+
+    def _item_uri(self, rating_key: str) -> str:
+        machine = self.identity()["machineIdentifier"]
+        # requests urlencodes params once; do not pre-quote
+        return f"library://{machine}/item//library/metadata/{rating_key}"
+
+    def create_playlist(self, title: str, rating_keys: list[str]) -> str:
+        """A video playlist of the given items, in order. Returns the playlist id."""
+        if not rating_keys:
+            raise ClientError("a playlist needs at least one item")
+        created = self._request("POST", "/playlists", {
+            "type": "video", "title": title, "smart": 0,
+            "uri": self._item_uri(rating_keys[0])})
+        pid = str(created["MediaContainer"]["Metadata"][0]["ratingKey"])
+        for key in rating_keys[1:]:
+            self._request("PUT", f"/playlists/{pid}/items", {"uri": self._item_uri(key)})
+        return pid
+
+    def collection_id(self, section_key: str, title: str,
+                      first_key: str | None = None) -> str:
+        """The collection's id, creating it if needed."""
+        data = self._get(f"/library/sections/{section_key}/collections", {"title": title})
+        items = data["MediaContainer"].get("Metadata", [])
+        if items:
+            return str(items[0]["ratingKey"])
+        if not first_key:
+            raise ClientError(f"cannot create collection {title!r} without an item")
+        created = self._request("PUT", "/library/collections", {
+            "type": 18, "title": title, "smart": 0, "sectionId": section_key,
+            "uri": self._item_uri(first_key)})
+        return str(created["MediaContainer"]["Metadata"][0]["ratingKey"])
+
+    def add_to_collection(self, collection_id: str, rating_key: str) -> None:
+        self._request("PUT", f"/library/collections/{collection_id}/items",
+                      {"uri": self._item_uri(rating_key)})
+
+    def _request(self, method: str, path: str, params: dict[str, Any]) -> Any:
+        try:
+            resp = self.session.request(method, f"{self.base_url}{path}", params=params,
+                                        timeout=self.timeout)
+        except requests.RequestException as exc:
+            raise ClientError(f"Plex unreachable: {exc.__class__.__name__}") from exc
+        if resp.status_code >= 400:
+            raise ClientError(f"Plex returned HTTP {resp.status_code}", resp.status_code)
+        if not resp.content:
+            return {}
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise ClientError("Plex sent a non-JSON reply", resp.status_code) from exc

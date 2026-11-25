@@ -304,6 +304,17 @@ page, or run `fanscut recipe ai --series KEY --notes notes.txt`. The LLM turns
 them into a schema-2 recipe; it's validated before anything is applied, and
 every range stays editable afterwards.
 
+## Suggestions
+
+The Suggestions page lists what your library is one click away from:
+community timeline recipes dropped into `<data_dir>/recipes`, a merged film
+and a watch-order playlist for any Plex collection you own two or more films
+of, and a canon cut for every matched show with known filler. Each one is
+*ready*, *partly ready* or *not available*, with the missing sources (or a
+missing audio language) named. Install queues sync + render; watch orders
+become a Plex playlist with nothing rendered. Renders get a poster from your
+own footage and join a "FansCut" collection in Plex.
+
 ## Limits
 
 - Output has the first video and first audio track of each file. Extra audio

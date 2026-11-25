@@ -23,7 +23,7 @@ from .catalogues import match as catalogue_match
 from .catalogues.http import CachedHttp
 from .config import Config
 from .db import Database, dumps
-from .errors import FansCutError, NotFoundError
+from .errors import ClientError, FansCutError, NotFoundError
 from .fillers import anifiller, jikan_flags
 from .fillers import labels as labelling
 from .fingerprint import detect
@@ -656,7 +656,10 @@ class Core:
     def _source_files(self, key: str, doc: dict[str, Any]
                       ) -> dict[str, tuple[str | None, float | None]]:
         """Every source in the recipe -> (file, duration) of the user's copy, or None."""
-        episodes = {e.id: e for e in self.library.episodes(key)}
+        try:
+            episodes = {e.id: e for e in self.library.episodes(key)}
+        except (NotFoundError, ClientError):
+            episodes = {}  # movie-only timeline: no series attached
         out: dict[str, tuple[str | None, float | None]] = {}
         for src, s in doc["sources"].items():
             if s.get("kind") == "movie":
@@ -700,15 +703,20 @@ class Core:
                 amap[f] = idx
         return amap, warnings
 
+    def _timeline_series_title(self, key: str, doc: dict[str, Any]) -> str:
+        try:
+            return self.library.get_series(key).title
+        except NotFoundError:
+            return doc["series"].get("title", "Timeline")  # movie-only timeline
+
     def timeline_dry_run(self, tid: str, mode: plan.Mode = "auto") -> dict[str, Any]:
         from .timeline import render as tl_render
 
         doc, key, report = self._timeline_ctx(tid)
         files = self._source_files(key, doc)
-        series = self.library.get_series(key)
         corr = tl_render.corrected_map(report)
         skip = self._skip_set(report)
-        show = tl_render.show_name(series.title, doc["title"])
+        show = tl_render.show_name(self._timeline_series_title(key, doc), doc["title"])
         parts = []
         for pi, part in enumerate(doc["parts"]):
             cut, warns = tl_render.part_cut(doc, pi, files, corr, skip)
@@ -741,9 +749,10 @@ class Core:
                 / tl_render.part_filename(show, pi + 1, part_title, ext))
 
     def submit_timeline_render(self, tid: str, mode: str = "auto", keep: bool | None = None,
-                               refresh: bool = False) -> dict[str, Any]:
+                               refresh: bool = False,
+                               require_sync: bool = True) -> dict[str, Any]:
         doc, _key, report = self._timeline_ctx(tid)
-        if not report:
+        if require_sync and not report:
             raise FansCutError("run sync first: POST /api/timelines/{id}/sync")
         return self.worker.submit("timeline_render", f"Render {doc['title']}",
                                   {"timeline_id": tid, "mode": mode, "keep": keep,
@@ -761,10 +770,9 @@ class Core:
         if keep is None:
             keep = self.cfg.render.keep
         episodes_files = self._source_files(key, doc)
-        series = self.library.get_series(key)
         corr = tl_render.corrected_map(report)
         skip = self._skip_set(report)
-        show = tl_render.show_name(series.title, doc["title"])
+        show = tl_render.show_name(self._timeline_series_title(key, doc), doc["title"])
         movie_mode = len(doc["parts"]) == 1  # single-part edit -> Plex movie folder
         show_dir = self.cfg.output_dir / show
         show_dir.mkdir(parents=True, exist_ok=True)
@@ -806,10 +814,50 @@ class Core:
                 if not movie_mode:
                     nfo = tl_render.nfo_episode(part["title"], pi + 1)
                     out.with_suffix(".nfo").write_text(nfo, encoding="utf-8")
-        plex_note = self._plex_refresh()
+        poster = self._write_poster(show_dir, outputs[0]) if outputs else None
+        plex_note = self._plex_finalize(show, outputs)
         return {"show": show, "parts": len(outputs), "cached": cached, "outputs": outputs,
+                "poster": poster,
                 "warnings": warnings, "plex": plex_note,
                 "message": f"wrote {len(outputs)} part(s) to {show_dir} ({cached} cached)"}
+
+    def _write_poster(self, show_dir: Path, first_output: str) -> str | None:
+        """poster.jpg from the middle of the first part — the user's own footage."""
+        poster = show_dir / "poster.jpg"
+        tmp = poster.with_suffix(".tmp.jpg")
+        try:
+            dur = self.prober(first_output).get("duration") or 60
+            ffmpeg.run_capture([self.cfg.ffmpeg.binary, "-v", "error", "-y",
+                                "-ss", f"{float(dur) / 2:.1f}", "-i", first_output,
+                                "-frames:v", "1", "-q:v", "3", str(tmp)])
+            tmp.replace(poster)
+            return str(poster)
+        except Exception:  # noqa: BLE001 - a poster is a nicety, never fatal
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+            return None
+
+    def _plex_finalize(self, show: str, outputs: list[str]) -> str:
+        """Refresh Plex and add the rendered show/movie to a 'FansCut' collection."""
+        note = self._plex_refresh()
+        if not (self.cfg.library.plex.url and self.cfg.library.plex.token and outputs):
+            return note
+        try:
+            plex = self.library.plex()
+            assert plex is not None
+            want = set(self.cfg.library.plex.sections) | set(self.cfg.library.plex.movie_sections)
+            for s in plex.sections():
+                if want and s["key"] not in want and s["title"] not in want:
+                    continue
+                item = plex.find_in_section(s["key"], show)
+                if not item:
+                    continue
+                cid = plex.collection_id(s["key"], "FansCut", str(item["ratingKey"]))
+                plex.add_to_collection(cid, str(item["ratingKey"]))  # Plex dedups
+                return f"{note}; added “{show}” to the FansCut collection"
+            return f"{note}; “{show}” not found in Plex yet (rescan picks it up)"
+        except Exception as exc:  # noqa: BLE001 - collection add is a courtesy
+            return f"{note}; collection step failed: {exc}"
 
     def _plex_refresh(self) -> str:
         """Ask Plex to rescan show sections after a timeline render. Best effort."""
@@ -895,6 +943,169 @@ class Core:
         return {"matches": hits,
                 "message": f"{len(hits)} possible repeat(s) of {eid} "
                            f"{payload['start']:.0f}–{payload['end']:.0f}s"}
+
+    # -- first-run suggestions ----------------------------------------------------
+    def _lang_ok(self, path: str | None) -> str | None:
+        """None if fine, else the reason this file fails the preferred-language check."""
+        lang = self.cfg.render.language
+        if not lang or not path:
+            return None
+        try:
+            tracks = self.prober(path).get("audio_tracks") or []
+        except OSError:
+            return None  # file not reachable; the missing-file check reports it instead
+        if tracks and not any((t.get("language") or "").lower() == lang.lower()
+                              for t in tracks):
+            return f"no '{lang}' audio track"
+        return None
+
+    def suggestions(self) -> dict[str, Any]:
+        from . import suggest
+        from .timeline import recipe as tl_recipe
+
+        out: list[dict[str, Any]] = []
+        series_list, _ = self.library.list_series()
+        movies, _ = self.library.list_movies()
+        by_tvdb = {s.tvdb_id: s for s in series_list if s.tvdb_id}
+
+        # (a) community recipes dropped into <data_dir>/recipes
+        rdir = self.cfg.data_dir / "recipes"
+        for f in sorted(rdir.glob("*.json")) if rdir.is_dir() else []:
+            try:
+                doc = tl_recipe.validate(json.loads(f.read_text(encoding="utf-8")))
+            except Exception as exc:  # noqa: BLE001 - a bad file must not hide the rest
+                out.append({"id": f"recipe:{f.name}", "kind": "recipe", "title": f.name,
+                            "status": "missing",
+                            "missing": [{"src": "-", "reason": f"invalid recipe: {exc}"}],
+                            "detail": {}})
+                continue
+
+            def resolve(src: str, entry: dict[str, Any], _doc: dict = doc,
+                        ) -> tuple[str | None, float | None, str | None]:
+                if entry.get("kind") == "movie":
+                    m = self.library.find_movie(entry.get("tmdb"),
+                                                edition=entry.get("edition", ""))
+                    if not m or not m.file:
+                        ed = f" ({entry.get('edition')})" if entry.get("edition") else ""
+                        return None, None, f"movie {entry.get('tmdb')}{ed} not in the library"
+                    return m.file, m.duration, self._lang_ok(m.file)
+                tvdb = (_doc.get("series") or {}).get("tvdb_id")
+                s = by_tvdb.get(tvdb) if tvdb else None
+                if not s:
+                    titles = [x for x in series_list
+                              if x.title.lower() == (_doc["series"].get("title") or "").lower()]
+                    s = titles[0] if titles else None
+                if not s:
+                    stitle = (_doc.get("series") or {}).get("title")
+                    return None, None, f"series {stitle!r} not in the library"
+                eps = {e.id: e for e in self.library.episodes(s.key)}
+                e = eps.get(src)
+                if not e or not e.file:
+                    return None, None, f"{src} has no file"
+                return e.file, e.duration, self._lang_ok(e.file)
+
+            out.append(suggest.from_recipe(f.name, doc, resolve))
+
+        # (b) Plex collections the user partly or fully owns
+        colls: dict[str, list[Any]] = {}
+        for m in movies:
+            for c in m.collections:
+                colls.setdefault(c, []).append(m)
+        for name, ms in sorted(colls.items()):
+            if len(ms) >= 2:
+                ms = sorted(ms, key=lambda m: m.year or 0)
+                out += suggest.from_collection(
+                    name, ms, [m.title for m in ms if m.file and self._lang_ok(m.file)])
+
+        # (c) canon cuts for matched shows with known filler
+        for row in self.db.query("SELECT * FROM matches WHERE season = -1"):
+            show = self.fillers.find(row["mal_id"], row["anilist_id"])
+            if not show:
+                continue
+            s = next((x for x in series_list if x.key == row["series_key"]), None)
+            if not s:
+                continue
+            eps = self.library.episodes(s.key)
+            n_filler = sum(1 for v in show.labels.values() if v == "filler")
+            missing_files = [e.id for e in eps if not e.file]
+            lang_missing = [e.id for e in eps if e.file and self._lang_ok(e.file)]
+            sgn = suggest.canon_cut(s.title, s.key, n_filler, len(eps),
+                                    missing_files, lang_missing)
+            if sgn:
+                out.append(sgn)
+        order = {"ready": 0, "partly": 1, "missing": 2}
+        out.sort(key=lambda s: (order.get(s["status"], 3), s["title"]))
+        return {"suggestions": out}
+
+    def install_suggestion(self, sid: str) -> dict[str, Any]:
+        kind, _, ref = sid.partition(":")
+        if kind == "recipe":
+            from .timeline import recipe as tl_recipe
+
+            f = self.cfg.data_dir / "recipes" / ref
+            if not f.is_file() or f.parent.resolve() != (self.cfg.data_dir / "recipes").resolve():
+                raise NotFoundError(f"recipe file {ref} not found")
+            doc = tl_recipe.validate(json.loads(f.read_text(encoding="utf-8")))
+            series_list, _ = self.library.list_series()
+            tvdb = (doc.get("series") or {}).get("tvdb_id")
+            match = next((s for s in series_list if tvdb and s.tvdb_id == tvdb), None)
+            if not match:
+                title = (doc.get("series") or {}).get("title", "").lower()
+                match = next((s for s in series_list if s.title.lower() == title), None)
+            first_movie = next((s for s in doc["sources"].values()
+                                if s.get("kind") == "movie"), None)
+            if not match and not first_movie:
+                raise FansCutError("no series or movie from this recipe is in the library")
+            key = match.key if match else f"movie:{(first_movie or {}).get('tmdb')}"
+            tid = self.create_timeline(key, doc)["id"]
+            sync = self.submit_timeline_sync(tid)
+            render = self.submit_timeline_render(tid, require_sync=False)  # sync runs first
+            return {"action": "render", "timeline": tid,
+                    "jobs": [sync["id"], render["id"]]}
+        if kind == "merge":
+            movies = self._collection_movies(ref)
+            if len(movies) < 2:
+                raise FansCutError(f"collection {ref!r} has fewer than two owned movies")
+            doc = self._merge_doc(ref, movies)
+            tid = self.create_timeline(f"movie:{movies[0].tmdb_id}", doc)["id"]
+            sync = self.submit_timeline_sync(tid)
+            render = self.submit_timeline_render(tid, require_sync=False)  # sync runs first
+            return {"action": "render", "timeline": tid,
+                    "jobs": [sync["id"], render["id"]]}
+        if kind == "order":
+            movies = self._collection_movies(ref)
+            keys = [m.key.split(":", 1)[1] for m in movies
+                    if m.source == "plex" and m.key.startswith("plexmovie:")]
+            if not keys:
+                raise FansCutError("watch-order playlists need the movies in Plex")
+            plex = self.library.plex()
+            if not plex:
+                raise FansCutError("Plex is not configured")
+            pid = plex.create_playlist(f"{ref} — watch order", keys)
+            return {"action": "playlist", "playlist_id": pid}
+        if kind == "canon":
+            job = self.submit_render(ref, None, {"preset": "canon_only"}, "auto")
+            return {"action": "render", "jobs": [job["id"]]}
+        raise NotFoundError(f"unknown suggestion {sid!r}")
+
+    def _collection_movies(self, name: str) -> list[Any]:
+        movies, _ = self.library.list_movies()
+        return sorted([m for m in movies if name in m.collections], key=lambda m: m.year or 0)
+
+    def _merge_doc(self, name: str, movies: list[Any]) -> dict[str, Any]:
+        sources, segments = {}, []
+        for m in movies:
+            if not m.file:
+                continue
+            dur = m.duration or self.prober(m.file).get("duration") or 0
+            src = f"M{m.tmdb_id}"
+            sources[src] = {"kind": "movie", "tmdb": m.tmdb_id, "duration": dur,
+                            "note": m.title}
+            segments.append({"src": src, "start": 0.0, "end": round(float(dur), 3)})
+        return {"schema": 2, "kind": "timeline", "title": f"{name} — merged",
+                "series": {"title": name}, "sources": sources,
+                "parts": [{"title": name, "segments": segments}],
+                "credits": {"author": "FansCut template", "based_on": "Plex collection"}}
 
     # -- AI-assisted recipes ----------------------------------------------------
     def ai_recipe(self, key: str, notes: str, apply: bool = False) -> dict[str, Any]:

@@ -45,6 +45,7 @@ class Movie:
     tmdb_id: int | None = None
     file: str | None = None  # local path after path mapping; None = not on disk
     duration: float | None = None  # seconds
+    collections: list[str] = field(default_factory=list)  # Plex collection tags
 
 
 @dataclass
