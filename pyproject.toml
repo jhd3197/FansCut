@@ -32,6 +32,9 @@ dev = [
     "types-PyYAML>=6",
     "setuptools>=68",  # tests/test_packaging.py
 ]
+docs = [
+    "mkdocs-material>=9.5",
+]
 
 [project.scripts]
 fanscut = "fanscut.cli:main"

@@ -1,0 +1,26 @@
+# lychee link checker config, used by .github/workflows/docs.yml.
+
+# Placeholder and local addresses in the docs are examples, not links to check.
+exclude = [
+  '^https?://localhost',
+  '^https?://127\.0\.0\.1',
+  '^https?://0\.0\.0\.0',
+  '^https?://host\.docker\.internal',
+  '^https?://(sonarr|radarr|plex|proxy)(:\d+)?',
+  '^https?://<',
+  '^https?://([a-z0-9-]+\.)*example\.(com|org|net)',
+  '^https?://([a-z0-9-]+\.)*fanscut\.lan',
+  '^https://ntfy\.sh/my-fanscut',
+  # Edit links on the built site; not in the sources, listed for local runs.
+  '^https://github\.com/jhd3197/FansCut/edit/',
+]
+
+exclude_path = ["site", "node_modules", "ui"]
+
+# Rate limits are not broken links.
+accept = ["200..=299", "429"]
+
+max_retries = 3
+retry_wait_time = 5
+timeout = 30
+max_concurrency = 8
