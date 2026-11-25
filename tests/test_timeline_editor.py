@@ -3,8 +3,6 @@
 import json
 from pathlib import Path
 
-import responses
-
 from fanscut import ai
 from tests.conftest import make_video, needs_ffmpeg
 from tests.test_ai import LLM
@@ -78,13 +76,11 @@ def test_outline_parsing():
     assert clean[0]["scenes"][1]["approx"] == 720.0
 
 
-def test_outline_endpoint(client, app_cfg):
+def test_outline_endpoint(client, app_cfg, fake_llm):
     app_cfg.ai.base_url = LLM
     app_cfg.ai.model = "test-model"
     client.get(f"{E}/episodes")  # warm the library cache before the nested mock
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        rsps.add(responses.POST, f"{LLM}/chat/completions",
-                 json={"choices": [{"message": {"content": json.dumps(OUTLINE)}}]})
+    with fake_llm.answering(json.dumps(OUTLINE)):
         r = client.post(f"{E}/timeline/outline", json={"notes": "chronology…"})
         assert r.status_code == 200
         parts = r.json()["outline"]
@@ -92,14 +88,12 @@ def test_outline_endpoint(client, app_cfg):
         assert parts[0]["scenes"][0]["approx"] == 310.0
 
 
-def test_outline_drops_unknown_sources(client, app_cfg):
+def test_outline_drops_unknown_sources(client, app_cfg, fake_llm):
     app_cfg.ai.base_url = LLM
     app_cfg.ai.model = "test-model"
     client.get(f"{E}/episodes")
     doc = [{"part": "p", "scenes": [{"src": "S09E99", "approx": "01:00"},
                                     {"src": "S01E01", "approx": "01:00"}]}]
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        rsps.add(responses.POST, f"{LLM}/chat/completions",
-                 json={"choices": [{"message": {"content": json.dumps(doc)}}]})
+    with fake_llm.answering(json.dumps(doc)):
         parts = client.post(f"{E}/timeline/outline", json={"notes": "x"}).json()["outline"]
         assert [s["src"] for s in parts[0]["scenes"]] == ["S01E01"]

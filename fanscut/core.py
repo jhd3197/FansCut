@@ -1498,8 +1498,7 @@ class Core:
     def ai_recipe(self, key: str, notes: str, apply: bool = False) -> dict[str, Any]:
         """Community cut notes -> validated recipe (schema 2); optionally applied."""
         series = self.library.get_series(key)
-        doc = ai_mod.generate_recipe(self.cfg.ai, series, self.library.episodes(key),
-                                     notes, session=self.session)
+        doc = ai_mod.generate_recipe(self.cfg.ai, series, self.library.episodes(key), notes)
         out: dict[str, Any] = {"recipe": doc}
         if apply:
             out["import"] = self.import_recipe(key, doc)
@@ -1508,8 +1507,7 @@ class Core:
     def ai_outline(self, key: str, notes: str) -> dict[str, Any]:
         """Chronology notes -> scene outline (parts with placeholder segments)."""
         series = self.library.get_series(key)
-        outline = ai_mod.generate_outline(self.cfg.ai, series, self.library.episodes(key),
-                                          notes, session=self.session)
+        outline = ai_mod.generate_outline(self.cfg.ai, series, self.library.episodes(key), notes)
         known = {e.id for e in self.library.episodes(key)}
         for part in outline:
             part["scenes"] = [s for s in part["scenes"] if s["src"] in known]

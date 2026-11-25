@@ -100,3 +100,38 @@ def make_video(path: Path, seconds: float = 6, size: str = "160x120", wav: Path 
 @pytest.fixture(autouse=True)
 def no_retry_sleep(monkeypatch):
     monkeypatch.setattr("fanscut.clients.base.time.sleep", lambda _s: None)
+
+
+class FakeLLM:
+    """Stands in for the Prompture driver: replies with the queued text."""
+
+    def __init__(self) -> None:
+        self.reply = ""
+        self.models: list[str] = []
+        self.messages: list[list[dict]] = []
+
+    def answering(self, reply):
+        import contextlib
+        import json as _json
+
+        self.reply = reply if isinstance(reply, str) else _json.dumps(reply)
+        return contextlib.nullcontext(self)
+
+    def generate_messages(self, messages, options):
+        self.messages.append(messages)
+        return {"text": self.reply}
+
+
+@pytest.fixture
+def fake_llm(monkeypatch) -> FakeLLM:
+    from fanscut import ai
+
+    fake = FakeLLM()
+
+    def driver_for(cfg, *, vision=False):
+        model, _ = ai.model_spec(cfg, vision=vision)
+        fake.models.append(model)
+        return fake
+
+    monkeypatch.setattr(ai, "driver_for", driver_for)
+    return fake
