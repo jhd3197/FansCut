@@ -9,6 +9,8 @@
 #                           proxies /api to a running `./dev.sh serve`)
 #   ./dev.sh validate       everything CI runs: ruff, mypy, pytest, UI lint,
 #                           UI tests and the UI build
+#   ./dev.sh check          same as validate
+#   ./dev.sh test-web       UI lint and UI tests (Vitest)
 #   ./dev.sh cli <args...>  pass through to the fanscut CLI
 #
 # Set FANSCUT_VENV to use a venv outside the repo.
@@ -62,7 +64,7 @@ case "$cmd" in
         [ -d ui/node_modules ] || ui npm ci
         ui npm run dev -- "$@"
         ;;
-    validate)
+    validate|check)
         step "ruff" "$PYTHON" -m ruff check .
         step "mypy" "$PYTHON" -m mypy fanscut/
         step "pytest" "$PYTHON" -m pytest -q -n auto
@@ -72,10 +74,15 @@ case "$cmd" in
         step "ui build" ui npm run build
         printf '\nall good\n'
         ;;
+    test-web)
+        [ -d ui/node_modules ] || step "npm ci" ui npm ci
+        step "ui lint" ui npm run lint
+        step "ui test" ui npm test
+        ;;
     cli)
         exec "$PYTHON" -m fanscut "$@"
         ;;
     *)
-        sed -n '2,15p' "$0"
+        sed -n '2,17p' "$0"
         ;;
 esac

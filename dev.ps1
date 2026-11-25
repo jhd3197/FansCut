@@ -6,6 +6,8 @@
 #   .\dev.ps1 test           pytest, in parallel
 #   .\dev.ps1 lint           ruff + mypy
 #   .\dev.ps1 validate       everything CI runs: ruff, mypy, pytest, UI lint, UI tests, UI build
+#   .\dev.ps1 check          same as validate
+#   .\dev.ps1 test-web       UI lint and UI tests (Vitest)
 #   .\dev.ps1 cli <args...>  pass through to the fanscut CLI
 #
 # Set FANSCUT_VENV to use a venv outside the repo.
@@ -57,7 +59,7 @@ switch ($Command) {
         Step "ruff" { & $Python -m ruff check . }
         Step "mypy" { & $Python -m mypy fanscut/ }
     }
-    "validate" {
+    { $_ -in "validate", "check" } {
         Step "ruff" { & $Python -m ruff check . }
         Step "mypy" { & $Python -m mypy fanscut/ }
         Step "pytest" { & $Python -m pytest -q -n auto }
@@ -67,6 +69,11 @@ switch ($Command) {
         Step "ui build" { Ui { npm run build } }
         Write-Host "`nall good" -ForegroundColor Green
     }
+    "test-web" {
+        if (-not (Test-Path "ui\node_modules")) { Step "npm ci" { Ui { npm ci } } }
+        Step "ui lint" { Ui { npm run lint } }
+        Step "ui test" { Ui { npm test } }
+    }
     "cli" { & $Python -m fanscut @Rest; exit $LASTEXITCODE }
-    default { Get-Content $PSCommandPath | Select-Object -Skip 1 -First 11 }
+    default { Get-Content $PSCommandPath | Select-Object -Skip 1 -First 13 }
 }
