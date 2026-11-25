@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { ErrorBox, Loading } from '../components/ui.jsx';
-import { Crumbs, KV, Section, hm } from '../components/kit.jsx';
+import { Crumbs, KV, Section, enc, hm } from '../components/kit.jsx';
 import { SuggestionDialog, SuggestionTile, TimelineTile } from './Discover.jsx';
-import { FilmTile } from './Collection.jsx';
+import { FilmTile, ShowTile } from './Collection.jsx';
 import { movieTag } from './LibraryPage.jsx';
 import { TemplateDialog } from '../components/TemplateDialog.jsx';
 import { useApi } from '../lib/store.js';
@@ -81,6 +81,14 @@ export function MoviePage() {
     p && ['Video', videoLine(p.video)],
     p && ['Audio', audioLine(p.audio_tracks)],
     p && subs.length > 0 && ['Subtitles', subsLine(subs)],
+    m.source_for?.length > 0 && ['Used by', <span key="u">This copy is the source for {m.source_for.join(', ')}</span>],
+    m.other_versions?.length > 0 && ['Other versions', (
+      <span key="v" className="row wrap" style={{ gap: 10 }}>
+        {m.other_versions.map((v) => (
+          <Link key={v.key} to={`/movies/${enc(v.key)}`}>{v.edition || 'Another copy'}{v.on_disk ? '' : ' (not on disk)'}</Link>
+        ))}
+      </span>
+    )],
     ['File', m.file
       ? <span className="mono" style={{ fontSize: 12, overflowWrap: 'anywhere' }}>{m.file}</span>
       : <span className="c-warn">No file on disk</span>],
@@ -125,6 +133,15 @@ export function MoviePage() {
         </Section>
       )}
       {open && <SuggestionDialog s={open} onClose={() => setOpen(null)} />}
+
+      {(() => {
+        const shows = [...new Map(m.collection_films.flatMap((c) => c.shows || []).map((s) => [s.key, s])).values()];
+        return shows.length > 0 && (
+          <Section id="m-also" title="Also in your library" count={shows.length}>
+            <div className="shelf">{shows.map((s) => <ShowTile key={s.key} s={s} />)}</div>
+          </Section>
+        );
+      })()}
 
       {m.collection_films.map((c, i) => (
         <Section key={c.name} id={`m-coll-${i}`} title={`In the collection: ${c.name}`} count={c.films.length}

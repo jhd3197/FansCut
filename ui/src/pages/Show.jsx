@@ -9,6 +9,7 @@ import { RecipeDialog, downloadJson, recipeFileName } from '../components/Recipe
 import { audioSummary, showFolder, subtitleSummary } from './Episode.jsx';
 import { useApi } from '../lib/store.js';
 import { SuggestionDialog, SuggestionTile } from './Discover.jsx';
+import { FilmTile } from './Collection.jsx';
 
 const BLANK = (title) => ({
   schema: 2, kind: 'timeline', title: `${title} — Timeline`,
@@ -73,6 +74,10 @@ export function ShowPage() {
   usePageTitle(view.data?.series?.title);
   const tls = useApi(`${base}/timelines`);
   const sugg = useApi('/suggestions', { quiet: true });
+  // a franchise collection holding this show: its films go in "Also in your library"
+  const colls = useApi('/library/collections', { quiet: true });
+  const franchise = (colls.data?.collections || []).find((c) => c.shows?.includes(key));
+  const also = useApi(franchise ? `/library/collections/${enc(franchise.name)}` : null, { quiet: true });
   const [idea, setIdea] = useState(null);
   const eps = view.data?.episodes || [];
   const first = (eps.find((e) => e.has_file && e.season > 0) || eps.find((e) => e.has_file))?.id;
@@ -216,6 +221,13 @@ export function ShowPage() {
         )}
       </Section>
       {idea && <SuggestionDialog s={idea} onClose={() => setIdea(null)} />}
+
+      {also.data?.films?.length > 0 && (
+        <Section id="s-also" title="Also in your library" count={also.data.films.length}
+          end={<Link to={`/collections/${enc(also.data.name)}`} className="tiny">Open {also.data.name}</Link>}>
+          <div className="shelf">{also.data.films.map((f) => <FilmTile key={f.key} m={f} />)}</div>
+        </Section>
+      )}
 
       {dialog === 'match' && <MatchDialog series={series} matches={matches} onClose={() => setDialog(null)} onChanged={view.reload} />}
       {dialog === 'recipe' && <RecipeDialog series={series} onClose={() => setDialog(null)} onImported={view.reload} />}

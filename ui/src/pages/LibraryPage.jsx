@@ -11,6 +11,12 @@ async function loadLibrary() {
   return { series, movies, collections };
 }
 
+// "4 seasons · 87 of 89 episodes"
+function showMeta(s) {
+  const eps = s.episode_total > s.episode_count ? `${s.episode_count} of ${plural(s.episode_total, 'episode')}` : plural(s.episode_count, 'episode');
+  return [s.season_count ? plural(s.season_count, 'season') : null, eps].filter(Boolean).join(' · ');
+}
+
 function plural(n, word) {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
@@ -19,14 +25,37 @@ function CollectionTile({ c }) {
   return (
     <Link className="tile tile-wide" to={`/collections/${enc(c.name)}`}>
       <Backdrop k={c.backdrops?.[0]} name={c.name} />
-      <span className="tiny muted">{plural(c.films, 'film')} · {plural(c.cuts, 'cut')}</span>
+      <span className="tiny muted">{[plural(c.films, 'film'), c.shows?.length ? plural(c.shows.length, 'show') : null, plural(c.cuts, 'cut')].filter(Boolean).join(' · ')}</span>
     </Link>
   );
 }
 
+// "4K HDR10" from cached probe facts; null when unknown.
+export function quality(v) {
+  return v ? [v.res, v.hdr].filter(Boolean).join(' ') : null;
+}
+
+// Caption facts for a film: "182 min · 4K HDR10 · HEVC", or "Not analysed" for a copy
+// FansCut never probed (opening the film probes it).
+export function movieMeta(m) {
+  const len = m.minutes ? `${m.minutes} min` : m.on_disk ? 'Length unknown' : 'No file';
+  if (!m.on_disk || !('video' in m)) return len;
+  if (!m.video) return `${len} · Not analysed`;
+  return [len, quality(m.video), m.video.codec].filter(Boolean).join(' · ');
+}
+
+// The tooltip label (never drawn on the art): "EXTENDED · 4K HDR10".
 export function movieTag(m) {
   if (!m.on_disk) return 'NOT ON DISK';
-  return (m.edition || 'Movie').toUpperCase();
+  return [m.edition || 'Movie', quality(m.video)].filter(Boolean).join(' · ').toUpperCase();
+}
+
+// A film's note: a problem first, then which cut uses this copy, then other versions.
+export function movieNote(m) {
+  if (m.problem) return [m.problem, m.problem_severity === 'error' ? 'c-danger' : 'c-warn'];
+  if (m.source_for?.length) return [`Source for ${m.source_for.join(', ')}`, 'muted'];
+  if (m.versions?.length > 1) return [`${m.versions.length} versions: ${m.versions.map((v) => v.edition || 'unnamed').join(', ')}`, 'muted'];
+  return [null, 'muted'];
 }
 
 export function LibraryPage() {
@@ -40,7 +69,8 @@ export function LibraryPage() {
   const has = (...xs) => !needle || xs.some((x) => x && String(x).toLowerCase().includes(needle));
   const collections = (data?.collections.collections || []).filter((c) => has(c.name));
   const series = (data?.series.series || []).filter((s) => has(s.title, s.year));
-  const movies = (data?.movies.movies || []).filter((m) => has(m.title, m.year, ...(m.collections || [])));
+  // other copies of a film ride on its first copy's tile (see movieNote)
+  const movies = (data?.movies.movies || []).filter((m) => !m.version_of && has(m.title, m.year, ...(m.collections || [])));
   const errors = Object.entries({ ...(data?.series.errors || {}), ...(data?.movies.errors || {}) });
   // series sources only list Sonarr/Plex/folder shows; a movies-only library is still set up
   const noSources = data && !(data.series.sources || []).length && !(data.movies.movies || []).length && !errors.length;
@@ -80,10 +110,10 @@ export function LibraryPage() {
         <Section id="shows-h" title="Shows">
           <div className="grid">
             {series.map((s) => (
-              <MediaTile key={s.key} art={s.art} to={`/series/${enc(s.key)}`} tag={`TV · ${plural(s.episode_count, 'episode')}`}
-                title={s.title} year={s.year}
-                meta={[s.is_anime ? 'Anime' : null, s.source].filter(Boolean).join(' · ')}
-                note={s.is_anime && !s.matched ? 'Not matched to a catalogue yet' : null} noteClass="c-warn" />
+              <MediaTile key={s.key} art={s.art} to={`/series/${enc(s.key)}`}
+                tag={['TV', s.season_count ? plural(s.season_count, 'season') : null, s.is_anime ? 'Anime' : null].filter(Boolean).join(' · ')}
+                title={s.title} year={s.year} meta={showMeta(s)}
+                note={s.audio_note || (s.is_anime && !s.matched ? 'Not matched to a catalogue yet' : null)} noteClass="c-warn" />
             ))}
           </div>
         </Section>
@@ -94,8 +124,7 @@ export function LibraryPage() {
           <div className="grid">
             {movies.map((m) => (
               <MediaTile key={m.key} art={m.art} to={`/movies/${enc(m.key)}`} tag={movieTag(m)} title={m.title} year={m.year}
-                meta={m.minutes ? `${m.minutes} min` : m.on_disk ? 'Length unknown' : 'No file'}
-                note={m.problem} noteClass={m.problem_severity === 'error' ? 'c-danger' : 'c-warn'} />
+                meta={movieMeta(m)} note={movieNote(m)[0]} noteClass={movieNote(m)[1]} />
             ))}
           </div>
         </Section>

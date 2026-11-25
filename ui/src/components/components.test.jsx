@@ -8,6 +8,7 @@ import { EpisodeTrack } from './Timeline.jsx';
 import { setPath } from '../pages/Settings.jsx';
 import { posterFace } from './kit.jsx';
 import { sourceSummary } from '../lib/labels.js';
+import { movieMeta, movieNote, movieTag } from '../pages/LibraryPage.jsx';
 
 afterEach(cleanup);
 
@@ -148,5 +149,23 @@ describe('MoreMenu', () => {
     fireEvent.click(more);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('menu')).toBeNull();
+  });
+});
+
+describe('film captions', () => {
+  const film = { on_disk: true, minutes: 182, edition: 'Extended', video: { res: '4K', hdr: 'HDR10', codec: 'HEVC' } };
+  it('reads resolution, HDR and codec from the cached probe', () => {
+    expect(movieMeta(film)).toBe('182 min · 4K HDR10 · HEVC');
+    expect(movieTag(film)).toBe('EXTENDED · 4K HDR10');
+  });
+  it('says Not analysed for a copy never probed, nothing when the listing had no probe data', () => {
+    expect(movieMeta({ ...film, video: null })).toBe('182 min · Not analysed');
+    const { video, ...bare } = film; // eslint-disable-line no-unused-vars
+    expect(movieMeta(bare)).toBe('182 min');
+  });
+  it('puts a problem first, then the cut it feeds, then its versions', () => {
+    expect(movieNote({ problem: 'no audio', problem_severity: 'error' })).toEqual(['no audio', 'c-danger']);
+    expect(movieNote({ source_for: ['Took'] })[0]).toBe('Source for Took');
+    expect(movieNote({ versions: [{ edition: 'Extended' }, { edition: null }] })[0]).toBe('2 versions: Extended, unnamed');
   });
 });
