@@ -19,7 +19,7 @@ function plural(n, word) {
 function CollectionTile({ c }) {
   return (
     <Link className="tile tile-wide" to={`/collections/${enc(c.name)}`}>
-      <Backdrop k={c.art?.[0]} name={c.name} />
+      <Backdrop k={c.backdrops?.[0]} name={c.name} />
       <span className="tiny muted">{plural(c.films, 'film')} · {plural(c.cuts, 'cut')}</span>
     </Link>
   );
@@ -81,7 +81,7 @@ export function LibraryPage() {
         <Section id="shows-h" title="Shows">
           <div className="grid">
             {series.map((s) => (
-              <MediaTile key={s.key} art={s.key} to={`/series/${enc(s.key)}`} tag={`TV · ${plural(s.episode_count, 'episode')}`}
+              <MediaTile key={s.key} art={s.art} to={`/series/${enc(s.key)}`} tag={`TV · ${plural(s.episode_count, 'episode')}`}
                 title={s.title} year={s.year}
                 meta={[s.is_anime ? 'Anime' : null, s.source].filter(Boolean).join(' · ')}
                 note={s.is_anime && !s.matched ? 'Not matched to a catalogue yet' : null} noteClass="c-warn" />
@@ -94,7 +94,7 @@ export function LibraryPage() {
         <Section id="movies-h" title="Movies">
           <div className="grid">
             {movies.map((m) => (
-              <MediaTile key={m.key} art={m.key} to={`/movies/${enc(m.key)}`} tag={movieTag(m)} title={m.title} year={m.year}
+              <MediaTile key={m.key} art={m.art} to={`/movies/${enc(m.key)}`} tag={movieTag(m)} title={m.title} year={m.year}
                 meta={m.minutes ? `${m.minutes} min` : m.on_disk ? 'Length unknown' : 'No file'}
                 note={m.problem} noteClass={m.problem_severity === 'error' ? 'c-danger' : 'c-warn'} />
             ))}

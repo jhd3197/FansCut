@@ -20,6 +20,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from .art import art_ref
+
 # resolve(src, source_entry) -> (file, duration, error_reason | None)
 Resolver = Callable[[str, dict[str, Any]], tuple[str | None, float | None, str | None]]
 
@@ -59,7 +61,7 @@ def from_collection(name: str, movies: list[Any], lang_missing: list[str]) -> li
     missing = [{"src": t, "reason": "no preferred audio language"} for t in lang_missing]
     out.append({
         "id": f"merge:{name}", "kind": "collection_merge", "category": "Merges",
-        "name": name, "art": [m.key for m in movies],
+        "name": name, "art": [art_ref(m) for m in movies],
         "tagline": f"{name}, as one film",
         "title": f"{name} — merged movie",
         "status": "ready" if not missing else "partly", "missing": missing,
@@ -68,7 +70,7 @@ def from_collection(name: str, movies: list[Any], lang_missing: list[str]) -> li
     })
     out.append({
         "id": f"order:{name}", "kind": "watch_order", "category": "Watch in story order",
-        "name": name, "art": [m.key for m in movies],
+        "name": name, "art": [art_ref(m) for m in movies],
         "tagline": "in release order",
         "title": f"{name} — watch order playlist",
         "status": "ready", "missing": [],
@@ -79,7 +81,8 @@ def from_collection(name: str, movies: list[Any], lang_missing: list[str]) -> li
 
 
 def canon_cut(series_title: str, key: str, n_filler: int, n_episodes: int,
-              files_missing: list[str], lang_missing: list[str]) -> dict[str, Any] | None:
+              files_missing: list[str], lang_missing: list[str],
+              art: str | None = None) -> dict[str, Any] | None:
     """A 'canon cut' suggestion for a matched show with known filler."""
     if n_filler <= 0:
         return None
@@ -87,7 +90,7 @@ def canon_cut(series_title: str, key: str, n_filler: int, n_episodes: int,
     missing += [{"src": e, "reason": "no preferred audio language"} for e in lang_missing]
     n = max(n_episodes, 1)
     return {"id": f"canon:{key}", "kind": "canon_cut", "category": "Anime",
-            "name": series_title, "art": [key],
+            "name": series_title, "art": [art or key],
             "tagline": "no filler",
             "title": f"{series_title} — canon cut",
             "status": _status(n, missing) if missing else "ready",

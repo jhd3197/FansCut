@@ -120,6 +120,8 @@ class Library:
             tvdb_id=s.get("tvdbId") or None, tmdb_id=s.get("tmdbId") or None,
             episode_count=stats.get("episodeFileCount", 0),
             is_anime=s.get("seriesType") == "anime",
+            poster=_remote_image(s.get("images"), "poster"),
+            backdrop=_remote_image(s.get("images"), "fanart"),
         )
 
     @staticmethod
@@ -131,6 +133,7 @@ class Library:
             year=m.get("year"), episode_count=m.get("leafCount", 0),
             tvdb_id=int(ids["tvdb"]) if ids.get("tvdb", "").isdigit() else None,
             tmdb_id=int(ids["tmdb"]) if ids.get("tmdb", "").isdigit() else None,
+            poster=m.get("thumb") or None, backdrop=m.get("art") or None,
         )
 
     def get_series(self, key: str) -> Series:
@@ -193,7 +196,9 @@ class Library:
         runtime = _hms(((f.get("mediaInfo") or {}).get("runTime")) or "")
         return Movie(key=f"radarr:{m['id']}", source="radarr", title=m.get("title", ""),
                      year=m.get("year") or None, tmdb_id=m.get("tmdbId") or None,
-                     file=self._map(f["path"]) if f.get("path") else None, duration=runtime)
+                     file=self._map(f["path"]) if f.get("path") else None, duration=runtime,
+                     poster=_remote_image(m.get("images"), "poster"),
+                     backdrop=_remote_image(m.get("images"), "fanart"))
 
     def _plex_movie(self, m: dict[str, Any]) -> Movie:
         ids = {g["id"].split("://")[0]: g["id"].split("://")[1] for g in m.get("Guid", [])
@@ -207,7 +212,8 @@ class Library:
                      file=self._map(part["file"]) if part.get("file") else None,
                      duration=ms / 1000 if ms else None,
                      collections=[c.get("tag", "") for c in m.get("Collection", [])
-                                  if c.get("tag")])
+                                  if c.get("tag")],
+                     poster=m.get("thumb") or None, backdrop=m.get("art") or None)
 
     def find_movie(self, tmdb_id: int | None, title: str = "", edition: str = "") -> Movie | None:
         """Resolve a movie source: by TMDB id, then title; edition prefers a matching name."""
@@ -306,6 +312,8 @@ def _merge_series(items: list[Series]) -> list[Series]:
             hit.tvdb_id = hit.tvdb_id or s.tvdb_id
             hit.tmdb_id = hit.tmdb_id or s.tmdb_id
             hit.episode_count = hit.episode_count or s.episode_count
+            hit.poster = hit.poster or s.poster
+            hit.backdrop = hit.backdrop or s.backdrop
             if hit.tvdb_id:
                 by_tvdb.setdefault(hit.tvdb_id, hit)
             continue
@@ -314,6 +322,15 @@ def _merge_series(items: list[Series]) -> list[Series]:
             by_tvdb.setdefault(s.tvdb_id, s)
         by_title.setdefault(tk, s)
     return kept
+
+
+def _remote_image(images: list[dict[str, Any]] | None, cover: str) -> str | None:
+    """Radarr/Sonarr's TMDB/TVDB URL for a cover type. Their local `url` is a
+    /MediaCover path only the *arr can serve; the remote one the browser can load."""
+    for img in images or []:
+        if img.get("coverType") == cover and str(img.get("remoteUrl", "")).startswith("https://"):
+            return str(img["remoteUrl"])
+    return None
 
 
 def _file_key(path: str) -> str:
@@ -351,6 +368,8 @@ def _merge_movies(items: list[Movie]) -> list[Movie]:
         into.tmdb_id = into.tmdb_id or other.tmdb_id
         into.duration = into.duration or other.duration
         into.collections = list(dict.fromkeys([*into.collections, *other.collections]))
+        into.poster = into.poster or other.poster
+        into.backdrop = into.backdrop or other.backdrop
 
     for m in items:
         if m.file:

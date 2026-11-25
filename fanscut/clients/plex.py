@@ -24,12 +24,15 @@ class PlexClient(BaseClient):
     def identity(self) -> dict[str, Any]:
         return self._get("/")["MediaContainer"]
 
-    def artwork(self, rating_key: str, kind: str = "poster", width: int = 500) -> bytes | None:
-        """An item's poster (thumb) or backdrop (art), resized by Plex's photo transcoder."""
+    def artwork(self, rating_key: str, kind: str = "poster", width: int = 500,
+                path: str | None = None) -> bytes | None:
+        """An item's poster (thumb) or backdrop (art), resized by Plex's photo transcoder.
+        `path` is the thumb/art path from the listing, when known."""
         field = "thumb" if kind == "poster" else "art"
         height = width * 3 // 2 if kind == "poster" else width * 9 // 16
         return self.get_image("/photo/:/transcode", {
-            "url": f"/library/metadata/{rating_key}/{field}", "width": width, "height": height,
+            "url": path or f"/library/metadata/{rating_key}/{field}", "width": width,
+            "height": height,
             "minSize": 1, "upscale": 1})
 
     def sections(self) -> list[dict[str, Any]]:

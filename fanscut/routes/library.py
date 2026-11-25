@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from ..art import media_type
+from ..art import art_ref, media_type
 from ..core import UNSET, WHOLE
 from ..errors import NotFoundError
 from ..models import Series
@@ -28,7 +28,7 @@ def list_series(core: CoreDep, q: str = "", source: str = "") -> dict[str, Any]:
     for s in series:
         if (source and s.source != source) or (needle and needle not in s.title.lower()):
             continue
-        out.append({**asdict(s), "matched": s.key in matched})
+        out.append({**asdict(s), "matched": s.key in matched, "art": art_ref(s)})
     return {"sources": core.library.sources(), "errors": errors, "series": out}
 
 

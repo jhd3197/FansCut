@@ -259,7 +259,7 @@ export function Discover() {
         <Shelf id="shelf-coll" title="Your collections" count={loaded.collections.length} wide>
           {loaded.collections.map((c) => (
             <Link key={c.name} className="tile tile-wide" to={`/collections/${enc(c.name)}`}>
-              <Backdrop k={c.art?.[0]} name={c.name} />
+              <Backdrop k={c.backdrops?.[0]} name={c.name} />
               <span className="tiny muted">{c.films} films{c.cuts ? ` · ${c.cuts} cuts` : ''}</span>
             </Link>
           ))}

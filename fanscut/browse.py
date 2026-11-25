@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .art import art_ref
 from .errors import NotFoundError
 from .library import check, known
 
@@ -48,7 +49,8 @@ def movie_row(m: Movie, health: dict[str, list[dict[str, Any]]]) -> dict[str, An
             "minutes": round(m.duration / 60) if m.duration else None,
             "edition": _edition(m), "collections": _collections_of(m),
             "problem": problems[0]["message"] if problems else None,
-            "problem_severity": problems[0]["severity"] if problems else None}
+            "problem_severity": problems[0]["severity"] if problems else None,
+            "art": art_ref(m)}
 
 
 def movies(core: Core) -> dict[str, Any]:
@@ -71,7 +73,9 @@ def collections(core: Core) -> dict[str, Any]:
         by_year = sorted(members, key=lambda m: m.year or 0)
         out.append({"name": name, "films": len(members), "cuts": n_cuts,
                     "years": sorted({m.year for m in members if m.year}),
-                    "art": [m.key for m in by_year]})  # /api/art/<kind>/<key>, first film first
+                    # poster and backdrop refs, first film first (an https URL or a key)
+                    "art": [art_ref(m) for m in by_year],
+                    "backdrops": [art_ref(m, "backdrop") for m in by_year]})
     return {"collections": out}
 
 

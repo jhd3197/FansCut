@@ -19,7 +19,7 @@ import requests
 
 from . import ai as ai_mod
 from . import recipe as recipe_mod
-from .art import ArtStore
+from .art import ArtStore, art_ref
 from .catalogues import match as catalogue_match
 from .catalogues.http import CachedHttp
 from .config import Config
@@ -1365,7 +1365,7 @@ class Core:
                     m = self.library.find_movie(entry.get("tmdb"),
                                                 edition=entry.get("edition", ""))
                     if m:
-                        _art.append(m.key)
+                        _art.append(art_ref(m))
                     if not m or not m.file:
                         ed = f" ({entry.get('edition')})" if entry.get("edition") else ""
                         return None, None, f"movie {entry.get('tmdb')}{ed} not in the library"
@@ -1382,7 +1382,7 @@ class Core:
                 if not s:
                     stitle = (_doc.get("series") or {}).get("title")
                     return None, None, f"series {stitle!r} not in the library"
-                _art.append(s.key)
+                _art.append(art_ref(s))
                 eps = {e.id: e for e in self.library.episodes(s.key)}
                 e = eps.get(src)
                 if not e or not e.file:
@@ -1417,7 +1417,7 @@ class Core:
             missing_files = [e.id for e in eps if not e.file]
             lang_missing = [e.id for e in eps if e.file and self._lang_ok(e.file)]
             sgn = suggest.canon_cut(s.title, s.key, n_filler, len(eps),
-                                    missing_files, lang_missing)
+                                    missing_files, lang_missing, art_ref(s))
             if sgn:
                 out.append(sgn)
         order = {"ready": 0, "partly": 1, "missing": 2}

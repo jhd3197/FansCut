@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, ApiError, detailOf, seriesPath } from './api.js';
+import { api, ApiError, artSrcSet, artUrl, detailOf, seriesPath } from './api.js';
 
 const reply = (status, body) => vi.fn().mockResolvedValue({
   ok: status < 400, status, statusText: 'x', json: () => Promise.resolve(body),
@@ -35,5 +35,22 @@ describe('api client', () => {
 
   it('encodes series keys for paths', () => {
     expect(seriesPath('folder:Harbor Lights')).toBe('/series/folder%3AHarbor%20Lights');
+  });
+});
+
+describe('artUrl', () => {
+  const tmdb = 'https://image.tmdb.org/t/p/original/abc.jpg';
+
+  it('loads TMDB art straight from its CDN at a size near the one asked for', () => {
+    expect(artUrl(tmdb, 'poster', 500)).toBe('https://image.tmdb.org/t/p/w500/abc.jpg');
+    expect(artUrl(tmdb, 'poster', 300)).toBe('https://image.tmdb.org/t/p/w342/abc.jpg');
+    expect(artUrl(tmdb, 'backdrop', 800)).toBe('https://image.tmdb.org/t/p/w780/abc.jpg');
+    expect(artUrl(tmdb, 'poster', 2000)).toBe('https://image.tmdb.org/t/p/original/abc.jpg');
+    expect(artSrcSet(tmdb)).toContain('/w780/abc.jpg 800w');
+  });
+
+  it('sends library keys through FansCut', () => {
+    expect(artUrl('plexmovie:55', 'poster', 300)).toBe('/api/art/poster/plexmovie%3A55?w=300');
+    expect(artSrcSet('plexmovie:55')).toContain('?w=800 800w');
   });
 });

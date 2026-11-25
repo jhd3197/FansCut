@@ -6,8 +6,9 @@ from pathlib import Path
 
 import responses
 
-from fanscut.art import ArtStore, local_image, media_type
-from fanscut.library.service import Library
+from fanscut.art import ArtStore, art_ref, local_image, media_type
+from fanscut.library.service import Library, _remote_image
+from fanscut.models import Movie
 from tests.conftest import SERIES
 
 JPEG = b"\xff\xd8\xff\xe0" + b"poster" * 10
@@ -81,3 +82,19 @@ def test_plex_beats_the_folder_copy_of_the_same_film(cfg, tmp_path):
 def test_unknown_key_has_no_art(cfg, tmp_path):
     assert ArtStore(Library(cfg), tmp_path / "art").get("radarr:404") is None
     assert not list(Path(tmp_path / "art").glob("*[!e]"))  # only the .none marker
+
+
+def test_radarr_remote_urls_go_to_the_browser_directly():
+    images = [{"coverType": "poster", "url": "/MediaCover/1/poster.jpg",
+               "remoteUrl": "https://image.tmdb.org/t/p/original/p.jpg"},
+              {"coverType": "fanart", "remoteUrl": "https://image.tmdb.org/t/p/original/f.jpg"}]
+    assert _remote_image(images, "poster") == "https://image.tmdb.org/t/p/original/p.jpg"
+    assert _remote_image([{"coverType": "poster", "url": "/MediaCover/1/poster.jpg"}],
+                         "poster") is None  # the *arr-local path is not reachable
+    m = Movie("radarr:1", "radarr", "The Long Voyage", poster=_remote_image(images, "poster"),
+              backdrop=_remote_image(images, "fanart"))
+    assert art_ref(m) == "https://image.tmdb.org/t/p/original/p.jpg"
+    assert art_ref(m, "backdrop").endswith("/f.jpg")
+    # a Plex path (or nothing) stays a key, served through /api/art
+    assert art_ref(Movie("plexmovie:9", "plex", "X", poster="/library/metadata/9/thumb/1")) == \
+        "plexmovie:9"

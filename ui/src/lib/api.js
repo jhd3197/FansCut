@@ -36,5 +36,22 @@ export async function api(path, { method = 'GET', body } = {}) {
 // Series keys look like "folder:Harbor Lights"; they sit in a path segment.
 export const seriesPath = (key) => `/series/${encodeURIComponent(key)}`;
 
-// A library item's poster or backdrop (Plex, Radarr/Sonarr or files beside it).
-export const artUrl = (key, kind = 'poster', w = 500) => `/api/art/${kind}/${encodeURIComponent(key)}?w=${w}`;
+// An item's art. `ref` is what the API gives: a direct https URL (TMDB, from
+// Radarr/Sonarr) or a library key, which FansCut serves from Plex or files.
+const TMDB = /^https:\/\/image\.tmdb\.org\/t\/p\/[^/]+\//;
+const TMDB_SIZES = { poster: [185, 342, 500, 780], backdrop: [300, 780, 1280] };
+
+export function artUrl(ref, kind = 'poster', w = 500) {
+  if (TMDB.test(ref)) {
+    const size = TMDB_SIZES[kind].find((s) => s >= w * 0.95) || 'original'; // 780 serves 800
+    return ref.replace(TMDB, `https://image.tmdb.org/t/p/${size === 'original' ? size : `w${size}`}/`);
+  }
+  if (/^https?:\/\//.test(ref)) return ref;
+  return `/api/art/${kind}/${encodeURIComponent(ref)}?w=${w}`;
+}
+
+// srcset across a few widths, so 4K screens get sharp art and phones small files.
+export function artSrcSet(ref, kind = 'poster', widths = kind === 'poster' ? [300, 500, 800] : [480, 800, 1280]) {
+  if (/^https?:\/\//.test(ref) && !TMDB.test(ref)) return undefined;
+  return widths.map((w) => `${artUrl(ref, kind, w)} ${w}w`).join(', ');
+}

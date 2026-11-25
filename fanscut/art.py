@@ -59,6 +59,14 @@ def local_image(folder: Path, kind: str, stem: str = "") -> Path | None:
     return None
 
 
+def art_ref(item: Any, kind: str = "poster") -> str:
+    """What the UI loads for an item's art: a direct https URL when Radarr or
+    Sonarr gave one (TMDB's CDN, no round trip through FansCut), else the
+    item's key, which the UI turns into /api/art/<kind>/<key>."""
+    url = getattr(item, "poster" if kind == "poster" else "backdrop", None)
+    return url if url and url.startswith("https://") else item.key
+
+
 class ArtStore:
     def __init__(self, library: Library, cache_dir: Path):
         self.library = library
@@ -123,7 +131,8 @@ class ArtStore:
         src, ident = item.key.split(":", 1)
         if src in ("plexmovie", "plex"):
             plex = self.library.plex()
-            return plex.artwork(ident, kind, width) if plex else None
+            path = getattr(item, "poster" if kind == "poster" else "backdrop", None)
+            return plex.artwork(ident, kind, width, path) if plex else None
         if src == "radarr":
             radarr = self.library.radarr()
             return radarr.cover(ident, kind) if radarr else None

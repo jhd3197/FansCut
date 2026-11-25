@@ -1,7 +1,7 @@
 // Shared building blocks of the FansCut design: posters, tiles, sections, crumbs.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { artUrl } from '../lib/api.js';
+import { artSrcSet, artUrl } from '../lib/api.js';
 
 // Poster palettes: [background, shade, accent, title colour]. Picked by a hash of the title,
 // so a cut always gets the same art. No images: the recipe never ships artwork.
@@ -232,7 +232,7 @@ export const enc = encodeURIComponent;
 
 // Poster widths the server resizes to; the browser picks by the tile's width
 // and the screen's pixel density, so 4K screens get sharp art.
-const POSTER_SRCSET = (key) => [300, 500, 800].map((w) => `${artUrl(key, 'poster', w)} ${w}w`).join(', ');
+const POSTER_SRCSET = (ref) => artSrcSet(ref, 'poster');
 // Mirrors --tile (clamp(150px, 9vw, 300px)); sizes can't read CSS variables.
 const POSTER_SIZES = '(min-width: 3334px) 300px, (min-width: 1667px) 9vw, 150px';
 
@@ -292,7 +292,7 @@ export function Backdrop({ k, name, children }) {
   return (
     <div className="bdrop" style={{ background: bg }}>
       {k && !failed && (
-        <img src={artUrl(k, 'backdrop', 800)} srcSet={[480, 800, 1200].map((w) => `${artUrl(k, 'backdrop', w)} ${w}w`).join(', ')}
+        <img src={artUrl(k, 'backdrop', 800)} srcSet={artSrcSet(k, 'backdrop')}
           sizes="(min-width: 3334px) 570px, (min-width: 1667px) 17vw, 285px" alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />
       )}
       <span className="bdrop-shade" style={{ '--tint': bg }} />

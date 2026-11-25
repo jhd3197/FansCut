@@ -20,6 +20,9 @@ class Series:
     tmdb_id: int | None = None
     episode_count: int = 0
     is_anime: bool = False
+    # where its art lives: an https URL (TMDB, via Sonarr) or a Plex path
+    poster: str | None = None
+    backdrop: str | None = None
 
 
 @dataclass
@@ -47,6 +50,9 @@ class Movie:
     file: str | None = None  # local path after path mapping; None = not on disk
     duration: float | None = None  # seconds
     collections: list[str] = field(default_factory=list)  # Plex collection tags
+    # where its art lives: an https URL (TMDB, via Radarr) or a Plex path
+    poster: str | None = None
+    backdrop: str | None = None
 
 
 @dataclass
