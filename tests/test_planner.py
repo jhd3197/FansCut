@@ -124,3 +124,36 @@ def test_empty_input():
 def test_wants_reasons_are_readable():
     assert wants(ep(1, "filler"), CutOptions())[1] == "filler skipped by canon_only"
     assert wants(ep(1, "unknown"), CutOptions(unknown_policy="skip"))[0] is False
+
+
+def test_custom_segments_beat_preset_and_trims():
+    e = ep(2, "filler", trims={"intro": (0.0, 90.0)})
+    e.segments = [(300.0, 420.0), (600.0, 660.0)]
+    cut = plan_cut([ep(1), e, ep(3)], CutOptions(preset="canon_only", min_segment=60.0))
+    own = [s for s in cut.segments if s.episode_id == "S01E02"]
+    assert [(s.start, s.end, s.reason) for s in own] == [
+        (300.0, 420.0, "custom segments"), (600.0, 660.0, "custom segments")]
+    assert cut.skipped == []  # the filler episode is kept: custom segments win over the preset
+
+
+def test_custom_segments_clamped_merged_and_exact():
+    e = ep(1, duration=100.0)
+    e.segments = [(80.0, 150.0), (50.0, 90.0)]  # out of range + overlap -> clamped and merged
+    cut = plan_cut([e], CutOptions(pad=2.0, min_segment=90.0))  # pad/min_segment do not apply
+    assert [(s.start, s.end) for s in cut.segments] == [(50.0, 100.0)]
+
+
+def test_explicit_exclude_still_beats_custom_segments():
+    e = ep(1, include=False)
+    e.segments = [(10.0, 50.0)]
+    cut = plan_cut([e, ep(2)], CutOptions(preset="everything"))
+    assert cut.kept == ["S01E02"]
+    assert cut.skipped[0] == {"episode_id": "S01E01", "reason": "user exclude"}
+
+
+def test_empty_custom_segments_keep_nothing():
+    e = ep(1)
+    e.segments = []
+    cut = plan_cut([e, ep(2)], CutOptions())
+    assert cut.kept == ["S01E02"]
+    assert cut.skipped[0]["reason"] == "nothing left after trimming"

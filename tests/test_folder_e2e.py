@@ -48,14 +48,23 @@ def test_render_job_end_to_end(media_client, cfg):
     done = media_client.get(f"/api/jobs/{job['id']}").json()
     assert done["status"] == "done", done["message"]
     out = done["result"]["output"]
-    assert out.startswith(str(cfg.output_dir)) and out.endswith("Tide Pool - fan cut.mkv")
+    stem = str(cfg.output_dir / "Tide Pool - fan cut.")
+    assert out.startswith(stem) and out.endswith(".mkv") and done["result"]["cached"] is False
     probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                             "-of", "json", out], capture_output=True, text=True, check=True)
     assert float(json.loads(probe.stdout)["format"]["duration"]) == pytest.approx(10, abs=0.4)
-    # a second render never overwrites the first
+    # a second render of the same cut is a cache hit, not a new file
     job2 = media_client.post(f"/api/series/{KEY}/render", json=body).json()
     media_client.core.worker.run_pending()
-    assert media_client.get(f"/api/jobs/{job2['id']}").json()["result"]["output"].endswith("(2).mkv")
+    done2 = media_client.get(f"/api/jobs/{job2['id']}").json()["result"]
+    assert done2["cached"] is True and done2["output"] == out
+    renders = media_client.get("/api/renders").json()["renders"]
+    assert [r["path"] for r in renders] == [out] and renders[0]["keep"] is True
+    # refresh re-renders over the same deterministic path
+    job3 = media_client.post(f"/api/series/{KEY}/render", json={**body, "refresh": True}).json()
+    media_client.core.worker.run_pending()
+    done3 = media_client.get(f"/api/jobs/{job3['id']}").json()["result"]
+    assert done3["cached"] is False and done3["output"] == out
 
 
 def test_cli_doctor_scan_and_help(cfg, tmp_path, capsys):

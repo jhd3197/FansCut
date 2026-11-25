@@ -34,13 +34,14 @@ class RenderPlan:
     total_seconds: float
     chapters: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    cache_key: str = ""  # content hash; set by Core when the output name is fixed
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode, "reason": self.reason, "output": self.output,
             "command": self.command, "files": self.files,
             "total_seconds": round(self.total_seconds, 3), "chapters": self.chapters,
-            "warnings": self.warnings,
+            "warnings": self.warnings, "cache_key": self.cache_key,
         }
 
 

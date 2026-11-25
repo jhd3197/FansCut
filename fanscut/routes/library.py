@@ -156,3 +156,20 @@ class DetectBody(BaseModel):
 @router.post("/series/{key}/detect-trims", status_code=202)
 def detect_trims(core: CoreDep, key: str, body: DetectBody) -> dict[str, Any]:
     return core.submit_detect(key, body.season)
+
+
+# -- custom segments ("my own cut") ---------------------------------------------
+class SegmentsBody(BaseModel):
+    segments: list[list[float]] | None = None  # kept [start, end] pairs; null/[] clears
+
+
+@router.put("/series/{key}/episodes/{episode_id}/segments")
+def put_segments(core: CoreDep, key: str, episode_id: str, body: SegmentsBody) -> dict[str, Any]:
+    core.set_segments(key, episode_id, body.segments)
+    return {"segments": core.custom_segments(key).get(episode_id) or []}
+
+
+@router.delete("/series/{key}/episodes/{episode_id}/segments")
+def delete_segments(core: CoreDep, key: str, episode_id: str) -> dict[str, bool]:
+    core.set_segments(key, episode_id, None)
+    return {"ok": True}

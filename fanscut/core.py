@@ -5,6 +5,8 @@ Routes stay thin and call into this; so do the job handlers.
 
 from __future__ import annotations
 
+import contextlib
+import datetime as _dt
 import json
 import tempfile
 from dataclasses import asdict, fields
@@ -13,6 +15,7 @@ from typing import Any
 
 import requests
 
+from . import ai as ai_mod
 from . import recipe as recipe_mod
 from .catalogues import match as catalogue_match
 from .catalogues.http import CachedHttp
@@ -22,11 +25,13 @@ from .errors import FansCutError, NotFoundError
 from .fillers import anifiller, jikan_flags
 from .fillers import labels as labelling
 from .fingerprint import detect
+from .fingerprint.cache import FingerprintCache
 from .jobs import JobContext, JobStore, Worker
 from .library.service import Library
 from .models import LABELS, TRIM_KINDS, Episode
 from .planner import PRESETS, CutOptions, CutPlan, PlanEpisode, plan_cut
 from .render import ffmpeg, plan, run
+from .render.cache import RenderStore, render_hash
 
 UNSET: Any = object()  # "leave this field alone", distinct from None (= clear it)
 WHOLE = -1  # matches.season value for "the whole series"
@@ -50,6 +55,7 @@ class Core:
         self.db = db
         self.session = session
         self.jobs = JobStore(db)
+        self.renders = RenderStore(db)
         self.worker = Worker(self.jobs, {"render": self._job_render, "detect": self._job_detect})
         self.apply_config(cfg)
 
@@ -206,6 +212,34 @@ class Core:
                 "start": r["start"], "end": r["end"], "source": r["source"]}
         return out
 
+    # -- custom segments ("my own cut") -----------------------------------------
+    def custom_segments(self, key: str) -> dict[str, list[list[float]]]:
+        return {r["episode_id"]: json.loads(r["ranges"]) for r in self.db.query(
+            "SELECT * FROM custom_segments WHERE series_key = ?", (key,))}
+
+    def set_segments(self, key: str, episode_id: str,
+                     ranges: list[list[float]] | None) -> None:
+        """ranges = kept [start, end] pairs in seconds; empty or None clears."""
+        if not ranges:
+            self.db.execute(
+                "DELETE FROM custom_segments WHERE series_key=? AND episode_id=?",
+                (key, episode_id))
+            return
+        clean = []
+        for r in ranges:
+            if not isinstance(r, list | tuple) or len(r) != 2:
+                raise FansCutError("each segment must be [start, end]")
+            s, e = r[0], r[1]
+            if isinstance(s, bool) or isinstance(e, bool) \
+                    or not isinstance(s, int | float) or not isinstance(e, int | float):
+                raise FansCutError("segment bounds must be numbers")
+            if s < 0 or e <= s:
+                raise FansCutError("segment end must be after start, and start not negative")
+            clean.append([float(s), float(e)])
+        self.db.execute(
+            "INSERT OR REPLACE INTO custom_segments (series_key, episode_id, ranges)"
+            " VALUES (?,?,?)", (key, episode_id, dumps(sorted(clean))))
+
     # -- series settings ------------------------------------------------------
     def settings(self, key: str) -> dict[str, Any]:
         defaults = self.cfg.cut.model_dump()
@@ -231,27 +265,31 @@ class Core:
         episodes = self.library.episodes(key)
         labels, sources = self.labels_for(key, episodes)
         overrides, trims = self.overrides(key), self.trims(key)
+        segments = self.custom_segments(key)
         settings = self.settings(key)
         opts = _opts_from(settings, None)
-        plan_eps = self._plan_episodes(episodes, labels, overrides, trims)
+        plan_eps = self._plan_episodes(episodes, labels, overrides, trims, segments)
         from .planner import wants
         rows = []
         for e, pe in zip(episodes, plan_eps, strict=True):
             keep, why = wants(pe, opts)
+            if pe.segments is not None and pe.include is not False:
+                keep, why = True, "custom segments"
             rows.append({
                 "id": e.id, "season": e.season, "number": e.number, "absolute": e.absolute,
                 "title": e.title, "air_date": e.air_date, "duration": e.duration,
                 "has_file": bool(e.file),
                 "label": labels[e.id].label, "label_source": labels[e.id].source,
                 "override": overrides.get(e.id), "include": keep, "include_reason": why,
-                "trims": trims.get(e.id, {}),
+                "trims": trims.get(e.id, {}), "segments": segments.get(e.id),
             })
         return {"series": asdict(series), "settings": settings, "filler_sources": sources,
                 "matches": self.matches(key), "episodes": rows}
 
     def _plan_episodes(self, episodes: list[Episode], labels: dict[str, labelling.LabelResult],
                        overrides: dict[str, dict[str, Any]],
-                       trims: dict[str, dict[str, dict[str, Any]]]) -> list[PlanEpisode]:
+                       trims: dict[str, dict[str, dict[str, Any]]],
+                       segments: dict[str, list[list[float]]]) -> list[PlanEpisode]:
         out = []
         for e in episodes:
             t = {k: (v["start"], v["end"]) for k, v in trims.get(e.id, {}).items()
@@ -259,7 +297,8 @@ class Core:
             out.append(PlanEpisode(
                 id=e.id, number=e.number, season=e.season, file=e.file, duration=e.duration,
                 label=labels[e.id].label, include=(overrides.get(e.id) or {}).get("include"),
-                trims=t, title=e.title))
+                trims=t, title=e.title,
+                segments=[(r[0], r[1]) for r in segments[e.id]] if e.id in segments else None))
         return out
 
     def build_cut(self, key: str, seasons: list[int] | None = None,
@@ -269,7 +308,8 @@ class Core:
             raise NotFoundError("no episodes in that selection")
         labels, _ = self.labels_for(key, episodes)
         opts = _opts_from(self.settings(key), options)
-        plan_eps = self._plan_episodes(episodes, labels, self.overrides(key), self.trims(key))
+        plan_eps = self._plan_episodes(episodes, labels, self.overrides(key), self.trims(key),
+                                       self.custom_segments(key))
         return plan_cut(plan_eps, opts), episodes
 
     # -- rendering ------------------------------------------------------------
@@ -279,32 +319,125 @@ class Core:
         series = self.library.get_series(key)
         suffix = f" - S{'+'.join(f'{s:02d}' for s in seasons)}" if seasons else ""
         stem = plan.safe_name(f"{series.title}{suffix} - fan cut")
-        out = plan.unique_path(self.cfg.output_dir, stem, self.cfg.ffmpeg.container)
         titles = {e.id: f"{e.id} {e.title}".strip() for e in episodes}
-        return plan.build_plan(cut, self.cfg.ffmpeg, out, workdir, self.prober, titles, mode)
+        provisional = self.cfg.output_dir / f"{stem}.{self.cfg.ffmpeg.container}"
+        rp = plan.build_plan(cut, self.cfg.ffmpeg, provisional, workdir, self.prober, titles, mode)
+        # The output is named after a hash of everything that shapes its bytes, so
+        # re-rendering an unchanged cut finds the file already there (cache hit).
+        h = render_hash(key, cut, rp.mode, self.cfg.ffmpeg, rp.chapters)
+        out = self.cfg.output_dir / f"{stem}.{h[:10]}.{self.cfg.ffmpeg.container}"
+        tmp = out.with_name(f"{out.stem}.part{out.suffix}")
+        rp.output, rp.output_tmp, rp.cache_key = str(out), str(tmp), h
+        rp.command[-1] = str(tmp)
+        return rp
 
     def dry_run(self, key: str, seasons: list[int] | None, options: dict[str, Any] | None,
                 mode: plan.Mode) -> dict[str, Any]:
         rp = self.render_plan(key, seasons, options, mode, Path("<workdir>"))
         cut, _ = self.build_cut(key, seasons, options)
-        return {"cut": cut.to_dict(), "render": rp.to_dict()}
+        return {"cut": cut.to_dict(), "render": rp.to_dict(),
+                "cached": self.renders.hit(rp.cache_key) is not None}
 
     def submit_render(self, key: str, seasons: list[int] | None, options: dict[str, Any] | None,
-                      mode: str) -> dict[str, Any]:
+                      mode: str, keep: bool | None = None, refresh: bool = False) -> dict[str, Any]:
         series = self.library.get_series(key)
         self.build_cut(key, seasons, options)  # fail fast on a bad request
         return self.worker.submit("render", f"Render {series.title}",
                                   {"series_key": key, "seasons": seasons, "options": options,
-                                   "mode": mode})
+                                   "mode": mode, "keep": keep, "refresh": refresh,
+                                   "title": series.title})
 
     def _job_render(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
         self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        keep = payload.get("keep")
+        if keep is None:
+            keep = self.cfg.render.keep
         with tempfile.TemporaryDirectory(prefix="render-", dir=self.cfg.data_dir) as tmp:
             rp = self.render_plan(payload["series_key"], payload.get("seasons"),
                                   payload.get("options"), payload.get("mode", "auto"), Path(tmp))
+            if not payload.get("refresh"):
+                hit = self.renders.hit(rp.cache_key)
+                if hit:
+                    return {"output": hit["path"], "mode": rp.mode, "cached": True,
+                            "cache_key": rp.cache_key, "keep": hit["keep"],
+                            "message": f"cached: {hit['path']}"}
             ctx.progress(0, f"rendering ({rp.mode}): {rp.reason}")
             out = run.execute(rp, Path(tmp), ctx.progress, ctx.cancel)
-        return {"output": out, "mode": rp.mode, "message": f"wrote {out}"}
+        row = self.renders.add(rp.cache_key, payload["series_key"], payload.get("title", ""),
+                               out, rp.mode, bool(keep), job_id=ctx.job_id)
+        swept = self.sweep_renders()
+        return {"output": out, "mode": rp.mode, "cached": False, "cache_key": rp.cache_key,
+                "keep": row["keep"], "swept": swept["removed"], "message": f"wrote {out}"}
+
+    # -- rendered output (cache, keep/evict) ------------------------------------
+    def list_renders(self, series_key: str | None = None) -> list[dict[str, Any]]:
+        return self.renders.all(series_key)
+
+    def set_render_keep(self, h: str, keep: bool) -> dict[str, Any]:
+        row = self.renders.set_keep(h, keep)
+        if row is None:
+            raise NotFoundError(f"render {h} not found")
+        return row
+
+    def delete_render(self, h: str) -> None:
+        row = self.renders.remove(h)
+        if row is None:
+            raise NotFoundError(f"render {h} not found")
+        with contextlib.suppress(OSError):
+            Path(row["path"]).unlink()
+
+    def sweep_renders(self) -> dict[str, Any]:
+        """Delete non-kept renders older than render.ephemeral_days (0 = never)."""
+        removed = []
+        days = self.cfg.render.ephemeral_days
+        if days > 0:
+            cutoff = (_dt.datetime.now() - _dt.timedelta(days=days)).isoformat(timespec="seconds")
+            for r in self.renders.due(cutoff):
+                with contextlib.suppress(OSError):
+                    Path(r["path"]).unlink()
+                self.renders.remove(r["hash"])
+                removed.append(r["path"])
+        return {"removed": removed}
+
+    # -- Sonarr webhook (auto-render on new episodes) ---------------------------
+    def handle_sonarr_webhook(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Sonarr 'Download'/'Upgrade' -> detect trims + render the affected seasons.
+
+        Never raises: Sonarr retries on non-2xx, so problems come back in the body.
+        """
+        event = payload.get("eventType", "")
+        if event == "Test":
+            return {"ok": True, "action": "test"}
+        if not self.cfg.automation.sonarr_webhook:
+            return {"ok": True, "action": "ignored",
+                    "reason": "automation.sonarr_webhook is off"}
+        if event not in ("Download", "Upgrade"):
+            return {"ok": True, "action": "ignored", "reason": f"event {event or 'unknown'}"}
+        sid = (payload.get("series") or {}).get("id")
+        if sid is None:
+            return {"ok": True, "action": "ignored", "reason": "no series id in payload"}
+        key = f"sonarr:{sid}"
+        self.library.refresh()  # the new file just landed; don't trust the 30s cache
+        try:
+            series = self.library.get_series(key)
+        except NotFoundError:
+            return {"ok": True, "action": "ignored", "reason": f"{key} not in the library"}
+        seasons = sorted({e["seasonNumber"] for e in payload.get("episodes") or []
+                          if isinstance(e.get("seasonNumber"), int)}) or None
+        jobs = []
+        try:
+            if self.cfg.automation.auto_detect:
+                for s in seasons or []:
+                    with_files = [e for e in self.library.episodes(key)
+                                  if e.season == s and e.file and e.duration]
+                    if len(with_files) >= 2:
+                        jobs.append(self.submit_detect(key, s))
+            jobs.append(self.submit_render(key, seasons, None, "auto",
+                                           keep=self.cfg.automation.keep))
+        except FansCutError as exc:
+            return {"ok": False, "action": "error", "reason": str(exc)}
+        return {"ok": True, "action": "queued", "series": series.title, "seasons": seasons,
+                "jobs": [j["id"] for j in jobs]}
 
     # -- OP/ED detection ------------------------------------------------------
     def submit_detect(self, key: str, season: int) -> dict[str, Any]:
@@ -320,7 +453,8 @@ class Core:
             raise FansCutError("need at least two episodes with files in the season")
         files = [(e.id, e.file or "", e.duration or 0.0) for e in eps]
         found = detect.analyze_files(files, self.cfg.fingerprint, self.cfg.ffmpeg,
-                                     lambda p: ctx.progress(p))
+                                     lambda p: ctx.progress(p),
+                                     cache=FingerprintCache(self.db))
         self.store_detected(key, found)
         return {"episodes": len(eps), "message": f"analysed {len(eps)} episodes",
                 "found": {k: {t: list(r) for t, r in v.items()} for k, v in found.items()}}
@@ -336,6 +470,17 @@ class Core:
                     "INSERT OR IGNORE INTO trims (series_key, episode_id, kind, start, end, source)"
                     " VALUES (?,?,?,?,?,'auto')", (key, eid, kind, s, e))
 
+    # -- AI-assisted recipes ----------------------------------------------------
+    def ai_recipe(self, key: str, notes: str, apply: bool = False) -> dict[str, Any]:
+        """Community cut notes -> validated recipe (schema 2); optionally applied."""
+        series = self.library.get_series(key)
+        doc = ai_mod.generate_recipe(self.cfg.ai, series, self.library.episodes(key),
+                                     notes, session=self.session)
+        out: dict[str, Any] = {"recipe": doc}
+        if apply:
+            out["import"] = self.import_recipe(key, doc)
+        return out
+
     # -- recipes --------------------------------------------------------------
     def export_recipe(self, key: str) -> dict[str, Any]:
         series = self.library.get_series(key)
@@ -345,7 +490,7 @@ class Core:
                        for k, v in t.items()} for eid, t in self.trims(key).items()}
         return recipe_mod.build(series.title, m["mal_id"] if m else None,
                                 m["anilist_id"] if m else None, self.settings(key),
-                                self.overrides(key), trims)
+                                self.overrides(key), trims, self.custom_segments(key))
 
     def import_recipe(self, key: str, doc: Any) -> dict[str, Any]:
         clean = recipe_mod.validate(doc)
@@ -358,6 +503,8 @@ class Core:
             applied += 1
             if "label" in e or "include" in e:
                 self.set_override(key, eid, e.get("label", UNSET), e.get("include", UNSET))
+            if "segments" in e:
+                self.set_segments(key, eid, e["segments"])
             for kind, rng in e.get("trims", {}).items():
                 self.set_trim(key, eid, kind, *(rng if rng else (None, None)))
         changes = dict(clean["options"])

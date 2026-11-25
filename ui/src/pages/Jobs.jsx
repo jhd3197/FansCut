@@ -4,6 +4,46 @@ import { Empty, ErrorBox, Loading, Notice, PageHeader, Progress, StatusTag } fro
 
 const ACTIVE = ['queued', 'running'];
 
+const fmtSize = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.round(n / 1e6)} MB`);
+
+function Renders() {
+  const { data, reload } = useLoad(() => api('/renders'));
+  const { act } = useAct();
+  const renders = data?.renders || [];
+  if (data && renders.length === 0) return null;
+  const call = (path, method, body) => act(async () => { await api(path, { method, body }); await reload(); });
+  return (
+    <>
+      <h2 style={{ marginTop: 22 }}>Rendered files</h2>
+      <p className="muted">Cached cuts. Unchecked “keep” files are auto-deleted after the retention days in Settings.</p>
+      <div className="card scroll-x" style={{ padding: 0 }}>
+        <table className="table">
+          <thead><tr><th>Series</th><th>File</th><th className="num">Size</th><th>Mode</th><th>Keep</th><th>Created</th><th /></tr></thead>
+          <tbody>
+            {renders.map((r) => (
+              <tr key={r.hash}>
+                <td><b>{r.title || r.series_key}</b></td>
+                <td className="mono tiny" style={{ overflowWrap: 'anywhere' }}>{r.path}</td>
+                <td className="num mono">{fmtSize(r.size_bytes)}</td>
+                <td className="muted">{r.mode}</td>
+                <td>
+                  <input type="checkbox" checked={r.keep} aria-label={`Keep ${r.path}`}
+                    onChange={(e) => call(`/renders/${r.hash}`, 'PUT', { keep: e.target.checked })} />
+                </td>
+                <td className="muted tiny">{r.created_at.replace('T', ' ')}</td>
+                <td><button className="btn btn-sm btn-ghost" onClick={() => call(`/renders/${r.hash}`, 'DELETE')}>Delete</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="row" style={{ marginTop: 10 }}>
+        <button className="btn btn-sm" onClick={() => call('/renders/sweep', 'POST')}>Sweep expired</button>
+      </div>
+    </>
+  );
+}
+
 export function Jobs() {
   const { data, error, loading, reload } = useLoad(() => api('/jobs'));
   const { act, msg, clear } = useAct();
@@ -41,6 +81,7 @@ export function Jobs() {
           </table>
         </div>
       )}
+      <Renders />
     </>
   );
 }

@@ -67,7 +67,48 @@ def _v1(conn: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1]
+def _v3(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE custom_segments (
+            series_key TEXT NOT NULL,
+            episode_id TEXT NOT NULL,
+            ranges     TEXT NOT NULL DEFAULT '[]',   -- JSON [[start, end], ...] in seconds
+            PRIMARY KEY (series_key, episode_id)
+        );
+    """)
+
+
+def _v2(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE renders (
+            hash       TEXT PRIMARY KEY,        -- content hash of the render inputs
+            series_key TEXT NOT NULL,
+            title      TEXT NOT NULL DEFAULT '',
+            path       TEXT NOT NULL,
+            mode       TEXT NOT NULL DEFAULT '',        -- copy | encode
+            keep       INTEGER NOT NULL DEFAULT 1,      -- 0 = evict after render.ephemeral_days
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            job_id     TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+    """)
+
+
+def _v4(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE fingerprint_cache (
+            key        TEXT PRIMARY KEY,        -- file identity + fingerprint settings
+            head       BLOB NOT NULL,           -- float32 feature frames, head_rows x 40
+            head_rows  INTEGER NOT NULL,
+            tail       BLOB NOT NULL,
+            tail_rows  INTEGER NOT NULL,
+            tail_start REAL NOT NULL,
+            duration   REAL NOT NULL
+        );
+    """)
+
+
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2, _v3, _v4]
 
 
 class Database:

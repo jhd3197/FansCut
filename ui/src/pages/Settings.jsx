@@ -106,9 +106,37 @@ export function Settings() {
         ))}
         <button className="btn btn-sm" onClick={() => setMaps([...maps, { remote: '', local: '' }])}>Add mapping</button>
       </Section>
-      <Section title="Output">
+      <Section title="Output" hint="Renders are cached by content: re-rendering an unchanged cut replays the existing file.">
         <div className="form-grid">{text('paths.output_dir', 'Output folder')}
-          <label className="field">Data folder<input className="input" value={cfg.paths.data_dir} disabled /></label></div>
+          <label className="field">Data folder<input className="input" value={cfg.paths.data_dir} disabled /></label>
+          {text('render.ephemeral_days', 'Auto-delete after (days)', { type: 'number', min: 0 })}
+          <label className="check" style={{ alignSelf: 'end', paddingBottom: 8 }}>
+            <input type="checkbox" checked={cfg.render.keep} onChange={set('render.keep')} /> keep renders by default
+          </label>
+        </div>
+        <p className="muted tiny" style={{ margin: '8px 0 0' }}>“Keep” off by default + a day count = watch-and-clean-up. 0 days keeps everything until you delete it.</p>
+      </Section>
+      <Section title="Automation" hint="Point a Sonarr Webhook connection at /api/webhooks/sonarr. No auth: keep FansCut on a trusted network.">
+        <label className="check" style={{ marginBottom: 10 }}>
+          <input type="checkbox" checked={cfg.automation.sonarr_webhook} onChange={set('automation.sonarr_webhook')} />
+          accept Sonarr webhooks (new episode → detect + render)
+        </label>
+        <div className="form-grid">
+          <label className="check" style={{ alignSelf: 'end', paddingBottom: 8 }}>
+            <input type="checkbox" checked={cfg.automation.auto_detect} onChange={set('automation.auto_detect')} /> run OP/ED detection first
+          </label>
+          <label className="check" style={{ alignSelf: 'end', paddingBottom: 8 }}>
+            <input type="checkbox" checked={cfg.automation.keep} onChange={set('automation.keep')} /> keep webhook renders
+          </label>
+        </div>
+      </Section>
+      <Section title="AI recipes" hint="Any OpenAI-compatible chat endpoint (Ollama, LM Studio, OpenAI…). Turns community cut notes into a recipe.">
+        <div className="form-grid">
+          {text('ai.base_url', 'Base URL', { placeholder: 'http://localhost:11434/v1' })}
+          {text('ai.model', 'Model', { placeholder: 'qwen2.5:7b' })}
+          {text('ai.api_key', 'API key', { type: 'password', autoComplete: 'off' })}
+          {text('ai.timeout', 'Timeout (s)', { type: 'number', min: 5 })}
+        </div>
       </Section>
       <Section title="ffmpeg" hint="Stream copy is used when files match; these apply to re-encodes.">
         <div className="form-grid">

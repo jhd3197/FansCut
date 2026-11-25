@@ -8,6 +8,7 @@ import { fmtDuration, fmtTime } from '../lib/time.js';
 import { Dialog, Empty, ErrorBox, LabelBadge, Loading, Notice, PageHeader } from '../components/ui.jsx';
 import { MatchDialog } from '../components/MatchDialog.jsx';
 import { RecipeButtons } from '../components/Recipe.jsx';
+import { SegmentsFields } from '../components/SegmentsFields.jsx';
 import { TrimFields } from '../components/TrimFields.jsx';
 
 const seasonName = (n) => (n === 0 ? 'Specials' : `Season ${n}`);
@@ -49,6 +50,7 @@ export function SeriesPage() {
   const setPreset = (preset) => call('/settings', 'PUT', { preset });
   const saveTrim = (id) => (kind, start, end) => call(`/episodes/${id}/trims/${kind}`, 'PUT', { start, end });
   const resetTrim = (id) => (kind) => call(`/episodes/${id}/trims/${kind}`, 'DELETE');
+  const saveSegments = (id) => (segments) => call(`/episodes/${id}/segments`, 'PUT', { segments });
   const autoMatch = () => act(async () => {
     const r = await api(`${base}/match/auto`, { method: 'POST' });
     await reload();
@@ -119,6 +121,11 @@ export function SeriesPage() {
                       </label>
                     </td>
                     <td>
+                      {e.segments && (
+                        <span className="chip" title="Custom segments: these exact ranges are kept, beating the preset">
+                          own cut ×{e.segments.length}
+                        </span>
+                      )}
                       <TrimChips trims={e.trims} />
                       <button className="btn btn-ghost btn-sm" onClick={() => setEditing(e.id)} aria-label={`Edit trims for ${e.id}`}>edit</button>
                     </td>
@@ -133,7 +140,11 @@ export function SeriesPage() {
 
       {matching && <MatchDialog series={series} matches={data.matches} onClose={() => setMatching(false)} onChanged={reload} />}
       {editEp && (
-        <Dialog title={`Trims · ${editEp.id}`} onClose={() => setEditing(null)} wide>
+        <Dialog title={`Edit · ${editEp.id}`} onClose={() => setEditing(null)} wide>
+          <h3>My own cut</h3>
+          <p className="muted">Kept ranges, used exactly as given. Once set, they beat the preset and the trims below (an exclude still wins).</p>
+          <SegmentsFields episode={editEp} save={saveSegments(editEp.id)} />
+          <h3>Trims</h3>
           <p className="muted">Ranges are cut out of the episode. Times are m:ss; edits are kept when detection runs again.</p>
           <TrimFields episode={editEp} save={saveTrim(editEp.id)} reset={resetTrim(editEp.id)} />
         </Dialog>

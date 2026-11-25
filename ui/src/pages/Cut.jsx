@@ -20,6 +20,8 @@ export function CutPage() {
   const [seasonSel, setSeasonSel] = useState('all');
   const [opts, setOpts] = useState({});
   const [mode, setMode] = useState('auto');
+  const [keep, setKeep] = useState(true);
+  const [refreshCut, setRefreshCut] = useState(false);
   const [open, setOpen] = useState(null);
   const [dry, setDry] = useState(null);
   const [job, setJob] = useState(null);
@@ -61,7 +63,7 @@ export function CutPage() {
     refresh();
   });
   const dryRun = () => act(async () => setDry(await api(`${base}/render`, { method: 'POST', body: { ...body, dry_run: true, mode } })));
-  const render = () => act(async () => setJob(await api(`${base}/render`, { method: 'POST', body: { ...body, mode } })), 'Render queued');
+  const render = () => act(async () => setJob(await api(`${base}/render`, { method: 'POST', body: { ...body, mode, keep, refresh: refreshCut } })), 'Render queued');
   const cancel = () => act(async () => setJob(await api(`/jobs/${job.id}/cancel`, { method: 'POST' })));
 
   return (
@@ -87,7 +89,12 @@ export function CutPage() {
             {ACTIVE.includes(job.status) && <button className="btn btn-sm" onClick={cancel}>Cancel</button>}
           </div>
           <Progress value={job.progress} />
-          {job.status === 'done' && <div className="mono tiny">{job.result?.output}</div>}
+          {job.status === 'done' && (
+            <div className="mono tiny">
+              {job.result?.cached && <span className="tag tag-ok" title="This exact cut was already rendered">cache hit</span>}{' '}
+              {job.result?.output}
+            </div>
+          )}
         </div>
       )}
 
@@ -114,8 +121,18 @@ export function CutPage() {
             <input type="checkbox" checked={val('keep_intro_first_episode')} onChange={(e) => setOpt('keep_intro_first_episode', e.target.checked)} />
             keep the OP in the first episode
           </label>
+          <label className="check" style={{ alignSelf: 'end', paddingBottom: 8 }}
+            title="Off: the output is auto-deleted after the retention days in Settings">
+            <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
+            keep the rendered file
+          </label>
+          <label className="check" style={{ alignSelf: 'end', paddingBottom: 8 }}
+            title="Re-render even if this exact cut is already cached">
+            <input type="checkbox" checked={refreshCut} onChange={(e) => setRefreshCut(e.target.checked)} />
+            re-render (ignore cache)
+          </label>
         </div>
-        <p className="muted tiny" style={{ margin: '8px 0 0' }}>Changes here apply to this page only; set series defaults on the episodes page or in Settings.</p>
+        <p className="muted tiny" style={{ margin: '8px 0 0' }}>Changes here apply to this page only; set series defaults on the episodes page or in Settings. An unchanged cut replays from the cache instead of rendering again.</p>
       </div>
 
       <h2>Timeline</h2>
@@ -170,7 +187,8 @@ export function CutPage() {
         <>
           <h2 style={{ marginTop: 22 }}>Dry run</h2>
           <div className="card">
-            <p>Mode: <b>{dry.render.mode}</b> <span className="muted">{dry.render.reason}</span></p>
+            <p>Mode: <b>{dry.render.mode}</b> <span className="muted">{dry.render.reason}</span>
+              {dry.cached && <span className="tag tag-ok" style={{ marginLeft: 8 }}>cached</span>}</p>
             <p className="muted tiny">Output: <span className="mono">{dry.render.output}</span> · {fmtTime(dry.render.total_seconds)} · {dry.render.chapters?.length ?? 0} chapters</p>
             {(dry.render.warnings || []).map((w) => <div key={w} className="notice notice-err">{w}</div>)}
             <div className="pre">{Array.isArray(dry.render.command) ? dry.render.command.join(' ') : String(dry.render.command)}</div>
