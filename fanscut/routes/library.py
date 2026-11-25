@@ -25,12 +25,20 @@ def list_series(core: CoreDep, q: str = "", source: str = "", skip: int | None =
                 take: int | None = None) -> dict[str, Any]:
     series, errors = core.library.list_series()
     matched = {r["series_key"] for r in core.db.query("SELECT DISTINCT series_key FROM matches")}
+    # the last library check's audio finding per show ("no Japanese or English audio…")
+    audio: dict[str, str] = {}
+    for f in (core.last_check() or {}).get("findings", []):
+        ref = f.get("ref") or {}
+        if (f.get("check") == "languages" and ref.get("kind") == "series"
+                and f.get("severity") in ("error", "warn")):
+            audio.setdefault(ref.get("key", ""), f["message"])
     needle = q.lower().strip()
     out = []
     for s in series:
         if (source and s.source != source) or (needle and needle not in s.title.lower()):
             continue
-        out.append({**asdict(s), "matched": s.key in matched, "art": art_ref(s)})
+        out.append({**asdict(s), "matched": s.key in matched, "art": art_ref(s),
+                    "audio_note": audio.get(s.key)})
     page, info = paginate(out, skip, take)
     return {"sources": core.library.sources(), "errors": errors, "series": page,
             **({"page_info": info} if info else {})}

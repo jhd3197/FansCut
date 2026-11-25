@@ -18,8 +18,11 @@ class Series:
     alt_titles: list[str] = field(default_factory=list)
     tvdb_id: int | None = None
     tmdb_id: int | None = None
-    episode_count: int = 0
+    episode_count: int = 0  # episodes with a file
+    episode_total: int = 0  # episodes that exist (aired), when the source knows; else 0
+    season_count: int = 0  # regular seasons, specials not counted
     is_anime: bool = False
+    collections: list[str] = field(default_factory=list)  # Plex collection tags
     # where its art lives: an https URL (TMDB, via Sonarr) or a Plex path
     poster: str | None = None
     backdrop: str | None = None

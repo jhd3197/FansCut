@@ -50,7 +50,8 @@ def list_folder_series(root: Path) -> list[Series]:
             title, year = clean_title(d.name)
             out.append(
                 Series(key=f"folder:{d.name}", source="folder", title=title, year=year,
-                       episode_count=len(eps))
+                       episode_count=len(eps), episode_total=len(eps),
+                       season_count=len({e.season for e in eps if e.season > 0}))
             )
     return out
 

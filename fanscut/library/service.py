@@ -159,6 +159,9 @@ class Library:
             alt_titles=[a.get("title", "") for a in s.get("alternateTitles", []) if a.get("title")],
             tvdb_id=s.get("tvdbId") or None, tmdb_id=s.get("tmdbId") or None,
             episode_count=stats.get("episodeFileCount", 0),
+            episode_total=stats.get("episodeCount", 0),
+            season_count=sum(1 for x in s.get("seasons") or [] if x.get("seasonNumber", 0) > 0)
+            or max(stats.get("seasonCount", 0) - _has_specials(s), 0),
             is_anime=s.get("seriesType") == "anime",
             poster=_remote_image(s.get("images"), "poster"),
             backdrop=_remote_image(s.get("images"), "fanart"),
@@ -171,6 +174,8 @@ class Library:
         return Series(
             key=f"plex:{m['ratingKey']}", source="plex", title=m.get("title", ""),
             year=m.get("year"), episode_count=m.get("leafCount", 0),
+            episode_total=m.get("leafCount", 0), season_count=m.get("childCount", 0),
+            collections=[c.get("tag", "") for c in m.get("Collection", []) if c.get("tag")],
             tvdb_id=int(ids["tvdb"]) if ids.get("tvdb", "").isdigit() else None,
             tmdb_id=int(ids["tmdb"]) if ids.get("tmdb", "").isdigit() else None,
             poster=m.get("thumb") or None, backdrop=m.get("art") or None,
@@ -337,6 +342,10 @@ def _title_key(title: str, year: int | None) -> tuple[str, int | None]:
     return ("".join(ch for ch in title.lower() if ch.isalnum()), year)
 
 
+def _has_specials(s: dict[str, Any]) -> int:
+    return int(any(x.get("seasonNumber") == 0 for x in s.get("seasons") or []))
+
+
 def _merge_series(items: list[Series]) -> list[Series]:
     """Drop later sources' copies of a show already listed (same TVDB id, else title + year).
 
@@ -353,6 +362,9 @@ def _merge_series(items: list[Series]) -> list[Series]:
             hit.tvdb_id = hit.tvdb_id or s.tvdb_id
             hit.tmdb_id = hit.tmdb_id or s.tmdb_id
             hit.episode_count = hit.episode_count or s.episode_count
+            hit.episode_total = hit.episode_total or s.episode_total
+            hit.season_count = hit.season_count or s.season_count
+            hit.collections = list(dict.fromkeys([*hit.collections, *s.collections]))
             hit.poster = hit.poster or s.poster
             hit.backdrop = hit.backdrop or s.backdrop
             if hit.tvdb_id:
