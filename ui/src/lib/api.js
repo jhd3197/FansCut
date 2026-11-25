@@ -104,3 +104,18 @@ export function artSrcSet(ref, kind = 'poster', widths = kind === 'poster' ? [30
   if (url && !TMDB.test(url)) return undefined;
   return widths.map((w) => `${artUrl(ref, kind, w)} ${w}w`).join(', ');
 }
+
+// Open something in Plex Web in a new tab. The tab opens first (a click's popup
+// survives the await), then goes to the address the API resolves; on an error it
+// closes again and the error goes to the caller (a toast, via useAct).
+export async function openInPlex(path) {
+  const tab = window.open('about:blank', '_blank');
+  try {
+    const { url } = await api(path);
+    if (tab) tab.location.href = url;
+    else window.location.href = url;
+  } catch (e) {
+    tab?.close();
+    throw e;
+  }
+}

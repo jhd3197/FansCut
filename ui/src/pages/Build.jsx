@@ -274,6 +274,7 @@ export function Build() {
   const built = lastRender?.status === 'done';
   const keepValue = keep ?? settings.data?.render?.keep ?? true;
   const plex = Boolean(settings.data?.library?.plex?.url);
+  const plexCollection = (settings.data?.render?.plex_collection ?? 'FansCut').trim();
   const colour = {};
   Object.keys(doc.sources).forEach((s, i) => { colour[s] = SRC_COLOURS[i % SRC_COLOURS.length]; });
   const rows = variants.data?.variants || [];
@@ -385,12 +386,13 @@ export function Build() {
             <input type="checkbox" checked={keepValue} onChange={(e) => setKeep(e.target.checked)} />
             Keep the file{settings.data?.render?.ephemeral_days ? ` (otherwise it’s cleaned up after ${settings.data.render.ephemeral_days} days)` : ''}
           </label>
-          {plex && (
+          {plex && plexCollection && (
             <label className="check">
               <input type="checkbox" checked={collection} onChange={(e) => setCollection(e.target.checked)} />
-              Add it to the “FansCut” collection in Plex
+              Add it to the “{plexCollection}” collection in Plex
             </label>
           )}
+          {plex && <span className="tiny muted">Change what happens in Plex under <Link to="/settings?section=plex-out">Settings → Add to Plex</Link>.</span>}
         </div>
       </section>
 

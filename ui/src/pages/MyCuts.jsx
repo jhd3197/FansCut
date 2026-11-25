@@ -1,7 +1,7 @@
 // Every cut installed on this machine, with its build state and where it landed.
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { api } from '../lib/api.js';
+import { api, openInPlex } from '../lib/api.js';
 import { useAct, usePoll, useUrlState } from '../lib/hooks.js';
 import { enc, hm, Poster, Seg } from '../components/kit.jsx';
 import { Dialog, Empty, ErrorBox, Loading, MoreMenu, Notice } from '../components/ui.jsx';
@@ -30,6 +30,7 @@ function status(cut, job) {
 export function MyCuts() {
   const cutsQ = useApi('/cuts');
   const jobsQ = useApi('/jobs');
+  const settingsQ = useApi('/settings', { quiet: true });
   const [show, setShow] = useUrlState('show', 'all');
   const [doomed, setDoomed] = useState(null);
   const [updates, setUpdates] = useState(null);
@@ -42,6 +43,7 @@ export function MyCuts() {
   if (!cutsQ.data) return <div className="page"><Loading /></div>;
 
   const cuts = cutsQ.data.cuts || [];
+  const plex = Boolean(settingsQ.data?.library?.plex?.url);
   const renders = cutsQ.data.renders || [];
   const upd = Object.fromEntries((updates || []).map((u) => [u.id, u]));
   const nUpd = (updates || []).filter((u) => u.update).length;
@@ -58,7 +60,7 @@ export function MyCuts() {
     setUpdates((u) => (u || []).map((x) => (x.id === c.id ? { ...x, update: false, installed: r.sha } : x)));
     await cutsQ.reload();
     return r;
-  }, (r) => (r.changed ? `Updated ${c.title} to ${r.sha.slice(0, 7)}; run Build to re-match the cut points` : `${c.title} was already up to date`));
+  }, (r) => (r.changed ? `Updated ${c.title}${r.summary ? ` (${r.summary})` : ''}. Run Build to re-match the cut points.` : `${c.title} was already up to date`));
 
   const lastJob = (tid) => jobs.find((j) => j.kind === 'timeline_render' && j.payload?.timeline_id === tid);
   const rendersOf = (cut) => {
@@ -95,6 +97,28 @@ export function MyCuts() {
             <span /><span>Cut</span><span>In Plex</span><span>Version</span><span />
           </li>
           {rows.map((c) => {
+            if (c.kind === 'playlist') {
+              return (
+                <li key={c.id} style={GRID}>
+                  <div className="mycuts-thumb" style={{ width: 64 }} aria-hidden="true">
+                    <Poster title={c.title} kind="order" />
+                  </div>
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                    <Link to={`/discover/${enc(c.suggestion)}`} style={{ color: 'var(--text)', fontWeight: 600 }}>{c.title}</Link>
+                    <span className="tiny muted">Playlist · {c.films.length} film{c.films.length === 1 ? '' : 's'}</span>
+                    <span className="tiny c-ready">In Plex · nothing rendered</span>
+                  </span>
+                  <span className="tiny" style={{ color: 'var(--text2)' }} title={c.films.join(' → ')}>
+                    {c.films.slice(0, 3).join(' → ')}{c.films.length > 3 ? ' …' : ''}
+                  </span>
+                  <span className="mono tiny muted">—</span>
+                  <span className="row wrap" style={{ gap: 6, justifyContent: 'flex-end' }}>
+                    {plex && <button type="button" className="btn" style={{ height: 32 }} disabled={busy}
+                      onClick={() => act(() => openInPlex(`/playlists/${enc(c.playlist_id)}/plex`))}>Open in Plex</button>}
+                  </span>
+                </li>
+              );
+            }
             const job = lastJob(c.id);
             const [text, cls] = status(c, job);
             const files = rendersOf(c);
@@ -109,7 +133,9 @@ export function MyCuts() {
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
                   <Link to={`/cuts/${enc(c.id)}`} style={{ color: 'var(--text)', fontWeight: 600 }}>{c.title}</Link>
                   <span className="tiny muted">Cut · {facts}</span>
-                  <span className={`tiny ${cls}`}>{upd[c.id]?.update ? 'Update available' : text}</span>
+                  <span className={`tiny ${upd[c.id]?.update ? 'c-accent' : cls}`}>
+                    {upd[c.id]?.update ? ['Update available', upd[c.id].summary].filter(Boolean).join(' · ') : text}
+                  </span>
                 </span>
                 <span style={{ fontSize: 13, color: 'var(--text2)', overflowWrap: 'anywhere' }} title={files[0]?.path}>
                   {where || <span className="dim">—</span>}
@@ -126,6 +152,10 @@ export function MyCuts() {
                     : building
                       ? <Link className="btn" style={{ height: 32 }} to="/jobs">Open in Jobs</Link>
                       : <Link className="btn" style={{ height: 32 }} to={`/cuts/${enc(c.id)}/build`}>Build</Link>}
+                  {plex && (where || job?.status === 'done') && (
+                    <button type="button" className="btn" style={{ height: 32 }} disabled={busy}
+                      onClick={() => act(() => openInPlex(`/cuts/${enc(c.id)}/plex`))}>Open in Plex</button>
+                  )}
                   <MoreMenu LinkAs={Link} items={[
                     upd[c.id]?.update && !building && ['Build', { to: `/cuts/${enc(c.id)}/build` }],
                     upd[c.id]?.update && building && ['Open in Jobs', { to: '/jobs' }],

@@ -1,12 +1,13 @@
 import { Link, useParams } from 'react-router';
 import { ErrorBox, Loading } from '../components/ui.jsx';
-import { Crumbs, KV, Section, enc, hm } from '../components/kit.jsx';
+import { ArtPoster, Crumbs, KV, PlainPoster, Section, enc, hm } from '../components/kit.jsx';
 import { SuggestionTile, TimelineTile } from './Discover.jsx';
 import { FilmTile, ShowTile } from './Collection.jsx';
 import { movieTag } from './LibraryPage.jsx';
 import { newCutTo } from './NewCut.jsx';
 import { useApi } from '../lib/store.js';
-import { useFrom, usePageTitle } from '../lib/hooks.js';
+import { useAct, useFrom, usePageTitle } from '../lib/hooks.js';
+import { openInPlex } from '../lib/api.js';
 
 const CODECS = {
   hevc: 'HEVC', h264: 'H.264', av1: 'AV1', vp9: 'VP9', mpeg2video: 'MPEG-2', mpeg4: 'MPEG-4',
@@ -64,6 +65,9 @@ function Health({ findings }) {
 export function MoviePage() {
   const { key } = useParams();
   const from = useFrom();
+  const { act, busy } = useAct();
+  const settings = useApi('/settings', { quiet: true });
+  const plex = Boolean(settings.data?.library?.plex?.url);
   const { data: m, error, loading, reload } = useApi(`/library/movies/${encodeURIComponent(key)}`);
   const sugg = useApi('/suggestions', { quiet: true });
   usePageTitle(m?.title);
@@ -105,9 +109,9 @@ export function MoviePage() {
       <Crumbs items={[['Library', '/library'], ['Movies', '/library#movies-h'], [m.title]]} />
 
       <div className="hero" style={{ gap: 28 }}>
-        <div className="pst pst-plain" style={{ width: 200, flex: 'none' }}>
-          <span className="ptag">{movieTag(m)}</span>
-          <span className="ttl-main" style={{ fontSize: 22 }}>{m.title}</span>
+        <div style={{ width: 200, flex: 'none' }} title={movieTag(m)}>
+          {/* the film's own poster; no text drawn on the art */}
+          <ArtPoster keys={m.art ? [m.art] : []} fallback={<PlainPoster title={m.title} bare />} />
         </div>
         <div className="hero-body">
           <div className="stack" style={{ gap: 6 }}>
@@ -116,6 +120,10 @@ export function MoviePage() {
           </div>
           <KV rows={rows} />
           <div className="row wrap">
+            {plex && m.on_disk && (
+              <button type="button" className="btn btn-primary" disabled={busy}
+                onClick={() => act(() => openInPlex(`/movies/${enc(m.key)}/plex`))}>Play in Plex</button>
+            )}
             <Link className="btn" to={newCutTo({ movies: [m.key], template: 'watch-order' })} state={from}>New cut with this film</Link>
           </div>
         </div>

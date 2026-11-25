@@ -12,7 +12,7 @@ export function setPath(obj, path, value) {
 }
 
 const SECTIONS = [
-  ['sources', 'Sources'], ['output', 'Output'], ['render', 'Rendering'], ['cut', 'Cut defaults'],
+  ['sources', 'Sources'], ['output', 'Output'], ['plex-out', 'Add to Plex'], ['render', 'Rendering'], ['cut', 'Cut defaults'],
   ['ai', 'AI'], ['auto', 'Automation'], ['data', 'Filler data'], ['system', 'Caches & network'],
 ];
 
@@ -178,6 +178,11 @@ export function Settings() {
   const [active, setActive] = useUrlState('section', 'sources');
   // seed the form once; background refetches must not wipe unsaved edits
   useEffect(() => { if (data && !cfg) setCfg(data); }, [data, cfg]);
+  // a link to /settings?section=plex-out opens at that section
+  const loaded = Boolean(cfg);
+  useEffect(() => {
+    if (loaded && active !== 'sources') document.getElementById(active)?.scrollIntoView({ block: 'start' });
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error && !data) return <div className="page"><ErrorBox error={error} onRetry={reload} /></div>;
   if (loading || !cfg) return <div className="page"><Loading /></div>;
@@ -338,6 +343,20 @@ export function Settings() {
               <div style={{ paddingTop: 8 }}>{check('render.keep', 'Keep renders by default')}</div>
             </Row>
             {text('render.language', 'Audio language', 'Preferred audio track, e.g. jpn or eng. Empty uses the first track.', { placeholder: 'jpn', className: 'inp mono', style: { width: 120 } })}
+          </section>
+
+          <section id="plex-out" aria-labelledby="plexout-h">
+            <h2 id="plexout-h" className="sh">Add to Plex</h2>
+            <p className="muted tiny" style={{ margin: '0 0 8px' }}>
+              After every build. Needs Plex under Sources; without it, files still land in the output folder.
+            </p>
+            <Row label="Rescan" hint="Plex picks up the new file right away instead of at its next scheduled scan.">
+              <div style={{ paddingTop: 8 }}>{check('render.plex_refresh', 'Rescan the Plex libraries after a build')}</div>
+            </Row>
+            {text('render.plex_collection', 'Collection', 'Builds are added to this collection. Empty turns it off.', { placeholder: 'FansCut', style: { width: 240 } })}
+            <Row label="Poster" hint="The cut’s own poster when it has one, else a frame from the build.">
+              <div style={{ paddingTop: 8 }}>{check('render.poster', 'Write poster.jpg next to each build')}</div>
+            </Row>
           </section>
 
           <section id="render" aria-labelledby="ren-h">
