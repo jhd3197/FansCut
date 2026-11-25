@@ -161,10 +161,36 @@ def extract_stream(ffmpeg: str, video: str, sub_index: int, timeout: float = 300
     return (proc.stdout or b"").decode("utf-8", "replace")
 
 
-def load(
-    video: str, ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe", lang: str = "en"
-) -> tuple[list[Line], dict[str, Any]]:
-    """Subtitle lines for *video* and where they came from ({"kind": "none"} when none)."""
+VIDEO_EXT = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".m2ts", ".webm"}
+SAME_CUT = 1.5  # seconds: a sibling file this close in length is the same cut
+
+
+def duration(ffprobe: str, video: str, timeout: float = 60) -> float | None:
+    proc = subprocess.run(  # noqa: S603 - argv list
+        [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", video],
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    try:
+        return (
+            float((proc.stdout or b"").decode().strip() or "nan") if not proc.returncode else None
+        )
+    except ValueError:
+        return None
+
+
+def siblings(video: str) -> list[Path]:
+    """Other video files in the same folder (another copy of the same film)."""
+    v = Path(video)
+    if not v.parent.is_dir():
+        return []
+    return sorted(p for p in v.parent.iterdir() if p != v and p.suffix.lower() in VIDEO_EXT)
+
+
+def _from_file(
+    video: str, ffmpeg: str, ffprobe: str, lang: str
+) -> tuple[list[Line], dict[str, Any]] | None:
     for p in sidecars(video, lang):
         lines = parse_srt(p.read_text(encoding="utf-8", errors="replace"))
         if lines:
@@ -179,6 +205,30 @@ def load(
                 "language": stream["language"],
                 "title": stream["title"],
             }
+    return None
+
+
+def load(
+    video: str, ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe", lang: str = "en"
+) -> tuple[list[Line], dict[str, Any]]:
+    """Subtitle lines for *video* and where they came from ({"kind": "none"} when none).
+
+    When the file has none, another copy in the same folder with the same length
+    (an .mkv next to an .mp4) lends its subtitles: same cut, same timings.
+    """
+    found = _from_file(video, ffmpeg, ffprobe, lang)
+    if found:
+        return found
+    others = siblings(video)
+    if others:
+        mine = duration(ffprobe, video)
+        for other in others:
+            theirs = duration(ffprobe, str(other))
+            if mine and theirs and abs(mine - theirs) <= SAME_CUT:
+                found = _from_file(str(other), ffmpeg, ffprobe, lang)
+                if found:
+                    lines, src = found
+                    return lines, {**src, "kind": f"{src['kind']} (from {other.name})"}
     return [], {"kind": "none"}
 
 

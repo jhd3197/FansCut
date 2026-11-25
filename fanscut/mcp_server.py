@@ -422,8 +422,17 @@ TOOLS = [
 def tool_definitions() -> list[Any]:
     from prompture.agents.tools_schema import tool_from_function
 
+    images = {look, frame}  # return content blocks, not JSON
     return [
-        tool_from_function(fn, name=fn.__name__, metadata={"category": "fanscut"}) for fn in TOOLS
+        tool_from_function(
+            fn,
+            name=fn.__name__,
+            metadata={
+                "category": "fanscut",
+                **({"structured_output": False} if fn in images else {}),
+            },
+        )
+        for fn in TOOLS
     ]
 
 

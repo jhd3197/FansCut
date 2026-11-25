@@ -62,6 +62,23 @@ def test_pick_stream_prefers_full_dialogue_in_the_language():
     assert subs.pick_stream([]) is None
 
 
+@needs_ffmpeg
+def test_subtitles_borrowed_from_a_same_length_copy(tmp_path):
+    def clip(path, seconds):
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        f"color=c=red:s=64x48:r=5:d={seconds}", "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p", str(path)], check=True)
+
+    clip(tmp_path / "film.mp4", 6)
+    clip(tmp_path / "Film (2001).mkv", 6)
+    (tmp_path / "Film (2001).en.srt").write_text(SRT, encoding="utf-8")
+    lines, src = subs.load(str(tmp_path / "film.mp4"))
+    assert len(lines) == 3 and src["kind"] == "sidecar (from Film (2001).mkv)"
+
+    clip(tmp_path / "Film (2001).mkv", 9)  # a different cut lends nothing
+    assert subs.load(str(tmp_path / "film.mp4")) == ([], {"kind": "none"})
+
+
 # -- scenes ------------------------------------------------------------------------
 def test_group_scenes_cuts_only_where_nobody_talks():
     shots = [(0, 10), (10, 22), (22, 30), (30, 45), (45, 50)]

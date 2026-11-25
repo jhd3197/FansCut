@@ -18,6 +18,9 @@ VERSION = 1
 QUIET = 1.5
 MIN_SCENE = 20.0
 MAX_SCENE = 240.0
+# ffmpeg scene score for a cut. 0.32 (Prompture's default) missed a quarter of
+# the cuts of a real film; 0.2 and 0.12 found the same set.
+CUT_THRESHOLD = 0.2
 
 
 def _talking(lines: list[subs.Line], t: float, pad: float) -> bool:
@@ -88,7 +91,19 @@ def build(
         sub_src = {"kind": "transcript", "model": t.model}
     info = probe_video(path)
     note(0.1, "Finding camera cuts")
-    shots = detect_shots(path, cancel=cancel)
+    total = info.duration or 0.0
+
+    def seen(pos: float) -> None:
+        if total:
+            note(
+                0.1 + 0.85 * min(pos / total, 1.0),
+                f"Finding camera cuts ({int(pos // 60)} min read)",
+            )
+
+    try:
+        shots = detect_shots(path, cancel=cancel, progress=seen, threshold=CUT_THRESHOLD)
+    except TypeError:  # Prompture before shot-detection progress
+        shots = detect_shots(path, cancel=cancel, threshold=CUT_THRESHOLD)
     pairs = [(s.start, s.end) for s in shots]
     note(0.95, "Grouping scenes")
     return {

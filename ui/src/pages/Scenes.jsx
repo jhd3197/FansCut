@@ -23,9 +23,18 @@ export function nextCut(shots, t, duration) {
   return duration;
 }
 
-// A running job, polled until it ends.
-function useJob(onDone) {
+// A running job, polled until it ends; on load it picks up one already running for this film.
+function useJob(fkey, onDone) {
   const [job, setJob] = useState(null);
+  useEffect(() => {
+    let live = true;
+    api('/jobs').then((d) => {
+      const mine = (d.jobs || []).find((j) => (j.kind === 'scene_index' || j.kind === 'scene_tag')
+        && j.payload?.key === fkey && (j.status === 'running' || j.status === 'queued'));
+      if (live && mine) setJob(mine);
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [fkey]);
   const poll = useCallback(async () => {
     if (!job) return;
     const j = await api(`/jobs/${job.id}`).catch(() => null);
@@ -197,7 +206,7 @@ export function ScenesPage() {
   const [tab, setTab] = useState('proposed');
   const [play, setPlay] = useState(false);
   const onDone = useCallback(() => { reload(); }, [reload]);
-  const [job, setJob] = useJob(onDone);
+  const [job, setJob] = useJob(key, onDone);
 
   const doc = data?.index;
   const tags = useMemo(() => data?.tags || [], [data]);
