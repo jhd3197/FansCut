@@ -102,6 +102,7 @@ def test_timeline_api_crud_and_missing(client):
     assert got["doc"]["title"] == TWO_PART["title"]
     listed = client.get(f"{E}/timelines").json()["timelines"]
     assert [t["id"] for t in listed] == [tid]
+    assert listed[0]["category"] == TWO_PART.get("category", "")
 
     smaller = {**TWO_PART, "title": "Renamed", "sources": {"S01E01": {"duration": 1440.0}},
                "parts": [TWO_PART["parts"][1]]}
@@ -186,3 +187,19 @@ def test_timeline_sync_reports_missing_files(client, monkeypatch):
     rep = client.get(f"/api/timelines/{tid}/sync").json()
     assert "S00E01" in rep["unmatched_sources"]
     assert rep["sources"]["S00E01"]["reason"] == "no file in this library"
+
+
+def test_render_can_skip_the_fanscut_collection(client, monkeypatch):
+    """Build's "Add it to the FansCut collection" checkbox reaches the job and the Plex step."""
+    core = client.app_ref.state.core
+    core.cfg.library.plex.url, core.cfg.library.plex.token = "http://plex", "t"
+    monkeypatch.setattr(core, "_plex_refresh", lambda: "refreshed")
+    touched = []
+    monkeypatch.setattr(core.library, "plex", lambda: touched.append(1))
+    assert core._plex_finalize("Took", ["/out/Took.mkv"], collection=False) == "refreshed"
+    assert touched == []
+
+    tid = client.post(f"{E}/timelines", json=TWO_PART).json()["id"]
+    monkeypatch.setattr(core, "_timeline_ctx", lambda t: (TWO_PART, "k", {"ok": True}))
+    job = client.post(f"/api/timelines/{tid}/render", json={"collection": False}).json()
+    assert client.get(f"/api/jobs/{job['id']}").json()["payload"]["collection"] is False

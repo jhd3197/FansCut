@@ -578,6 +578,7 @@ class Core:
         doc = json.loads(r["doc"])
         out = {"id": r["id"], "series_key": r["series_key"], "title": r["title"],
                "parts": len(doc["parts"]), "sources": len(doc["sources"]),
+               "category": doc.get("category") or "",
                "updated_at": r["updated_at"],
                "synced": self.db.one(
                    "SELECT timeline_id FROM timeline_syncs WHERE timeline_id = ?",
@@ -900,7 +901,8 @@ class Core:
     def submit_timeline_render(self, tid: str, mode: str = "auto", keep: bool | None = None,
                                refresh: bool = False,
                                require_sync: bool = True, variant: str | None = None,
-                               toggles: dict[str, bool] | None = None) -> dict[str, Any]:
+                               toggles: dict[str, bool] | None = None,
+                               collection: bool = True) -> dict[str, Any]:
         from .timeline import toggles as tg
 
         doc, _key, report = self._timeline_ctx(tid)
@@ -912,7 +914,7 @@ class Core:
                                   f"Render {doc['title']}" + (f" ({label})" if label else ""),
                                   {"timeline_id": tid, "mode": mode, "keep": keep,
                                    "refresh": refresh, "variant": variant,
-                                   "toggles": toggles})
+                                   "toggles": toggles, "collection": collection})
 
     def _job_timeline_render(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
         from .render import subs
@@ -990,7 +992,8 @@ class Core:
                     out.with_suffix(".nfo").write_text(nfo, encoding="utf-8")
         poster = (self._installed_poster(tid, show_dir)
                   or (self._write_poster(show_dir, outputs[0]) if outputs else None))
-        plex_note = self._plex_finalize(show, outputs)
+        plex_note = self._plex_finalize(show, outputs,
+                                        collection=payload.get("collection", True))
         return {"show": show, "parts": len(outputs), "cached": cached, "outputs": outputs,
                 "poster": poster, "subtitles": sidecars,
                 "warnings": warnings, "plex": plex_note,
@@ -1024,10 +1027,11 @@ class Core:
                 tmp.unlink()
             return None
 
-    def _plex_finalize(self, show: str, outputs: list[str]) -> str:
+    def _plex_finalize(self, show: str, outputs: list[str], collection: bool = True) -> str:
         """Refresh Plex and add the rendered show/movie to a 'FansCut' collection."""
         note = self._plex_refresh()
-        if not (self.cfg.library.plex.url and self.cfg.library.plex.token and outputs):
+        if not (collection and self.cfg.library.plex.url and self.cfg.library.plex.token
+                and outputs):
             return note
         try:
             plex = self.library.plex()
@@ -1446,19 +1450,21 @@ class Core:
                 out.append({"id": f"recipe:{f.name}", "kind": "recipe", "title": f.name,
                             "status": "missing",
                             "missing": [{"src": "-", "reason": f"invalid recipe: {exc}"}],
-                            "detail": {}})
+                            "keys": [], "detail": {}})
                 continue
 
             art: list[str] = []
+            keys: list[str] = []
 
             def resolve(src: str, entry: dict[str, Any], _doc: dict = doc,
-                        _art: list[str] = art,
+                        _art: list[str] = art, _keys: list[str] = keys,
                         ) -> tuple[str | None, float | None, str | None]:
                 if entry.get("kind") == "movie":
                     m = self.library.find_movie(entry.get("tmdb"),
                                                 edition=entry.get("edition", ""))
                     if m:
                         _art.append(art_ref(m))
+                        _keys.append(m.key)
                     if not m or not m.file:
                         ed = f" ({entry.get('edition')})" if entry.get("edition") else ""
                         return None, None, f"movie {entry.get('tmdb')}{ed} not in the library"
@@ -1476,13 +1482,14 @@ class Core:
                     stitle = (_doc.get("series") or {}).get("title")
                     return None, None, f"series {stitle!r} not in the library"
                 _art.append(art_ref(s))
+                _keys.append(s.key)
                 eps = {e.id: e for e in self.library.episodes(s.key)}
                 e = eps.get(src)
                 if not e or not e.file:
                     return None, None, f"{src} has no file"
                 return e.file, e.duration, self._lang_ok(e.file)
 
-            out.append(suggest.from_recipe(f.name, doc, resolve, art))
+            out.append(suggest.from_recipe(f.name, doc, resolve, art, keys))
 
         # (b) Plex collections the user partly or fully owns
         colls: dict[str, list[Any]] = {}

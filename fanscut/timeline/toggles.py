@@ -87,6 +87,7 @@ def variants_view(doc: dict[str, Any], available: set[str],
         wanted = {t["id"]: t["default"] for t in doc.get("toggles", [])} | v["toggles"]
         blocked = [t for t in view if not t["enabled"] and wanted.get(t["id"])]
         rows.append({"id": v["id"], "label": v["label"], "toggles": values,
+                     "description": v.get("description", ""),
                      "runtime": round(runtime(doc, values, skip), 1),
                      "complete": not blocked,
                      "blocked": [{"id": t["id"], "label": t["label"], "reason": t["reason"]}

@@ -37,8 +37,11 @@ def _status(n_sources: int, missing: list[dict[str, str]]) -> str:
 
 
 def from_recipe(name: str, doc: dict[str, Any], resolve: Resolver,
-                art: list[str] | None = None) -> dict[str, Any]:
-    """A community recipe against the library; `art` = library keys of its sources."""
+                art: list[str] | None = None, keys: list[str] | None = None) -> dict[str, Any]:
+    """A community recipe against the library; `art` = art refs of its sources.
+
+    Every suggestion carries `keys`: the library keys of the movies and shows it
+    uses, so a movie or show page can list the suggestions that include it."""
     missing = []
     for src, entry in doc.get("sources", {}).items():
         _file, _dur, err = resolve(src, entry)
@@ -47,6 +50,7 @@ def from_recipe(name: str, doc: dict[str, Any], resolve: Resolver,
     n_seg = sum(len(p["segments"]) for p in doc.get("parts", []))
     return {"id": f"recipe:{name}", "kind": "recipe", "title": doc.get("title", name),
             "name": doc.get("title", name), "art": list(dict.fromkeys(art or [])),
+            "keys": list(dict.fromkeys(keys or [])),
             "category": doc.get("category") or "Community cuts",
             "tagline": doc.get("tagline", ""),
             "status": _status(len(doc.get("sources", {})), missing), "missing": missing,
@@ -62,6 +66,7 @@ def from_collection(name: str, movies: list[Any], lang_missing: list[str]) -> li
     out.append({
         "id": f"merge:{name}", "kind": "collection_merge", "category": "Merges",
         "name": name, "art": [art_ref(m) for m in movies],
+        "keys": [m.key for m in movies],
         "tagline": f"{name}, as one film",
         "title": f"{name} — merged movie",
         "status": "ready" if not missing else "partly", "missing": missing,
@@ -71,6 +76,7 @@ def from_collection(name: str, movies: list[Any], lang_missing: list[str]) -> li
     out.append({
         "id": f"order:{name}", "kind": "watch_order", "category": "Watch in story order",
         "name": name, "art": [art_ref(m) for m in movies],
+        "keys": [m.key for m in movies],
         "tagline": "in release order",
         "title": f"{name} — watch order playlist",
         "status": "ready", "missing": [],
@@ -90,7 +96,7 @@ def canon_cut(series_title: str, key: str, n_filler: int, n_episodes: int,
     missing += [{"src": e, "reason": "no preferred audio language"} for e in lang_missing]
     n = max(n_episodes, 1)
     return {"id": f"canon:{key}", "kind": "canon_cut", "category": "Anime",
-            "name": series_title, "art": [art or key],
+            "name": series_title, "art": [art or key], "keys": [key],
             "tagline": "no filler",
             "title": f"{series_title} — canon cut",
             "status": _status(n, missing) if missing else "ready",

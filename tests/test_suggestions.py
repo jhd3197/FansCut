@@ -71,6 +71,16 @@ def test_collection_templates_appear(client, took_library):
     assert order["status"] == "ready" and order["missing"] == []
 
 
+def test_suggestions_name_the_library_items_they_use(client, took_library):
+    """Movie and Show pages filter /suggestions by these keys."""
+    movie_keys = {m["key"] for m in client.get("/api/library/movies").json()["movies"]}
+    sugg = client.get("/api/suggestions").json()["suggestions"]
+    took = next(s for s in sugg if s["id"] == "recipe:took.json")
+    merge = next(s for s in sugg if s["kind"] == "collection_merge")
+    assert len(took["keys"]) == 3 and set(took["keys"]) <= movie_keys
+    assert set(merge["keys"]) == set(took["keys"])
+
+
 def test_missing_edition_is_named(client, took_library, tmp_path):
     doc = json.loads(json.dumps(TOOK_RECIPE))  # deep copy: the fixture is shared
     doc["sources"] = {"M49051": {"kind": "movie", "tmdb": 49051, "edition": "extended",
@@ -103,6 +113,7 @@ def test_canon_cut_suggestion(matched):  # noqa: F811  (matched = series matched
     canon = next((s for s in sugg if s["kind"] == "canon_cut"), None)
     assert canon is not None and canon["detail"]["series_key"] == SERIES
     assert canon["detail"]["filler_episodes"] >= 1
+    assert canon["keys"] == [SERIES]
 
 
 def test_install_canon_queues_render(matched):  # noqa: F811
