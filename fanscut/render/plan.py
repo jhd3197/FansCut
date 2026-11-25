@@ -122,16 +122,17 @@ def _encoder_args(ff: FFmpegCfg) -> list[str]:
 
 
 def _filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str, Any],
-                   audio: bool, fade: bool) -> str:
+                   audio: bool, fade: bool, audio_map: dict[str, int] | None = None) -> str:
     w, h = first.get("width") or 1920, first.get("height") or 1080
     fps = round(first.get("fps") or 24, 3) or 24
     lines, labels = [], []
     for k, s in enumerate(segs):
         n = inputs[s.file]
+        a_idx = (audio_map or {}).get(s.file, 0)
         vf = (f"[{n}:v:0]trim=start={s.start:.3f}:end={s.end:.3f},setpts=PTS-STARTPTS,"
               f"fps={fps},scale={w}:{h}:force_original_aspect_ratio=decrease,"
               f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p")
-        af = (f"[{n}:a:0]atrim=start={s.start:.3f}:end={s.end:.3f},asetpts=PTS-STARTPTS,"
+        af = (f"[{n}:a:{a_idx}]atrim=start={s.start:.3f}:end={s.end:.3f},asetpts=PTS-STARTPTS,"
               "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo")
         if fade:
             d = round(min(FADE, s.duration / 2), 3)
@@ -161,6 +162,7 @@ def build_plan(
     probe: Callable[[str], dict[str, Any]],
     titles: dict[str, str] | None = None,
     mode: Mode = "auto",
+    audio_map: dict[str, int] | None = None,
 ) -> RenderPlan:
     segs = _join_adjacent(cut.segments)
     if not segs:
@@ -170,12 +172,17 @@ def build_plan(
     audio = all("audio" in i for i in infos.values())
     warnings = [] if audio else ["a file has no audio stream, so the output has no audio"]
     fade = cut.options.transition == "fade"
+    # the concat demuxer cannot pick a different audio track per file
+    track_pick = any(i > 0 for i in (audio_map or {}).values())
 
     why = compatible(list(infos.values()))
-    if mode == "copy" and (why or fade):
-        raise ValueError(f"cannot stream copy: {why or 'fade needs re-encoding'}")
+    if mode == "copy" and (why or fade or track_pick):
+        blockers = [why, "fade needs re-encoding" if fade else None,
+                    "audio track selection needs re-encoding" if track_pick else None]
+        raise ValueError(f"cannot stream copy: {next(b for b in blockers if b)}")
     if mode == "auto":
         why = why or ("fade transitions need re-encoding" if fade else None)
+        why = why or ("audio track selection needs re-encoding" if track_pick else None)
         mode = "encode" if why else "copy"
     elif mode == "encode":
         why = "re-encode requested"
@@ -199,7 +206,7 @@ def build_plan(
                "-map_metadata", "1", "-map_chapters", "1", "-c", "copy", *tail, str(tmp)]
     else:
         inputs = {f: n for n, f in enumerate(infos)}
-        files["filter.txt"] = _filter_script(segs, inputs, first, audio, fade)
+        files["filter.txt"] = _filter_script(segs, inputs, first, audio, fade, audio_map)
         cmd = [*base]
         for f in inputs:
             cmd += ["-i", f]

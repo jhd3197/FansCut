@@ -63,17 +63,22 @@ def probe(cfg: FFmpegCfg, path: str) -> dict[str, Any]:
     )
     data = json.loads(raw or b"{}")
     info: dict[str, Any] = {"duration": float(data.get("format", {}).get("duration") or 0)}
+    audio_tracks = []
     for s in data.get("streams", []):
         if s.get("codec_type") == "video" and "video" not in info:
             info["video"] = {
                 "codec": s.get("codec_name"), "width": s.get("width"), "height": s.get("height"),
                 "pix_fmt": s.get("pix_fmt"), "fps": _fps(s.get("avg_frame_rate", "0")),
             }
-        elif s.get("codec_type") == "audio" and "audio" not in info:
-            info["audio"] = {
-                "codec": s.get("codec_name"), "sample_rate": int(s.get("sample_rate") or 0),
-                "channels": s.get("channels"),
-            }
+        elif s.get("codec_type") == "audio":
+            track = {"codec": s.get("codec_name"), "sample_rate": int(s.get("sample_rate") or 0),
+                     "channels": s.get("channels"),
+                     "language": (s.get("tags") or {}).get("language", "")}
+            audio_tracks.append(track)
+            if "audio" not in info:
+                info["audio"] = {k: track[k] for k in ("codec", "sample_rate", "channels")}
+    if audio_tracks:
+        info["audio_tracks"] = audio_tracks
     return info
 
 

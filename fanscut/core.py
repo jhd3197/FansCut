@@ -58,7 +58,8 @@ class Core:
         self.jobs = JobStore(db)
         self.renders = RenderStore(db)
         self.worker = Worker(self.jobs, {"render": self._job_render, "detect": self._job_detect,
-                                         "timeline_sync": self._job_timeline_sync})
+                                         "timeline_sync": self._job_timeline_sync,
+                                         "timeline_render": self._job_timeline_render})
         self.apply_config(cfg)
 
     def apply_config(self, cfg: Config) -> None:
@@ -626,6 +627,134 @@ class Core:
         return {"sources": len(sources), "boundaries": total,
                 "unmatched": len(report["unmatched_sources"]),
                 "message": f"synced {total} cut points over {len(sources)} source(s)"}
+
+    # -- timeline rendering -------------------------------------------------------
+    def _timeline_ctx(self, tid: str) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        report = self.timeline_sync_report(tid)
+        return json.loads(row["doc"]), row["series_key"], report or {}
+
+    def _audio_map(self, files: list[str]) -> tuple[dict[str, int], list[str]]:
+        """Per-file index of the configured audio language; 0 = first track."""
+        lang = self.cfg.render.language
+        amap: dict[str, int] = {}
+        warnings: list[str] = []
+        if not lang:
+            return amap, warnings
+        for f in files:
+            tracks = self.prober(f).get("audio_tracks") or []
+            idx = next((i for i, t in enumerate(tracks)
+                        if (t.get("language") or "").lower() == lang.lower()), None)
+            if idx is None:
+                warnings.append(f"no '{lang}' audio track in {Path(f).name}; using the first")
+            elif idx > 0:
+                amap[f] = idx
+        return amap, warnings
+
+    def timeline_dry_run(self, tid: str, mode: str = "auto") -> dict[str, Any]:
+        from .timeline import render as tl_render
+
+        doc, key, report = self._timeline_ctx(tid)
+        episodes = {e.id: e for e in self.library.episodes(key)}
+        series = self.library.get_series(key)
+        corr = tl_render.corrected_map(report)
+        show = tl_render.show_name(series.title, doc["title"])
+        parts = []
+        for pi, part in enumerate(doc["parts"]):
+            cut, warns = tl_render.part_cut(doc, pi, episodes, corr)
+            amap, awarn = self._audio_map(list({s.file for s in cut.segments}))
+            fname = tl_render.part_filename(show, pi + 1, part["title"], self.cfg.ffmpeg.container)
+            out = self.cfg.output_dir / show / "Season 01" / fname
+            rp = plan.build_plan(cut, self.cfg.ffmpeg, out, Path("<workdir>"), self.prober,
+                                 mode=mode, audio_map=amap)
+            parts.append({"part": pi + 1, "title": part["title"], "mode": rp.mode,
+                          "reason": rp.reason, "output": rp.output,
+                          "runtime": round(cut.final_runtime, 1),
+                          "segments": [{**asdict(s), "duration": round(s.duration, 3)}
+                                       for s in cut.segments],
+                          "command": rp.command, "warnings": warns + awarn + rp.warnings})
+        return {"show": show, "synced": bool(report), "parts": parts}
+
+    def submit_timeline_render(self, tid: str, mode: str = "auto", keep: bool | None = None,
+                               refresh: bool = False) -> dict[str, Any]:
+        doc, _key, report = self._timeline_ctx(tid)
+        if not report:
+            raise FansCutError("run sync first: POST /api/timelines/{id}/sync")
+        return self.worker.submit("timeline_render", f"Render {doc['title']}",
+                                  {"timeline_id": tid, "mode": mode, "keep": keep,
+                                   "refresh": refresh})
+
+    def _job_timeline_render(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+        from .render.cache import render_hash
+        from .timeline import render as tl_render
+
+        tid = payload["timeline_id"]
+        doc, key, report = self._timeline_ctx(tid)
+        if not report:
+            raise FansCutError("run sync first: POST /api/timelines/{id}/sync")
+        keep = payload.get("keep")
+        if keep is None:
+            keep = self.cfg.render.keep
+        episodes = {e.id: e for e in self.library.episodes(key)}
+        series = self.library.get_series(key)
+        corr = tl_render.corrected_map(report)
+        show = tl_render.show_name(series.title, doc["title"])
+        season_dir = self.cfg.output_dir / show / "Season 01"
+        season_dir.mkdir(parents=True, exist_ok=True)
+        (season_dir.parent / "tvshow.nfo").write_text(
+            tl_render.nfo_show(show), encoding="utf-8")
+
+        outputs, cached, warnings = [], 0, []
+        self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="tl-render-", dir=self.cfg.data_dir) as tmp:
+            for pi, part in enumerate(doc["parts"]):
+                cut, warns = tl_render.part_cut(doc, pi, episodes, corr)
+                amap, awarn = self._audio_map(list({s.file for s in cut.segments}))
+                warnings += warns + awarn
+                out = season_dir / tl_render.part_filename(show, pi + 1, part["title"],
+                                                           self.cfg.ffmpeg.container)
+                workdir = Path(tmp) / f"part{pi + 1}"
+                workdir.mkdir()
+                rp = plan.build_plan(cut, self.cfg.ffmpeg, out, workdir, self.prober,
+                                     mode=payload.get("mode", "auto"), audio_map=amap)
+                h = render_hash(f"timeline:{tid}:{pi + 1}", cut, rp.mode, self.cfg.ffmpeg,
+                                rp.chapters)
+                if not payload.get("refresh") and (hit := self.renders.hit(h)):
+                    cached += 1
+                    outputs.append(hit["path"])
+                else:
+                    ctx.progress(pi / len(doc["parts"]),
+                                 f"part {pi + 1}/{len(doc['parts'])}: {part['title']}")
+                    run.execute(rp, workdir, lambda p: None, ctx.cancel)
+                    self.renders.drop_path(str(out), except_hash=h)
+                    self.renders.add(h, key, f"{doc['title']} · part {pi + 1}", str(out),
+                                     rp.mode, bool(keep), job_id=ctx.job_id)
+                    outputs.append(str(out))
+                nfo = tl_render.nfo_episode(part["title"], pi + 1)
+                out.with_suffix(".nfo").write_text(nfo, encoding="utf-8")
+        plex_note = self._plex_refresh()
+        return {"show": show, "parts": len(outputs), "cached": cached, "outputs": outputs,
+                "warnings": warnings, "plex": plex_note,
+                "message": f"wrote {len(outputs)} part(s) to {season_dir} ({cached} cached)"}
+
+    def _plex_refresh(self) -> str:
+        """Ask Plex to rescan show sections after a timeline render. Best effort."""
+        if not (self.cfg.library.plex.url and self.cfg.library.plex.token):
+            return "no Plex configured"
+        try:
+            plex = self.library.plex()
+            assert plex is not None
+            want = set(self.cfg.library.plex.sections)
+            refreshed = 0
+            for s in plex.sections():
+                if s["type"] == "show" and (not want or s["key"] in want or s["title"] in want):
+                    plex.refresh_section(s["key"])
+                    refreshed += 1
+            return f"plex refreshed {refreshed} section(s)"
+        except Exception as exc:  # noqa: BLE001 - refresh is a courtesy, never fatal
+            return f"plex refresh failed: {exc}"
 
     # -- AI-assisted recipes ----------------------------------------------------
     def ai_recipe(self, key: str, notes: str, apply: bool = False) -> dict[str, Any]:

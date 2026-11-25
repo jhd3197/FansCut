@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel
 
 from . import CoreDep
 
@@ -59,3 +60,20 @@ def sync_report(core: CoreDep, tid: str) -> dict[str, Any]:
     if report is None:
         return {"synced": False}
     return {"synced": True, **report}
+
+
+class TimelineRenderBody(BaseModel):
+    dry_run: bool = False
+    mode: Literal["auto", "copy", "encode"] = "auto"
+    keep: bool | None = None
+    refresh: bool = False
+
+
+@router.post("/timelines/{tid}/render")
+def render_timeline(core: CoreDep, tid: str, body: TimelineRenderBody | None = None
+                    ) -> dict[str, Any]:
+    """dry_run=true returns the per-part plans; otherwise queues a render job."""
+    body = body or TimelineRenderBody()
+    if body.dry_run:
+        return core.timeline_dry_run(tid, body.mode)
+    return core.submit_timeline_render(tid, body.mode, body.keep, body.refresh)
