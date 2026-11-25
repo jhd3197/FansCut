@@ -3,10 +3,10 @@
 import { Link, useNavigate, useParams } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAct, useCrumbRoot, useFrom, usePageTitle } from '../lib/hooks.js';
-import { ArtPoster, Crumbs, KV, Poster, enc } from '../components/kit.jsx';
+import { ArtPoster, Crumbs, KV, Poster, Section, enc } from '../components/kit.jsx';
 import { ErrorBox, Loading } from '../components/ui.jsx';
 import { useApi } from '../lib/store.js';
-import { KIND_LABEL, POSTER_KIND, STATUS_CLASS, SUGGESTION_ART, suggestionMeta, suggestionStatus, suggestionWhat } from './Discover.jsx';
+import { KIND_LABEL, POSTER_KIND, STATUS_CLASS, SUGGESTION_ART, SuggestionTile, TimelineTile, suggestionMeta, suggestionStatus, suggestionWhat } from './Discover.jsx';
 
 function UsesList({ s, movies }) {
   const byKey = new Map((movies || []).map((m) => [m.key, m]));
@@ -15,7 +15,7 @@ function UsesList({ s, movies }) {
   // collection templates list their films in order; recipes and canon cuts only have keys
   const rows = keys.length ? keys.map((k, i) => {
     const m = byKey.get(k);
-    if (m) return { key: k, name: m.title, sub: [m.year, m.edition].filter(Boolean).join(' · '), to: `/movies/${enc(k)}` };
+    if (m) return { key: k, name: m.title, sub: [m.year, m.edition, m.tmdb_id && `TMDB ${m.tmdb_id}`].filter(Boolean).join(' · '), to: `/movies/${enc(k)}` };
     if (s.kind === 'canon_cut') return { key: k, name: s.name || s.title, sub: 'Show', to: `/series/${enc(k)}` };
     return { key: k, name: names[i] || k, sub: '', to: null };
   }) : names.map((n) => ({ key: n, name: n, sub: '', to: null }));
@@ -64,7 +64,11 @@ export function SuggestionPage() {
   const from = useFrom();
   const navigate = useNavigate();
   const { act, busy } = useAct();
-  const s = (sugg.data?.suggestions || []).find((x) => x.id === id)
+  const all = sugg.data?.suggestions || [];
+  const [kind, ref] = [id.split(':')[0], id.slice(id.indexOf(':') + 1)];
+  const s = all.find((x) => x.id === id)
+    // old links named the collection ("merge:The Hobbit"); ids are TMDB's now ("merge:tmdb-121938")
+    || all.find((x) => x.id.startsWith(`${kind}:`) && x.name === ref)
     || (cat.data?.cuts || []).map((c) => ({ ...c, from_catalogue: true })).find((x) => x.id === id);
   usePageTitle(s ? s.name || s.title : null);
 
@@ -83,7 +87,20 @@ export function SuggestionPage() {
   const isPlaylist = s.kind === 'watch_order';
   const installed = (cuts.data?.cuts || []).find((c) => c.title === s.title);
   const [layout] = SUGGESTION_ART[s.kind] || ['single'];
-  const meta = [KIND_LABEL[s.kind] || s.kind, suggestionMeta(s), s.category].filter(Boolean).join(' · ');
+  const collId = /^(?:merge|order):tmdb-(\d+)$/.exec(s.id)?.[1];
+  const meta = [KIND_LABEL[s.kind] || s.kind, suggestionMeta(s), s.category, collId && `TMDB collection ${collId}`].filter(Boolean).join(' · ');
+
+  // everything else built from the same films or show: the other template, community
+  // cuts (Took for The Hobbit), and cuts already installed
+  const byKey = new Map((movies.data?.movies || []).map((m) => [m.key, m]));
+  const tmdb = new Set([...(s.tmdb_ids || []), ...(s.keys || []).map((k) => byKey.get(k)?.tmdb_id)].filter(Boolean));
+  const keys = new Set(s.keys || []);
+  const related = [
+    ...(sugg.data?.suggestions || []).filter((x) => x.id !== s.id && (x.keys || []).some((k) => keys.has(k))),
+    ...(cat.data?.cuts || []).filter((x) => x.id !== s.id && (x.tmdb_ids || []).some((t) => tmdb.has(t)))
+      .map((x) => ({ ...x, from_catalogue: true })),
+  ];
+  const mine = (cuts.data?.cuts || []).filter((c) => c.title !== s.title && (c.tmdb_ids || []).some((t) => tmdb.has(t)));
   const d = s.detail || {};
   const credits = d.credits && Object.keys(d.credits).length > 0
     ? Object.entries(d.credits).map(([k, v]) => [k.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()), Array.isArray(v) ? v.join(', ') : v])
@@ -132,6 +149,14 @@ export function SuggestionPage() {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'flex-start' }}>
         <UsesList s={s} movies={movies.data?.movies} />
       </div>
+      {related.length + mine.length > 0 && (
+        <Section id="s-more" title="More with these films" count={related.length + mine.length}>
+          <div className="shelf">
+            {mine.map((c) => <TimelineTile key={c.id} c={c} />)}
+            {related.map((x) => <SuggestionTile key={x.id} s={x} />)}
+          </div>
+        </Section>
+      )}
       <section aria-labelledby="s-about" className="section" style={{ gap: 12 }}>
         <h2 id="s-about">About this {isPlaylist ? 'playlist' : 'cut'}</h2>
         <KV rows={[
