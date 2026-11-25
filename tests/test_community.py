@@ -13,7 +13,7 @@ from fanscut.core import Core
 SHA1 = "a" * 40
 SHA2 = "b" * 40
 API = "https://api.github.com/repos/jhd3197/took"
-INDEX = "https://raw.githubusercontent.com/jhd3197/fanscut-recipes/main/index.json"
+INDEX = "https://raw.githubusercontent.com/jhd3197/fanscut-community/main/index.json"
 
 TOOK = {"schema": 2, "kind": "timeline", "id": "jhd3197/took", "version": "0.1.0",
         "title": "Took", "category": "Fantasy", "tagline": "The Hobbit, as one film",
@@ -138,3 +138,23 @@ def test_change_summary_words():
     assert community.change_summary(doc(a, b), doc(b, a)) == "2 scenes replaced"
     assert community.change_summary(doc(a), doc(a, variants=["x"])) == "1 new variant"
     assert community.change_summary(doc(a), doc(a)).startswith("details changed")
+
+
+def test_index_can_be_a_local_file(client, tmp_path):
+    """A draft index on disk, to try entries before they reach fanscut-community."""
+    core = _core(client)
+    f = tmp_path / "index.json"
+    f.write_text(json.dumps({"schema": 1, "cuts": [ENTRY]}))
+    for url in (str(f), f.as_uri()):
+        core.cfg.community.index_url = url
+        core._index_cache = None
+        cuts = client.get("/api/catalogue").json()["cuts"]
+        assert [c["id"] for c in cuts] == ["repo:jhd3197/took"], url
+    assert community.local_index_path(INDEX) is None
+
+
+def test_default_index_is_fanscut_community():
+    from fanscut.config import CommunityCfg
+
+    assert CommunityCfg().index_url == INDEX
+    assert "fanscut-community/main/index.json" in INDEX

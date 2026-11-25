@@ -1398,14 +1398,21 @@ class Core:
         now = _dt.datetime.now().timestamp()
         if cached and now - cached[0] < 600:
             return list(cached[1])
+        url = self.cfg.community.index_url
         try:
-            r = (self.session or requests).get(self.cfg.community.index_url, timeout=20,
-                                               headers={"User-Agent": "FansCut"})
-            r.raise_for_status()
-            if len(r.content) > community.MAX_INDEX:
-                raise community.CommunityError("index.json too large")
-            entries = community.validate_index(r.json())
-        except (requests.RequestException, ValueError, community.CommunityError):
+            local = community.local_index_path(url)
+            if local is not None:  # a draft index on disk
+                if local.stat().st_size > community.MAX_INDEX:
+                    raise community.CommunityError("index.json too large")
+                entries = community.validate_index(json.loads(local.read_text(encoding="utf-8")))
+            else:
+                r = (self.session or requests).get(url, timeout=20,
+                                                   headers={"User-Agent": "FansCut"})
+                r.raise_for_status()
+                if len(r.content) > community.MAX_INDEX:
+                    raise community.CommunityError("index.json too large")
+                entries = community.validate_index(r.json())
+        except (requests.RequestException, ValueError, OSError, community.CommunityError):
             entries = cached[1] if cached else []
         self._index_cache = (now, entries)
         return list(entries)

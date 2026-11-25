@@ -23,8 +23,9 @@ can be turned back into content).
 The editor (Timelines, then Open) authors recipes from scratch: parts and
 segments with drag-to-reorder, preview playback, an AI outline from pasted
 chronology notes, and "Export + anchors" to share the result.
-`fanscut recipe validate --file` checks a recipe offline; the companion
-fanscut-recipes repo runs it in CI.
+`fanscut recipe validate --file` checks a recipe offline. Cuts are listed for
+everyone in the [fanscut-community](https://github.com/jhd3197/fanscut-community)
+index, whose CI checks each entry.
 
 ## Movies as sources
 

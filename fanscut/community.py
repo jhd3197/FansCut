@@ -1,6 +1,6 @@
 """Community catalogue: an index of cut repos, install by repo URL, pull updates.
 
-The index (index.json in the fanscut-recipes repo) only links to repos:
+The index (index.json in the fanscut-community repo) only links to repos:
 
     {"schema": 1, "cuts": [{
         "name": "Took", "repo": "https://github.com/jhd3197/took",
@@ -75,6 +75,19 @@ def _https(v: Any) -> str:
     if urlparse(url).scheme != "https":
         raise CommunityError("index: only https URLs")
     return url
+
+
+def local_index_path(url: str) -> Path | None:
+    """The file behind a local index_url ("C:\\x\\index.json", "/x/index.json" or
+    "file:///x/index.json"); None for a web address."""
+    if url.startswith("file://"):
+        from urllib.parse import unquote, urlsplit
+        from urllib.request import url2pathname
+
+        return Path(url2pathname(unquote(urlsplit(url).path)))
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", url):
+        return None
+    return Path(url).expanduser()
 
 
 def validate_index(doc: Any) -> list[dict[str, Any]]:

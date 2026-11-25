@@ -204,7 +204,9 @@ class NotifyCfg(BaseModel):
 
 
 class CommunityCfg(BaseModel):
-    index_url: str = "https://raw.githubusercontent.com/jhd3197/fanscut-recipes/main/index.json"
+    # the community list (github.com/jhd3197/fanscut-community); a local path or a
+    # file:// URL works too, to try entries before they're published
+    index_url: str = "https://raw.githubusercontent.com/jhd3197/fanscut-community/main/index.json"
     github_token: str = Secret()  # secret, for private cut repos; prefer FANSCUT_GITHUB_TOKEN
     offline: bool = False
 
