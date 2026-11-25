@@ -127,6 +127,13 @@ h3 { font-size: 14px; margin: 0; }
 .pst-plain .ttl-main { font: 700 17px/1.15 var(--font); letter-spacing: -0.01em; }
 .cap { display: flex; flex-direction: column; gap: 2px; padding: 0 2px; }
 .cap b { font-weight: 600; }
+.cap-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cap .meta { display: flex; align-items: center; gap: 6px; }
+.cap .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.cap .dot.muted { display: none; }
+/* a library item with no art yet: an empty frame and its initial */
+.pst-blank { display: grid; place-items: center; }
+.pst-blank span { font: 700 clamp(28px, 30cqi, 72px)/1 var(--display); color: var(--line-hover); }
 .cap .meta { font-size: 12px; color: var(--muted); }
 .cap .note { font-size: 12px; }
 
@@ -252,16 +259,7 @@ legend { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
   left: calc(8% + var(--i) * (22% / max(var(--n) - 1, 1))); top: calc(14% + var(--i) * 3%);
   rotate: calc(var(--i) * 5deg - 4deg); z-index: calc(10 - var(--i)); box-shadow: 0 8px 18px #000a; transition: rotate .25s ease, left .25s ease; }
 .art-card img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.art-num { position: absolute; left: 6px; bottom: 6px; min-width: 20px; height: 20px; border-radius: 10px; padding: 0 6px; display: grid; place-items: center;
-  font: 600 11px/1 var(--font); color: var(--on-accent); background: var(--accent); }
-.art-card:not(:first-child) .art-num { left: auto; right: 6px; } /* the part that peeks out */
-.tile:hover .art-card { rotate: calc(var(--i) * 8deg - 6deg); left: calc(6% + var(--i) * (26% / max(var(--n) - 1, 1))); }/* the badge in the corner, like the MOVIE / SERIES pills on media apps */
-.art-tag { position: absolute; top: 8px; left: 8px; z-index: 20; padding: 3px 8px; border-radius: 999px; font: 600 10px/1.3 var(--font); letter-spacing: .06em;
-  color: #fff; background: #000000a6; backdrop-filter: blur(4px); border: 1px solid #ffffff26; }
-.art-tag-merge { background: #b97412d9; }
-.art-tag-order { background: #2f62c8d9; }
-.art-tag-canon { background: #2b7d5cd9; }
-.art-tag-cut { background: #6b4fc0d9; }
+.tile:hover .art-card { rotate: calc(var(--i) * 8deg - 6deg); left: calc(6% + var(--i) * (26% / max(var(--n) - 1, 1))); }
 /* collections: a backdrop with the name over it */
 .bdrop { position: relative; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; box-shadow: 0 6px 16px #00000059; transition: transform .2s ease; }
 .bdrop img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: saturate(.85); }

@@ -83,7 +83,7 @@ export function SuggestionTile({ s, onOpen }) {
   return (
     <CutTile title={s.name || s.title} sub={s.tagline} tag={s.art?.length ? label(s) : suggestionTag(s)}
       kind={POSTER_KIND[s.kind] || 'supercut'} art={s.art} layout={layout} badge={badge}
-      meta={[KIND_LABEL[s.kind], suggestionMeta(s)].filter(Boolean).join(' · ')}
+      meta={suggestionMeta(s) || KIND_LABEL[s.kind]}
       status={s.status} note={suggestionStatus(s)} onClick={() => onOpen(s)} />
   );
 }

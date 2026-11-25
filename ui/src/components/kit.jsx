@@ -81,7 +81,8 @@ export function posterFace({ genres = [], tag = '' } = {}) {
   return [...(genres || []), tag].some((g) => CONDENSED.test(g || '')) ? 'condensed' : 'serif';
 }
 
-export function Poster({ title, sub, tag, kind = 'supercut', src, wide, face, genres }) {
+// bare: art only, no tag or title on it (tiles put the name underneath).
+export function Poster({ title, sub, tag, kind = 'supercut', src, wide, face, genres, bare }) {
   const c = palette(title);
   const f = face || posterFace({ genres, tag });
   return (
@@ -92,17 +93,23 @@ export function Poster({ title, sub, tag, kind = 'supercut', src, wide, face, ge
           {!wide && <Motif kind={kind} c={c} />}
         </svg>
       )}
-      {tag && <span className="ptag" style={{ color: `${c[2]}cc` }}>{tag}</span>}
-      <div className="ttl">
-        <span className={`ttl-main${f === 'condensed' ? ' ttl-condensed' : ''}`} style={{ color: c[3], fontSize: wide ? 20 : undefined }}>{title}</span>
-        {sub && <span className="ttl-sub" style={{ color: c[3] }}>{sub}</span>}
-      </div>
+      {!bare && tag && <span className="ptag" style={{ color: `${c[2]}cc` }}>{tag}</span>}
+      {!bare && (
+        <div className="ttl">
+          <span className={`ttl-main${f === 'condensed' ? ' ttl-condensed' : ''}`} style={{ color: c[3], fontSize: wide ? 20 : undefined }}>{title}</span>
+          {sub && <span className="ttl-sub" style={{ color: c[3] }}>{sub}</span>}
+        </div>
+      )}
     </div>
   );
 }
 
-// A plain poster for media the user owns: no art, just the facts.
-export function PlainPoster({ tag, title }) {
+// A plain poster for media the user owns: no art, just the facts. bare: an
+// empty frame with the initial, for tiles that name the item underneath.
+export function PlainPoster({ tag, title, bare }) {
+  if (bare) {
+    return <div className="pst pst-plain pst-blank" aria-hidden="true"><span>{(title || '?').trim()[0]}</span></div>;
+  }
   return (
     <div className="pst pst-plain">
       <span className="ptag">{tag}</span>
@@ -123,16 +130,16 @@ export function statusText(status) {
 
 export function CutTile({ to, title, sub, tag, kind, face, genres, meta, status, note, onClick, art, layout, badge }) {
   const [cls, label] = STATUS[status] || ['muted', status || ''];
+  const drawn = <Poster title={title} sub={sub} tag={tag} kind={kind} face={face} genres={genres} bare />;
+  // Under the art: the name, then one line with a status dot. A note only when
+  // something needs a look; the full tag and status are in the tooltip.
   const inner = (
     <>
-      {art?.length
-        ? <ArtPoster keys={art} layout={layout} tag={tag} badge={badge}
-          fallback={<Poster title={title} sub={sub} tag={tag} kind={kind} face={face} genres={genres} />} />
-        : <Poster title={title} sub={sub} tag={tag} kind={kind} face={face} genres={genres} />}
-      <div className="cap">
-        <b>{title}</b>
-        {meta && <span className="meta">{meta}</span>}
-        {(note || label) && <span className={`note ${cls}`}>{note || label}</span>}
+      {art?.length ? <ArtPoster keys={art} layout={layout} fallback={drawn} /> : drawn}
+      <div className="cap" title={[tag, note || label].filter(Boolean).join(' · ')}>
+        <b className="cap-title">{title}</b>
+        {meta && <span className="meta"><i className={`dot ${cls}`} aria-label={label} />{meta}</span>}
+        {status && status !== 'ready' && note && <span className={`note ${cls}`}>{note}</span>}
       </div>
     </>
   );
@@ -141,10 +148,10 @@ export function CutTile({ to, title, sub, tag, kind, face, genres, meta, status,
 }
 
 export function MediaTile({ to, tag, short, title, year, meta, note, noteClass = 'muted', art }) {
-  const plain = <PlainPoster tag={tag} title={short || title} />;
+  const plain = <PlainPoster tag={tag} title={short || title} bare />;
   return (
-    <Link className="tile" to={to}>
-      {art ? <ArtPoster keys={[art]} tag={tag} fallback={plain} /> : plain}
+    <Link className="tile" to={to} title={tag}>
+      {art ? <ArtPoster keys={[art]} fallback={plain} /> : plain}
       <div className="cap">
         <span><b>{title}</b>{year ? <span className="muted"> {year}</span> : null}</span>
         {meta && <span className="meta">{meta}</span>}
@@ -245,7 +252,7 @@ function ArtImg({ k, onFail, style, className }) {
 // A poster from the library's own art. One key: that poster. Several: a merge
 // shows them as slices side by side, a watch order as a fanned, numbered stack.
 // Falls back to the drawn Poster when no art loads.
-export function ArtPoster({ keys = [], layout = 'single', tag, badge, fallback }) {
+export function ArtPoster({ keys = [], layout = 'single', fallback }) {
   const [failed, fail] = useFailed();
   const ok = keys.filter((k) => !failed.has(k)).slice(0, layout === 'stack' ? 3 : 4);
   if (!ok.length) return fallback;
@@ -264,7 +271,6 @@ export function ArtPoster({ keys = [], layout = 'single', tag, badge, fallback }
         {ok.map((k, i) => (
           <div key={k} className="art-card" style={{ '--i': i }}>
             <ArtImg k={k} onFail={fail} />
-            <span className="art-num">{i + 1}</span>
           </div>
         ))}
       </div>
@@ -275,7 +281,6 @@ export function ArtPoster({ keys = [], layout = 'single', tag, badge, fallback }
   return (
     <div className={`pst pst-art pst-art-${layout}`}>
       {body}
-      {tag && <span className={`art-tag${badge ? ` art-tag-${badge}` : ''}`}>{tag}</span>}
     </div>
   );
 }
