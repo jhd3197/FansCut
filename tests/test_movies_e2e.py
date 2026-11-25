@@ -148,3 +148,40 @@ def test_movie_missing_from_library_reports(movie_client):
     d["parts"][0]["segments"].append({"src": "M999", "start": 10, "end": 60})
     r = movie_client.post(f"/api/series/{KEY}/timelines", json=d)
     assert r.json()["missing"] == [{"src": "M999", "parts": [1], "note": ""}]
+
+
+def test_movie_and_timeline_source_previews_and_frames(movie_client):
+    """Build and the editor preview films the same way as episodes; stills are jpegs."""
+    movies = movie_client.get("/api/library/movies").json()["movies"]
+    key = next(m["key"] for m in movies if m.get("on_disk"))
+    clip = movie_client.get(f"/api/movies/{key}/preview", params={"t": 10})
+    assert clip.status_code == 200 and clip.headers["content-type"] == "video/mp4"
+    still = movie_client.get(f"/api/movies/{key}/frame", params={"t": 10})
+    assert still.status_code == 200 and still.content[:2] == b"\xff\xd8"  # a jpeg
+    assert movie_client.get(f"/api/movies/{key}/frame", params={"t": 999}).status_code == 404
+
+    tid = movie_client.post(f"/api/series/{KEY}/timelines", json=_doc({})).json()["id"]
+    for src in ("S01E01", "M555"):
+        r = movie_client.get(f"/api/timelines/{tid}/sources/{src}/frame", params={"t": 2})
+        assert r.status_code == 200 and r.content[:2] == b"\xff\xd8", src
+    r = movie_client.get(f"/api/timelines/{tid}/sources/M555/preview", params={"t": 13})
+    assert r.status_code == 200 and r.headers["content-type"] == "video/mp4"
+    assert movie_client.get(f"/api/timelines/{tid}/sources/NOPE/frame",
+                            params={"t": 1}).status_code == 404
+    eps = movie_client.get(f"/api/series/{KEY}/episodes/S01E02/frame", params={"t": 1})
+    assert eps.status_code == 200
+
+
+def test_check_frame_only_serves_flagged_files(movie_client, movie_library, tmp_path):
+    core = movie_client.core
+    film = str(movie_library["extended"])
+    assert movie_client.get("/api/library/check/frame", params={"file": film}).status_code == 404
+    (core.cfg.data_dir).mkdir(parents=True, exist_ok=True)
+    (core.cfg.data_dir / "library-check.json").write_text(json.dumps(
+        {"findings": [{"check": "mismatch", "file": None, "files": [film]}]}))
+    r = movie_client.get("/api/library/check/frame", params={"file": film})
+    assert r.status_code == 200 and r.content[:2] == b"\xff\xd8"
+    other = tmp_path / "secret.mkv"
+    other.write_bytes(b"x")
+    assert movie_client.get("/api/library/check/frame",
+                            params={"file": str(other)}).status_code == 404

@@ -9,6 +9,7 @@ import contextlib
 import datetime as _dt
 import itertools
 import json
+import re
 import tempfile
 import threading
 import uuid
@@ -43,6 +44,7 @@ from .scheduler import Scheduler
 
 UNSET: Any = object()  # "leave this field alone", distinct from None (= clear it)
 WHOLE = -1  # matches.season value for "the whole series"
+CROP_RE = re.compile(r"^\d{1,5}:\d{1,5}:\d{1,5}:\d{1,5}$")  # cropdetect's w:h:x:y
 
 
 def _opts_from(base: dict[str, Any], extra: dict[str, Any] | None) -> CutOptions:
@@ -1067,29 +1069,105 @@ class Core:
         except Exception as exc:  # noqa: BLE001 - refresh is a courtesy, never fatal
             return f"plex refresh failed: {exc}"
 
-    # -- preview clips (sync review and the timeline editor) -----------------------
-    def preview_clip(self, key: str, episode_id: str, t: float) -> Path:
-        """10 s around t (5 s each side) as a tiny mp4, cached in data_dir/previews."""
-        import hashlib
-
-        episodes = {e.id: e for e in self.library.episodes(key)}
-        ep = episodes.get(episode_id)
+    # -- preview clips and stills (sync review, Build, the editor, Health) ---------
+    def _episode_file(self, key: str, episode_id: str) -> str:
+        ep = {e.id: e for e in self.library.episodes(key)}.get(episode_id)
         if not ep or not ep.file or not Path(ep.file).is_file():
             raise NotFoundError(f"{episode_id} has no file in this library")
-        st = Path(ep.file).stat()
-        raw = f"{ep.file}|{st.st_mtime}|{st.st_size}|{t:.2f}"
+        return ep.file
+
+    def _movie_file(self, key: str) -> str:
+        m = self.library.get_movie(key)
+        if not m.file or not Path(m.file).is_file():
+            raise NotFoundError(f"{m.title} has no file in this library")
+        return m.file
+
+    def _timeline_source_file(self, tid: str, src: str) -> str:
+        doc, key, _report = self._timeline_ctx(tid)
+        if src not in doc["sources"]:
+            raise NotFoundError(f"{src} is not a source of this timeline")
+        f, _d = self._source_files(key, {"sources": {src: doc["sources"][src]}})[src]
+        if not f or not Path(f).is_file():
+            raise NotFoundError(f"{src} has no file in this library")
+        return f
+
+    def _preview_path(self, file: str, what: str, ext: str) -> Path:
+        import hashlib
+
+        st = Path(file).stat()
+        raw = f"{file}|{st.st_mtime}|{st.st_size}|{what}"
         digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
-        out = self.cfg.data_dir / "previews" / f"{digest}.mp4"
+        return self.cfg.data_dir / "previews" / f"{digest}.{ext}"
+
+    def _clip(self, file: str, t: float) -> Path:
+        """10 s around t (5 s each side) as a tiny mp4, cached in data_dir/previews."""
+        out = self._preview_path(file, f"{t:.2f}", "mp4")
         if not out.is_file():
             out.parent.mkdir(parents=True, exist_ok=True)
             tmp = out.with_suffix(".tmp.mp4")
             ffmpeg.run_capture(
                 [self.cfg.ffmpeg.binary, "-v", "error", "-ss", f"{max(t - 5, 0):.3f}", "-t", "10",
-                 "-i", ep.file, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                 "-i", file, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
                  "-vf", "scale=640:-2", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
                  "-movflags", "+faststart", str(tmp)])
             tmp.replace(out)
         return out
+
+    def _frame(self, file: str, t: float, crop: str | None = None) -> Path:
+        """One frame at t as a 640 px jpeg; `crop` (w:h:x:y) is drawn on it as a box."""
+        if crop is not None and not CROP_RE.match(crop):
+            raise FansCutError("crop must be w:h:x:y in pixels")
+        duration = self.prober(file).get("duration") or 0
+        if duration and t >= duration:
+            raise NotFoundError(f"no frame at {t:.1f} s: the file is {duration:.1f} s long")
+        out = self._preview_path(file, f"frame|{t:.3f}|{crop or ''}", "jpg")
+        if not out.is_file():
+            out.parent.mkdir(parents=True, exist_ok=True)
+            tmp = out.with_suffix(".tmp.jpg")
+            vf = "scale=640:-2"
+            if crop:
+                w, h, x, y = crop.split(":")
+                vf = f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0x5B9BFF@0.9:t=6,{vf}"
+            ffmpeg.run_capture(
+                [self.cfg.ffmpeg.binary, "-v", "error", "-ss", f"{max(t, 0):.3f}", "-i", file,
+                 "-frames:v", "1", "-vf", vf, "-q:v", "4", "-y", str(tmp)])
+            if not tmp.is_file():  # past the end: ffmpeg exits 0 and writes nothing
+                raise NotFoundError("no frame at that time")
+            tmp.replace(out)
+        return out
+
+    def preview_clip(self, key: str, episode_id: str, t: float) -> Path:
+        return self._clip(self._episode_file(key, episode_id), t)
+
+    def episode_frame(self, key: str, episode_id: str, t: float) -> Path:
+        return self._frame(self._episode_file(key, episode_id), t)
+
+    def movie_preview(self, key: str, t: float) -> Path:
+        return self._clip(self._movie_file(key), t)
+
+    def movie_frame(self, key: str, t: float) -> Path:
+        return self._frame(self._movie_file(key), t)
+
+    def timeline_source_preview(self, tid: str, src: str, t: float) -> Path:
+        """Build and the editor preview any source, episode or film, the same way."""
+        return self._clip(self._timeline_source_file(tid, src), t)
+
+    def timeline_source_frame(self, tid: str, src: str, t: float) -> Path:
+        return self._frame(self._timeline_source_file(tid, src), t)
+
+    def check_frame(self, file: str) -> Path:
+        """Health's "Preview crop": a frame of a file the last check flagged, with the
+        detected picture area drawn. Only files named in that report are served."""
+        last = self.last_check() or {}
+        flagged = {f.get("file") for f in last.get("findings", [])}
+        for f in last.get("findings", []):
+            flagged.update(f.get("files") or [])
+        if not file or file not in flagged or not Path(file).is_file():
+            raise NotFoundError("that file is not in the last library check")
+        info = self.prober(file)
+        duration = info.get("duration") or 0
+        crop = self.checker.crop(file, duration)
+        return self._frame(file, duration * 0.3 + 2.0, crop)  # inside the cropdetect window
 
     # -- find a scene in other episodes --------------------------------------------
     def submit_find_similar(self, key: str, episode_id: str, start: float, end: float

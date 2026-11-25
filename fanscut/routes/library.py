@@ -190,6 +190,47 @@ def preview(core: CoreDep, key: str, episode_id: str, t: float = Query(ge=0)) ->
     return FileResponse(core.preview_clip(key, episode_id, t), media_type="video/mp4")
 
 
+PREVIEW_LIMIT = [Depends(rate_limit("preview", 60, 60))]
+FRAME_LIMIT = [Depends(rate_limit("frame", 240, 60))]  # Build shows a still per cut point
+
+
+@router.get("/series/{key}/episodes/{episode_id}/frame", dependencies=FRAME_LIMIT)
+def episode_frame(core: CoreDep, key: str, episode_id: str, t: float = Query(ge=0)
+                  ) -> FileResponse:
+    """One frame at t (jpeg, 640 px wide)."""
+    return FileResponse(core.episode_frame(key, episode_id, t), media_type="image/jpeg")
+
+
+@router.get("/movies/{key:path}/preview", dependencies=PREVIEW_LIMIT)
+def movie_preview(core: CoreDep, key: str, t: float = Query(ge=0)) -> FileResponse:
+    """10 s of a film around t."""
+    return FileResponse(core.movie_preview(key, t), media_type="video/mp4")
+
+
+@router.get("/movies/{key:path}/frame", dependencies=FRAME_LIMIT)
+def movie_frame(core: CoreDep, key: str, t: float = Query(ge=0)) -> FileResponse:
+    return FileResponse(core.movie_frame(key, t), media_type="image/jpeg")
+
+
+@router.get("/timelines/{tid}/sources/{src}/preview", dependencies=PREVIEW_LIMIT)
+def timeline_source_preview(core: CoreDep, tid: str, src: str, t: float = Query(ge=0)
+                            ) -> FileResponse:
+    """10 s around t in the user's copy of one recipe source (episode or film)."""
+    return FileResponse(core.timeline_source_preview(tid, src, t), media_type="video/mp4")
+
+
+@router.get("/timelines/{tid}/sources/{src}/frame", dependencies=FRAME_LIMIT)
+def timeline_source_frame(core: CoreDep, tid: str, src: str, t: float = Query(ge=0)
+                          ) -> FileResponse:
+    return FileResponse(core.timeline_source_frame(tid, src, t), media_type="image/jpeg")
+
+
+@router.get("/library/check/frame", dependencies=FRAME_LIMIT)
+def check_frame(core: CoreDep, file: str = Query(max_length=4096)) -> FileResponse:
+    """A frame of a file the last library check flagged, with its picture area boxed."""
+    return FileResponse(core.check_frame(file), media_type="image/jpeg")
+
+
 class SimilarBody(BaseModel):
     episode_id: str
     start: float = Field(ge=0)
