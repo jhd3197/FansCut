@@ -4,6 +4,7 @@ import { api } from '../lib/api.js';
 import { useAct, useLoad, useUrlState, useDebounced, useShelfLayout } from '../lib/hooks.js';
 import { Dialog, Empty, ErrorBox, Loading, Notice, SkeletonTiles } from '../components/ui.jsx';
 import { Backdrop, CutTile, KV, Search, Seg, Shelf, enc, hm } from '../components/kit.jsx';
+import { discoverShelves } from '../lib/shelves.js';
 
 // -- shared with the Collection and Movie pages --------------------------------------------
 
@@ -174,14 +175,12 @@ export function Discover() {
   const items = (data || []).filter((s) => (filter === 'all' || (filter === 'ready' ? s.status === 'ready' : s.status !== 'ready'))
     && (!needle || [s.title, s.tagline, s.category].some((x) => x && x.toLowerCase().includes(needle))));
 
-  const shelves = [];
-  const byName = new Map();
-  for (const s of items) {
-    const name = s.category || KIND_LABEL[s.kind] || 'Other';
-    if (!byName.has(name)) { byName.set(name, []); shelves.push(name); }
-    byName.get(name).push(s);
-  }
-  const layout = useShelfLayout(shelves);
+  // editorial order: the season's shelf, genres, then story order / characters / short / anime
+  const built = discoverShelves(items);
+  const byName = new Map(built.map((x) => [x.name, x.items]));
+  const layout = useShelfLayout(built.map((x) => x.name));
+  const pinned = built.filter((x) => x.seasonal).map((x) => x.name);
+  const visible = [...pinned.filter((n) => layout.visible.includes(n)), ...layout.visible.filter((n) => !pinned.includes(n))];
 
   return (
     <div className="page page-wide" style={{ gap: 30 }}>
@@ -220,12 +219,12 @@ export function Discover() {
         </Shelf>
       )}
 
-      {layout.visible.map((name, i) => (
+      {visible.map((name, i) => (
         <Shelf key={name} id={`shelf-${i}`} title={name} count={byName.get(name).length}
           actions={(
             <span className="shelf-tools">
               <button type="button" className="btn btn-sm btn-ghost" aria-label={`Move ${name} up`} disabled={i === 0} onClick={() => layout.move(name, -1)}>↑</button>
-              <button type="button" className="btn btn-sm btn-ghost" aria-label={`Move ${name} down`} disabled={i === layout.visible.length - 1} onClick={() => layout.move(name, 1)}>↓</button>
+              <button type="button" className="btn btn-sm btn-ghost" aria-label={`Move ${name} down`} disabled={i === visible.length - 1} onClick={() => layout.move(name, 1)}>↓</button>
               <button type="button" className="btn btn-sm btn-ghost" aria-label={`Hide ${name}`} onClick={() => layout.hide(name)}>Hide</button>
             </span>
           )}>
