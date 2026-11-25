@@ -462,7 +462,9 @@ class Core:
                                      lambda p: ctx.progress(p),
                                      cache=FingerprintCache(self.db))
         self.store_detected(key, found)
-        return {"episodes": len(eps), "message": f"analysed {len(eps)} episodes",
+        hits = sum(1 for v in found.values() if v)
+        return {"episodes": len(eps),
+                "message": f"Opening or ending found in {hits} of {len(eps)} episodes",
                 "found": {k: {t: list(r) for t, r in v.items()} for k, v in found.items()}}
 
     def store_detected(self, key: str, found: dict[str, dict[str, tuple[float, float]]]) -> None:
@@ -649,9 +651,11 @@ class Core:
         self.db.execute(
             "INSERT OR REPLACE INTO timeline_syncs (timeline_id, report, updated_at)"
             " VALUES (?,?,?)", (tid, dumps(report), now))
+        matched = sum(v.get("matched_boundaries", 0) for v in sources.values())
+        check = f" · {total - matched} to check" if matched < total else ""
         return {"sources": len(sources), "boundaries": total,
                 "unmatched": len(report["unmatched_sources"]),
-                "message": f"synced {total} cut points over {len(sources)} source(s)"}
+                "message": f"{matched} of {total} cut points matched{check}"}
 
     # -- timeline rendering -------------------------------------------------------
     def _source_files(self, key: str, doc: dict[str, Any]
