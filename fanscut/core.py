@@ -27,7 +27,7 @@ from .catalogues import match as catalogue_match
 from .catalogues.http import CachedHttp
 from .config import Config
 from .db import Database, dumps
-from .errors import ClientError, FansCutError, NotFoundError
+from .errors import ClientError, FansCutError, FFmpegError, NotFoundError
 from .fillers import anifiller, jikan_flags
 from .fillers import labels as labelling
 from .fingerprint import detect
@@ -44,6 +44,9 @@ from .scheduler import Scheduler
 
 UNSET: Any = object()  # "leave this field alone", distinct from None (= clear it)
 WHOLE = -1  # matches.season value for "the whole series"
+# PQ / HLG to SDR for stills (zimg): linear light, BT.709 primaries, Hable curve
+HDR_TO_SDR = ("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,"
+              "tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
 CROP_RE = re.compile(r"^\d{1,5}:\d{1,5}:\d{1,5}:\d{1,5}$")  # cropdetect's w:h:x:y
 
 
@@ -1218,10 +1221,12 @@ class Core:
         """One frame at t as a 640 px jpeg; `crop` (w:h:x:y) is drawn on it as a box."""
         if crop is not None and not CROP_RE.match(crop):
             raise FansCutError("crop must be w:h:x:y in pixels")
-        duration = self.prober(file).get("duration") or 0
+        info = self.prober(file)
+        duration = info.get("duration") or 0
         if duration and t >= duration:
             raise NotFoundError(f"no frame at {t:.1f} s: the file is {duration:.1f} s long")
-        out = self._preview_path(file, f"frame|{t:.3f}|{crop or ''}", "jpg")
+        hdr = (info.get("video") or {}).get("hdr") not in (None, "", "SDR")
+        out = self._preview_path(file, f"frame|{t:.3f}|{crop or ''}|tm{int(hdr)}", "jpg")
         if not out.is_file():
             out.parent.mkdir(parents=True, exist_ok=True)
             tmp = out.with_suffix(".tmp.jpg")
@@ -1229,9 +1234,19 @@ class Core:
             if crop:
                 w, h, x, y = crop.split(":")
                 vf = f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0x5B9BFF@0.9:t=6,{vf}"
-            ffmpeg.run_capture(
-                [self.cfg.ffmpeg.binary, "-v", "error", "-ss", f"{max(t, 0):.3f}", "-i", file,
-                 "-frames:v", "1", "-vf", vf, "-q:v", "4", "-y", str(tmp)])
+
+            def grab(chain: str) -> None:
+                ffmpeg.run_capture(
+                    [self.cfg.ffmpeg.binary, "-v", "error", "-ss", f"{max(t, 0):.3f}", "-i", file,
+                     "-frames:v", "1", "-vf", chain, "-q:v", "4", "-y", str(tmp)])
+
+            if hdr:  # an HDR frame shown as is looks grey and flat: tone-map it to SDR
+                try:
+                    grab(f"{HDR_TO_SDR},{vf}")
+                except FFmpegError:  # an ffmpeg without zscale: the plain frame
+                    grab(vf)
+            else:
+                grab(vf)
             if not tmp.is_file():  # past the end: ffmpeg exits 0 and writes nothing
                 raise NotFoundError("no frame at that time")
             tmp.replace(out)

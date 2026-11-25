@@ -185,3 +185,28 @@ def test_check_frame_only_serves_flagged_files(movie_client, movie_library, tmp_
     other.write_bytes(b"x")
     assert movie_client.get("/api/library/check/frame",
                             params={"file": str(other)}).status_code == 404
+
+
+def test_hdr_frames_are_tone_mapped_with_a_plain_fallback(movie_client, movie_library, monkeypatch):
+    """An HDR still shown as is looks grey: grab it through zscale/tonemap, and fall back
+    to the plain frame on an ffmpeg without zscale."""
+    from fanscut.errors import FFmpegError
+    from fanscut.render import ffmpeg as ff
+
+    core = movie_client.core
+    film = str(movie_library["extended"])
+    monkeypatch.setattr(core, "prober", lambda p: {"duration": 30.0, "video": {"hdr": "HDR10"}})
+    chains: list[str] = []
+
+    def fake(cmd, timeout=300):
+        chain = cmd[cmd.index("-vf") + 1]
+        chains.append(chain)
+        if "tonemap" in chain:
+            raise FFmpegError("No such filter: 'zscale'")
+        Path(cmd[-1]).write_bytes(b"\xff\xd8jpeg")
+        return b""
+
+    monkeypatch.setattr(ff, "run_capture", fake)
+    out = core._frame(film, 5.0)
+    assert out.read_bytes().startswith(b"\xff\xd8")
+    assert "tonemap=hable" in chains[0] and "tonemap" not in chains[1]
