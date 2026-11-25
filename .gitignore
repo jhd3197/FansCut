@@ -31,3 +31,8 @@ docs/plans/
 graphify-out/
 raw/
 .planning/
+
+# Playwright e2e output
+ui/playwright-report/
+ui/test-results/
+.coverage
