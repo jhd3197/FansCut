@@ -527,6 +527,15 @@ def ranges(ids: list[str]) -> str:
     return ", ".join(r[0] if len(r) == 1 else f"{r[0]}–{r[-1]}" for r in out)
 
 
+READ_ONLY_HINT = ("the library folder is read-only here (in Docker /media is mounted :ro); "
+                  "rename the file yourself or mount the library read-write")
+
+
+def folder_writable(file: str) -> bool:
+    """Whether a file in this folder could be renamed (False on a read-only mount)."""
+    return os.access(Path(file).parent, os.W_OK)
+
+
 def apply_rename(proposals: list[dict[str, str]], file: str, to: str) -> dict[str, str]:
     """Rename one file, only if (file, to) is one of the check's own proposals."""
     if not any(p["file"] == file and p["to"] == to for p in proposals):
@@ -534,6 +543,8 @@ def apply_rename(proposals: list[dict[str, str]], file: str, to: str) -> dict[st
     src, dst = Path(file), Path(to)
     if src.parent != dst.parent:
         raise ValueError("renames stay in the same folder")
+    if not folder_writable(file):
+        raise ValueError(READ_ONLY_HINT)
     if dst.exists():
         raise ValueError(f"{dst.name} already exists")
     src.rename(dst)
