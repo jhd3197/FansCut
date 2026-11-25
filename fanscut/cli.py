@@ -67,6 +67,42 @@ def _recipe_ai(args: argparse.Namespace, cfg: config.Config) -> int:
     return 0
 
 
+def _recipe_validate(args: argparse.Namespace, _cfg: config.Config) -> int:
+    """fanscut recipe validate --file recipe.json (either recipe kind, no library needed)"""
+    from pathlib import Path
+
+    from . import recipe as recipe_mod
+    from .timeline import recipe as tl_recipe
+
+    raw = Path(args.file).read_bytes()
+    if len(raw) > tl_recipe.MAX_BYTES:
+        raise FansCutError("recipe is over the 2 MB limit")
+    try:
+        doc = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise FansCutError(f"{args.file}: invalid JSON: {exc}") from exc
+    if isinstance(doc, dict) and doc.get("kind") == "timeline":
+        clean = tl_recipe.validate(doc)
+        print(f"ok: timeline recipe “{clean['title']}” — {len(clean['parts'])} part(s), "
+              f"{sum(len(p['segments']) for p in clean['parts'])} segment(s), "
+              f"{len(clean['sources'])} source(s)")
+    else:
+        clean = recipe_mod.validate(doc)
+        print(f"ok: series recipe “{clean['series'].get('title', '')}” — "
+              f"{len(clean['episodes'])} episode(s) touched")
+    return 0
+
+
+def _recipe_dispatch(args: argparse.Namespace, cfg: config.Config) -> int:
+    if args.action == "validate":
+        if not args.file:
+            raise FansCutError("recipe validate needs --file")
+        return _recipe_validate(args, cfg)
+    if not args.series or not args.notes:
+        raise FansCutError("recipe ai needs --series and --notes")
+    return _recipe_ai(args, cfg)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="fanscut", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -83,11 +119,12 @@ def main(argv: list[str] | None = None) -> int:
     f.set_defaults(fn=_fillers)
     sub.add_parser("scan", help="list series from the configured sources").set_defaults(fn=_scan)
     r = sub.add_parser("recipe", help="cut recipes")
-    r.add_argument("action", choices=["ai"])
-    r.add_argument("--series", required=True, help="series key, e.g. sonarr:12")
-    r.add_argument("--notes", required=True, help="text file with community cut notes")
+    r.add_argument("action", choices=["ai", "validate"])
+    r.add_argument("--series", help="series key, e.g. sonarr:12 (for ai)")
+    r.add_argument("--notes", help="text file with community cut notes (for ai)")
     r.add_argument("--apply", action="store_true", help="import the result, not just print it")
-    r.set_defaults(fn=_recipe_ai)
+    r.add_argument("--file", help="recipe JSON to check (for validate)")
+    r.set_defaults(fn=_recipe_dispatch)
     args = ap.parse_args(argv)
     logging.basicConfig(
         level=logging.INFO,

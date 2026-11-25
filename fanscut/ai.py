@@ -107,3 +107,74 @@ def generate_recipe(cfg: AICfg, series: Series, episodes: list[Episode], notes: 
         raise AIError("no notes given")
     answer = chat(cfg, build_messages(series, episodes, notes), session)
     return recipe_mod.validate(extract_json(answer))
+
+
+# -- timeline outlines (the AI orders scenes; humans set exact times) ---------------
+OUTLINE_SYSTEM = """\
+You turn chronology notes into a scene outline for a chronological fan edit.
+The outline is JSON, no prose, no markdown:
+
+[{"part": "Year -1003",
+  "scenes": [{"src": "S04E21", "approx": "05:10", "desc": "Ymir in the tree"}]}]
+
+Rules:
+- "part" is a chapter of the edit, in story order.
+- "src" is an episode id from the supplied list, exactly as given ("S04E21";
+  OVAs and specials are S00Exx).
+- "approx" is where the scene roughly starts in that episode, mm:ss or hh:mm:ss.
+  Never invent precise times: the user confirms the real in/out points later.
+- "desc" is a few plain words about the scene, no episode synopses.
+- Output the JSON array and nothing else.
+"""
+
+APPROX_RE = re.compile(r"^(?:(\d+):)?([0-5]?\d):([0-5]\d)$")
+
+
+def parse_approx(s: Any) -> float:
+    if not isinstance(s, str) or not (m := APPROX_RE.match(s.strip())):
+        raise AIError(f"bad approx time {s!r} (want mm:ss)")
+    return float(int(m.group(1) or 0) * 3600 + int(m.group(2)) * 60 + int(m.group(3)))
+
+
+def validate_outline(doc: Any) -> list[dict[str, Any]]:
+    if not isinstance(doc, list) or not doc:
+        raise AIError("the model returned no outline")
+    out = []
+    for i, part in enumerate(doc[:200], start=1):
+        if not isinstance(part, dict) or not isinstance(part.get("part"), str):
+            raise AIError(f"outline part {i}: expected an object with a title")
+        scenes = []
+        for j, sc in enumerate((part.get("scenes") or [])[:500], start=1):
+            if not isinstance(sc, dict) or not isinstance(sc.get("src"), str):
+                raise AIError(f"outline part {i} scene {j}: expected an object with src")
+            entry: dict[str, Any] = {"src": sc["src"],
+                                     "approx": round(parse_approx(sc.get("approx")), 1)}
+            if isinstance(sc.get("desc"), str):
+                entry["desc"] = sc["desc"][:300]
+            scenes.append(entry)
+        out.append({"part": part["part"][:200], "scenes": scenes})
+    return out
+
+
+def generate_outline(cfg: AICfg, series: Series, episodes: list[Episode], notes: str,
+                     session: requests.Session | None = None) -> list[dict[str, Any]]:
+    """Chronology notes in -> scene outline out. Raises AIError."""
+    if not notes.strip():
+        raise AIError("no notes given")
+    listing = "\n".join(f"- {e.id}{f' — {e.title}' if e.title else ''}" for e in episodes)
+    messages = [{"role": "system", "content": OUTLINE_SYSTEM},
+                {"role": "user", "content": f"Series: {series.title}\n\nEpisodes:\n{listing}\n\n"
+                                            f"Chronology notes:\n{notes.strip()}"}]
+    return validate_outline(extract_json_list(chat(cfg, messages, session)))
+
+
+def extract_json_list(text: str) -> Any:
+    """A JSON array from an LLM answer (fences and chatter tolerated)."""
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.MULTILINE)
+    start = text.find("[")
+    if start < 0:
+        raise AIError("the model returned no JSON array")
+    try:
+        return json.loads(text[start:text.rfind("]") + 1])
+    except json.JSONDecodeError as exc:
+        raise AIError(f"the model returned invalid JSON: {exc}") from exc

@@ -9,6 +9,7 @@ import contextlib
 import datetime as _dt
 import json
 import tempfile
+import uuid
 from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any
@@ -56,7 +57,10 @@ class Core:
         self.session = session
         self.jobs = JobStore(db)
         self.renders = RenderStore(db)
-        self.worker = Worker(self.jobs, {"render": self._job_render, "detect": self._job_detect})
+        self.worker = Worker(self.jobs, {"render": self._job_render, "detect": self._job_detect,
+                                         "timeline_sync": self._job_timeline_sync,
+                                         "timeline_render": self._job_timeline_render,
+                                         "find_similar": self._job_find_similar})
         self.apply_config(cfg)
 
     def apply_config(self, cfg: Config) -> None:
@@ -470,6 +474,358 @@ class Core:
                     "INSERT OR IGNORE INTO trims (series_key, episode_id, kind, start, end, source)"
                     " VALUES (?,?,?,?,?,'auto')", (key, eid, kind, s, e))
 
+    # -- timelines (chronological recipes) --------------------------------------
+    def _timeline_row(self, r: Any, with_doc: bool = False) -> dict[str, Any]:
+        doc = json.loads(r["doc"])
+        out = {"id": r["id"], "series_key": r["series_key"], "title": r["title"],
+               "parts": len(doc["parts"]), "sources": len(doc["sources"]),
+               "updated_at": r["updated_at"],
+               "synced": self.db.one(
+                   "SELECT timeline_id FROM timeline_syncs WHERE timeline_id = ?",
+                   (r["id"],)) is not None}
+        if with_doc:
+            out["doc"] = doc
+        return out
+
+    def list_timelines(self, key: str) -> list[dict[str, Any]]:
+        self.library.get_series(key)
+        return [self._timeline_row(r) for r in self.db.query(
+            "SELECT * FROM timelines WHERE series_key = ? ORDER BY created_at", (key,))]
+
+    def create_timeline(self, key: str, doc: Any) -> dict[str, Any]:
+        from .timeline import recipe as tl_recipe
+
+        if len(dumps(doc)) > tl_recipe.MAX_BYTES:
+            raise FansCutError("recipe is over the 2 MB limit")
+        clean = tl_recipe.validate(doc)
+        episodes = {e.id for e in self.library.episodes(key) if e.file}
+        tid = uuid.uuid4().hex[:12]
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        self.db.execute(
+            "INSERT INTO timelines (id, series_key, title, doc, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?)", (tid, key, clean["title"], dumps(clean), now, now))
+        return {**self.get_timeline(tid), "missing": tl_recipe.missing_sources(clean, episodes)}
+
+    def get_timeline(self, tid: str, with_doc: bool = True) -> dict[str, Any]:
+        from .timeline import recipe as tl_recipe
+
+        row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        out = self._timeline_row(row, with_doc)
+        if with_doc:
+            episodes = {e.id for e in self.library.episodes(row["series_key"]) if e.file}
+            out["missing"] = tl_recipe.missing_sources(out["doc"], episodes)
+        return out
+
+    def update_timeline(self, tid: str, doc: Any) -> dict[str, Any]:
+        from .timeline import recipe as tl_recipe
+
+        row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        if len(dumps(doc)) > tl_recipe.MAX_BYTES:
+            raise FansCutError("recipe is over the 2 MB limit")
+        clean = tl_recipe.validate(doc)
+        self.db.execute("UPDATE timelines SET title = ?, doc = ?, updated_at = ? WHERE id = ?",
+                        (clean["title"], dumps(clean),
+                         _dt.datetime.now().isoformat(timespec="seconds"), tid))
+        self.db.execute("DELETE FROM timeline_syncs WHERE timeline_id = ?", (tid,))
+        return self.get_timeline(tid)
+
+    def delete_timeline(self, tid: str) -> None:
+        if self.db.one("SELECT id FROM timelines WHERE id = ?", (tid,)) is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        self.db.execute("DELETE FROM timelines WHERE id = ?", (tid,))
+        self.db.execute("DELETE FROM timeline_syncs WHERE timeline_id = ?", (tid,))
+
+    # -- timeline anchors: export (author) and sync (user) ------------------------
+    def export_timeline(self, tid: str, kinds: tuple[str, ...] = ("a", "v")) -> dict[str, Any]:
+        """The recipe with anchors computed from the author's own files."""
+        from .timeline import anchors as anchors_mod
+
+        row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        doc = json.loads(row["doc"])
+        episodes = {e.id: e for e in self.library.episodes(row["series_key"])}
+        cache = anchors_mod.AnchorCache(self.db)
+        missing: list[str] = []
+        for part in doc["parts"]:
+            for seg in part["segments"]:
+                ep = episodes.get(seg["src"])
+                if not ep or not ep.file or not Path(ep.file).is_file():
+                    if seg["src"] not in missing:
+                        missing.append(seg["src"])
+                    continue
+                for side in ("start", "end"):
+                    a = anchors_mod.make_anchors(self.cfg.ffmpeg, ep.file, seg[side],
+                                                 self.cfg.fingerprint, kinds, cache)
+                    seg.setdefault("anchors", {})[side] = a
+        out = {**doc, "_missing": sorted(missing)}
+        return out
+
+    def timeline_sync_report(self, tid: str) -> dict[str, Any] | None:
+        row = self.db.one("SELECT report, updated_at FROM timeline_syncs WHERE timeline_id = ?",
+                          (tid,))
+        if row is None:
+            return None
+        return {**json.loads(row["report"]), "updated_at": row["updated_at"]}
+
+    def submit_timeline_sync(self, tid: str) -> dict[str, Any]:
+        row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        return self.worker.submit("timeline_sync", f"Sync {row['title']}", {"timeline_id": tid})
+
+    def _job_timeline_sync(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+        from .timeline import anchors as anchors_mod
+
+        tid = payload["timeline_id"]
+        row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        doc = json.loads(row["doc"])
+        episodes = {e.id: e for e in self.library.episodes(row["series_key"])}
+        # every cut point, grouped per source episode
+        bounds: dict[str, list[dict[str, Any]]] = {}
+        for pi, part in enumerate(doc["parts"], start=1):
+            for si, seg in enumerate(part["segments"], start=1):
+                for side in ("start", "end"):
+                    bounds.setdefault(seg["src"], []).append({
+                        "part": pi, "segment": si, "side": side, "t": seg[side],
+                        "anchors": (seg.get("anchors") or {}).get(side)})
+        total = sum(len(v) for v in bounds.values())
+        done = 0
+        sources: dict[str, Any] = {}
+        for src, blist in sorted(bounds.items()):
+            ep = episodes.get(src)
+            if not ep or not ep.file or not Path(ep.file).is_file():
+                sources[src] = {"matched": False, "reason": "no file in this library",
+                                "boundaries": []}
+                done += len(blist)
+                continue
+            results = []
+            for b in blist:
+                if b["anchors"]:
+                    r = anchors_mod.find_in_file(self.cfg.ffmpeg, self.cfg.fingerprint,
+                                                 ep.file, b["t"], b["anchors"])
+                else:
+                    r = {"time": b["t"], "offset": None, "method": "none", "confidence": 0.0}
+                results.append({k: b[k] for k in ("part", "segment", "side", "t")} | r)
+                done += 1
+                ctx.progress(done / total, f"{src} {b['side']} of part {b['part']}")
+            rec = anchors_mod.reconcile(results)
+            matched = sum(1 for r in results if r["method"] != "none")
+            sources[src] = {"matched": matched > 0, "matched_boundaries": matched,
+                            "total_boundaries": len(results), **rec}
+        report = {"timeline_id": tid, "sources": sources,
+                  "unmatched_sources": [s for s, v in sources.items() if not v["matched"]]}
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        self.db.execute(
+            "INSERT OR REPLACE INTO timeline_syncs (timeline_id, report, updated_at)"
+            " VALUES (?,?,?)", (tid, dumps(report), now))
+        return {"sources": len(sources), "boundaries": total,
+                "unmatched": len(report["unmatched_sources"]),
+                "message": f"synced {total} cut points over {len(sources)} source(s)"}
+
+    # -- timeline rendering -------------------------------------------------------
+    def _timeline_ctx(self, tid: str) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        report = self.timeline_sync_report(tid)
+        return json.loads(row["doc"]), row["series_key"], report or {}
+
+    def _audio_map(self, files: list[str]) -> tuple[dict[str, int], list[str]]:
+        """Per-file index of the configured audio language; 0 = first track."""
+        lang = self.cfg.render.language
+        amap: dict[str, int] = {}
+        warnings: list[str] = []
+        if not lang:
+            return amap, warnings
+        for f in files:
+            tracks = self.prober(f).get("audio_tracks") or []
+            idx = next((i for i, t in enumerate(tracks)
+                        if (t.get("language") or "").lower() == lang.lower()), None)
+            if idx is None:
+                warnings.append(f"no '{lang}' audio track in {Path(f).name}; using the first")
+            elif idx > 0:
+                amap[f] = idx
+        return amap, warnings
+
+    def timeline_dry_run(self, tid: str, mode: plan.Mode = "auto") -> dict[str, Any]:
+        from .timeline import render as tl_render
+
+        doc, key, report = self._timeline_ctx(tid)
+        episodes = {e.id: e for e in self.library.episodes(key)}
+        series = self.library.get_series(key)
+        corr = tl_render.corrected_map(report)
+        show = tl_render.show_name(series.title, doc["title"])
+        parts = []
+        for pi, part in enumerate(doc["parts"]):
+            cut, warns = tl_render.part_cut(doc, pi, episodes, corr)
+            amap, awarn = self._audio_map(list({s.file for s in cut.segments}))
+            fname = tl_render.part_filename(show, pi + 1, part["title"], self.cfg.ffmpeg.container)
+            out = self.cfg.output_dir / show / "Season 01" / fname
+            rp = plan.build_plan(cut, self.cfg.ffmpeg, out, Path("<workdir>"), self.prober,
+                                 mode=mode, audio_map=amap)
+            parts.append({"part": pi + 1, "title": part["title"], "mode": rp.mode,
+                          "reason": rp.reason, "output": rp.output,
+                          "runtime": round(cut.final_runtime, 1),
+                          "segments": [{**asdict(s), "duration": round(s.duration, 3)}
+                                       for s in cut.segments],
+                          "command": rp.command, "warnings": warns + awarn + rp.warnings})
+        return {"show": show, "synced": bool(report), "parts": parts}
+
+    def submit_timeline_render(self, tid: str, mode: str = "auto", keep: bool | None = None,
+                               refresh: bool = False) -> dict[str, Any]:
+        doc, _key, report = self._timeline_ctx(tid)
+        if not report:
+            raise FansCutError("run sync first: POST /api/timelines/{id}/sync")
+        return self.worker.submit("timeline_render", f"Render {doc['title']}",
+                                  {"timeline_id": tid, "mode": mode, "keep": keep,
+                                   "refresh": refresh})
+
+    def _job_timeline_render(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+        from .render.cache import render_hash
+        from .timeline import render as tl_render
+
+        tid = payload["timeline_id"]
+        doc, key, report = self._timeline_ctx(tid)
+        if not report:
+            raise FansCutError("run sync first: POST /api/timelines/{id}/sync")
+        keep = payload.get("keep")
+        if keep is None:
+            keep = self.cfg.render.keep
+        episodes = {e.id: e for e in self.library.episodes(key)}
+        series = self.library.get_series(key)
+        corr = tl_render.corrected_map(report)
+        show = tl_render.show_name(series.title, doc["title"])
+        season_dir = self.cfg.output_dir / show / "Season 01"
+        season_dir.mkdir(parents=True, exist_ok=True)
+        (season_dir.parent / "tvshow.nfo").write_text(
+            tl_render.nfo_show(show), encoding="utf-8")
+
+        outputs, cached, warnings = [], 0, []
+        self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="tl-render-", dir=self.cfg.data_dir) as tmp:
+            for pi, part in enumerate(doc["parts"]):
+                cut, warns = tl_render.part_cut(doc, pi, episodes, corr)
+                amap, awarn = self._audio_map(list({s.file for s in cut.segments}))
+                warnings += warns + awarn
+                out = season_dir / tl_render.part_filename(show, pi + 1, part["title"],
+                                                           self.cfg.ffmpeg.container)
+                workdir = Path(tmp) / f"part{pi + 1}"
+                workdir.mkdir()
+                mode: plan.Mode = payload.get("mode", "auto") or "auto"
+                rp = plan.build_plan(cut, self.cfg.ffmpeg, out, workdir, self.prober,
+                                     mode=mode, audio_map=amap)
+                h = render_hash(f"timeline:{tid}:{pi + 1}", cut, rp.mode, self.cfg.ffmpeg,
+                                rp.chapters)
+                if not payload.get("refresh") and (hit := self.renders.hit(h)):
+                    cached += 1
+                    outputs.append(hit["path"])
+                else:
+                    ctx.progress(pi / len(doc["parts"]),
+                                 f"part {pi + 1}/{len(doc['parts'])}: {part['title']}")
+                    run.execute(rp, workdir, lambda p: None, ctx.cancel)
+                    self.renders.drop_path(str(out), except_hash=h)
+                    self.renders.add(h, key, f"{doc['title']} · part {pi + 1}", str(out),
+                                     rp.mode, bool(keep), job_id=ctx.job_id)
+                    outputs.append(str(out))
+                nfo = tl_render.nfo_episode(part["title"], pi + 1)
+                out.with_suffix(".nfo").write_text(nfo, encoding="utf-8")
+        plex_note = self._plex_refresh()
+        return {"show": show, "parts": len(outputs), "cached": cached, "outputs": outputs,
+                "warnings": warnings, "plex": plex_note,
+                "message": f"wrote {len(outputs)} part(s) to {season_dir} ({cached} cached)"}
+
+    def _plex_refresh(self) -> str:
+        """Ask Plex to rescan show sections after a timeline render. Best effort."""
+        if not (self.cfg.library.plex.url and self.cfg.library.plex.token):
+            return "no Plex configured"
+        try:
+            plex = self.library.plex()
+            assert plex is not None
+            want = set(self.cfg.library.plex.sections)
+            refreshed = 0
+            for s in plex.sections():
+                if s["type"] == "show" and (not want or s["key"] in want or s["title"] in want):
+                    plex.refresh_section(s["key"])
+                    refreshed += 1
+            return f"plex refreshed {refreshed} section(s)"
+        except Exception as exc:  # noqa: BLE001 - refresh is a courtesy, never fatal
+            return f"plex refresh failed: {exc}"
+
+    # -- preview clips (sync review and the timeline editor) -----------------------
+    def preview_clip(self, key: str, episode_id: str, t: float) -> Path:
+        """10 s around t (5 s each side) as a tiny mp4, cached in data_dir/previews."""
+        import hashlib
+
+        episodes = {e.id: e for e in self.library.episodes(key)}
+        ep = episodes.get(episode_id)
+        if not ep or not ep.file or not Path(ep.file).is_file():
+            raise NotFoundError(f"{episode_id} has no file in this library")
+        st = Path(ep.file).stat()
+        raw = f"{ep.file}|{st.st_mtime}|{st.st_size}|{t:.2f}"
+        digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
+        out = self.cfg.data_dir / "previews" / f"{digest}.mp4"
+        if not out.is_file():
+            out.parent.mkdir(parents=True, exist_ok=True)
+            tmp = out.with_suffix(".tmp.mp4")
+            ffmpeg.run_capture(
+                [self.cfg.ffmpeg.binary, "-v", "error", "-ss", f"{max(t - 5, 0):.3f}", "-t", "10",
+                 "-i", ep.file, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                 "-vf", "scale=640:-2", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
+                 "-movflags", "+faststart", str(tmp)])
+            tmp.replace(out)
+        return out
+
+    # -- find a scene in other episodes --------------------------------------------
+    def submit_find_similar(self, key: str, episode_id: str, start: float, end: float
+                            ) -> dict[str, Any]:
+        episodes = {e.id: e for e in self.library.episodes(key)}
+        ep = episodes.get(episode_id)
+        if not ep or not ep.file:
+            raise NotFoundError(f"{episode_id} has no file in this library")
+        if end - start < 2:
+            raise FansCutError("the range must be at least 2 seconds")
+        return self.worker.submit("find_similar", f"Find {episode_id} {start:.0f}s scene",
+                                  {"series_key": key, "episode_id": episode_id,
+                                   "start": start, "end": end})
+
+    def _job_find_similar(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+        """Locate a range's audio in every other episode (flashbacks, reused footage)."""
+        from .fingerprint.audio import features
+        from .fingerprint.match import find_shared
+
+        key, eid = payload["series_key"], payload["episode_id"]
+        fp, ff = self.cfg.fingerprint, self.cfg.ffmpeg
+        episodes = [e for e in self.library.episodes(key) if e.file and e.duration]
+        src = next(e for e in episodes if e.id == payload["episode_id"])
+        assert src.file is not None
+        query = features(ffmpeg.decode_audio(ff, src.file, payload["start"],
+                                             payload["end"] - payload["start"], fp.sample_rate),
+                         fp.sample_rate)
+        min_len = max((payload["end"] - payload["start"]) * 0.8, 5.0)
+        max_len = (payload["end"] - payload["start"]) * 2
+        hits = []
+        for i, e in enumerate(episodes):
+            ctx.progress(i / len(episodes), e.id)
+            if e.id == src.id:
+                continue
+            assert e.file is not None and e.duration is not None
+            hay = features(ffmpeg.decode_audio(ff, e.file, 0, e.duration, fp.sample_rate),
+                           fp.sample_rate)
+            for m in find_shared(query, hay, 0.7, min_len, max_len):
+                hits.append({"episode_id": e.id, "start": round(m.b_start, 2),
+                             "end": round(m.b_end, 2)})
+        hits.sort(key=lambda h: (h["episode_id"], h["start"]))
+        return {"matches": hits,
+                "message": f"{len(hits)} possible repeat(s) of {eid} "
+                           f"{payload['start']:.0f}–{payload['end']:.0f}s"}
+
     # -- AI-assisted recipes ----------------------------------------------------
     def ai_recipe(self, key: str, notes: str, apply: bool = False) -> dict[str, Any]:
         """Community cut notes -> validated recipe (schema 2); optionally applied."""
@@ -480,6 +836,16 @@ class Core:
         if apply:
             out["import"] = self.import_recipe(key, doc)
         return out
+
+    def ai_outline(self, key: str, notes: str) -> dict[str, Any]:
+        """Chronology notes -> scene outline (parts with placeholder segments)."""
+        series = self.library.get_series(key)
+        outline = ai_mod.generate_outline(self.cfg.ai, series, self.library.episodes(key),
+                                          notes, session=self.session)
+        known = {e.id for e in self.library.episodes(key)}
+        for part in outline:
+            part["scenes"] = [s for s in part["scenes"] if s["src"] in known]
+        return {"outline": [p for p in outline if p["scenes"]]}
 
     # -- recipes --------------------------------------------------------------
     def export_recipe(self, key: str) -> dict[str, Any]:

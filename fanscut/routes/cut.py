@@ -61,3 +61,9 @@ class AIRecipeBody(BaseModel):
 def ai_recipe(core: CoreDep, key: str, body: AIRecipeBody) -> dict[str, Any]:
     """Community cut notes -> recipe via the configured LLM; apply=true imports it."""
     return core.ai_recipe(key, body.notes, body.apply)
+
+
+@router.post("/series/{key}/timeline/outline")
+def ai_outline(core: CoreDep, key: str, body: AIRecipeBody) -> dict[str, Any]:
+    """Chronology notes -> scene outline for the timeline editor (never applied)."""
+    return core.ai_outline(key, body.notes)

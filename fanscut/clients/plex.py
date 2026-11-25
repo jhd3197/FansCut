@@ -1,4 +1,4 @@
-"""Plex API: library sections, shows and episodes with file paths (read-only).
+"""Plex API: library sections, shows and episodes with file paths, library refresh.
 
 The token goes in a header so it stays out of URLs and logs.
 """
@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import requests
+
+from ..errors import ClientError
 from .base import BaseClient
 
 
@@ -34,3 +37,13 @@ class PlexClient(BaseClient):
         return self._get(f"/library/metadata/{show_rating_key}/allLeaves")["MediaContainer"].get(
             "Metadata", []
         )
+
+    def refresh_section(self, key: str) -> None:
+        """Ask Plex to rescan a library section (best effort, no reply body)."""
+        try:
+            resp = self.session.put(f"{self.base_url}/library/sections/{key}/refresh",
+                                    timeout=self.timeout)
+        except requests.RequestException as exc:
+            raise ClientError(f"Plex unreachable: {exc.__class__.__name__}") from exc
+        if resp.status_code >= 400:
+            raise ClientError(f"Plex returned HTTP {resp.status_code}", resp.status_code)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import threading
 from collections.abc import Callable
@@ -62,17 +63,22 @@ def probe(cfg: FFmpegCfg, path: str) -> dict[str, Any]:
     )
     data = json.loads(raw or b"{}")
     info: dict[str, Any] = {"duration": float(data.get("format", {}).get("duration") or 0)}
+    audio_tracks = []
     for s in data.get("streams", []):
         if s.get("codec_type") == "video" and "video" not in info:
             info["video"] = {
                 "codec": s.get("codec_name"), "width": s.get("width"), "height": s.get("height"),
                 "pix_fmt": s.get("pix_fmt"), "fps": _fps(s.get("avg_frame_rate", "0")),
             }
-        elif s.get("codec_type") == "audio" and "audio" not in info:
-            info["audio"] = {
-                "codec": s.get("codec_name"), "sample_rate": int(s.get("sample_rate") or 0),
-                "channels": s.get("channels"),
-            }
+        elif s.get("codec_type") == "audio":
+            track = {"codec": s.get("codec_name"), "sample_rate": int(s.get("sample_rate") or 0),
+                     "channels": s.get("channels"),
+                     "language": (s.get("tags") or {}).get("language", "")}
+            audio_tracks.append(track)
+            if "audio" not in info:
+                info["audio"] = {k: track[k] for k in ("codec", "sample_rate", "channels")}
+    if audio_tracks:
+        info["audio_tracks"] = audio_tracks
     return info
 
 
@@ -106,6 +112,31 @@ def decode_audio(
         timeout=300,
     )
     return np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+
+
+def detect_crop(cfg: FFmpegCfg, path: str, start: float, duration: float) -> str | None:
+    """cropdetect over a window: the crop filter string, or None when nothing to crop."""
+    proc = subprocess.run(
+        [cfg.binary, "-v", "info", "-ss", f"{max(start, 0):.3f}", "-t", f"{duration:.3f}",
+         "-i", path, "-vf", "cropdetect=24:16:0", "-f", "null", "-"],
+        capture_output=True, text=True, errors="replace", timeout=300, check=False)
+    crop = None
+    for m in re.finditer(r"crop=(\d+:\d+:\d+:\d+)", proc.stderr):
+        crop = m.group(1)
+    return crop
+
+
+def decode_video(cfg: FFmpegCfg, path: str, start: float, duration: float,
+                 fps: int = 4, crop: str | None = None) -> np.ndarray:
+    """(n, 8, 9) uint8 grayscale frames at `fps` — for video anchors, not viewing."""
+    vf = (f"crop={crop}," if crop else "") + f"fps={fps},scale=9:8,format=gray"
+    raw = run_capture(
+        [cfg.binary, "-v", "error", "-ss", f"{max(start, 0):.3f}", "-t", f"{duration:.3f}",
+         "-i", path, "-an", "-vf", vf, "-f", "rawvideo", "-"],
+        timeout=300,
+    )
+    frames = np.frombuffer(raw, dtype=np.uint8)
+    return frames.reshape(-1, 8, 9)
 
 
 def run_with_progress(

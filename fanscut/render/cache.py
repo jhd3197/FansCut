@@ -101,6 +101,10 @@ class RenderStore:
         self.db.execute("DELETE FROM renders WHERE hash = ?", (h,))
         return r
 
+    def drop_path(self, path: str, except_hash: str = "") -> None:
+        """Forget rows pointing at a path another render just overwrote (file kept)."""
+        self.db.execute("DELETE FROM renders WHERE path = ? AND hash != ?", (path, except_hash))
+
     def all(self, series_key: str | None = None) -> list[dict[str, Any]]:
         if series_key:
             rows = self.db.query("SELECT * FROM renders WHERE series_key = ?"

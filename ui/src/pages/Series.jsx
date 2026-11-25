@@ -65,6 +65,7 @@ export function SeriesPage() {
         <select className="input" value={settings.preset} onChange={(e) => setPreset(e.target.value)} aria-label="Preset">
           {Object.entries(PRESET_NAMES).map(([v, n]) => <option key={v} value={v}>{n}</option>)}
         </select>
+        <Link className="btn" to={`/series/${encodeURIComponent(key)}/timelines`}>Timelines</Link>
         <Link className="btn btn-primary" to={`/series/${encodeURIComponent(key)}/cut`}>Build cut →</Link>
       </PageHeader>
 
