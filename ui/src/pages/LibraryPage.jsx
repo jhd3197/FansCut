@@ -1,8 +1,7 @@
-import { useState } from 'react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad } from '../lib/hooks.js';
-import { Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import { useAct, useLoad, useUrlState, useDebounced } from '../lib/hooks.js';
+import { Empty, ErrorBox, Loading, Notice, SkeletonTiles } from '../components/ui.jsx';
 import { Backdrop, MediaTile, Search, Section, Shelf, enc } from '../components/kit.jsx';
 
 async function loadLibrary() {
@@ -31,12 +30,13 @@ export function movieTag(m) {
 }
 
 export function LibraryPage() {
-  const [q, setQ] = useState('');
+  const [q, setQ] = useUrlState('q');
+  const dq = useDebounced(q);
   const { data, error, loading, reload } = useLoad(loadLibrary);
   const { act, msg, busy, clear } = useAct();
   const rescan = () => act(async () => { await api('/library/refresh', { method: 'POST' }); await reload(); }, 'Library rescanned');
 
-  const needle = q.trim().toLowerCase();
+  const needle = dq.trim().toLowerCase();
   const has = (...xs) => !needle || xs.some((x) => x && String(x).toLowerCase().includes(needle));
   const collections = (data?.collections.collections || []).filter((c) => has(c.name));
   const series = (data?.series.series || []).filter((s) => has(s.title, s.year));
@@ -60,7 +60,7 @@ export function LibraryPage() {
       {errors.map(([src, text]) => (
         <div key={src} className="notice notice-err" role="alert"><span><b>{src}</b>: {text}</span></div>
       ))}
-      {loading && !data && <Loading what="Reading your library" />}
+      {loading && !data && <SkeletonTiles n={12} />}
 
       {noSources && (
         <Empty>No library source is set up yet. Add Sonarr, Radarr, Plex or a media folder in <Link to="/settings">Settings</Link>.</Empty>

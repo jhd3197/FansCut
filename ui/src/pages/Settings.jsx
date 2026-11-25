@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
-import { useAct, useLoad } from '../lib/hooks.js';
+import { useAct, useUrlState } from '../lib/hooks.js';
 import { ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import './Settings.css';
+import { useApi } from '../lib/store.js';
 
 // Immutable set at a dotted path: set(cfg, 'library.sonarr.url', v)
 export function setPath(obj, path, value) {
@@ -19,7 +20,7 @@ const mb = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.rou
 
 // Cache sizes and hit counts, each with a clear button.
 function CachePanel() {
-  const c = useLoad(() => api('/system/cache'));
+  const c = useApi('/system/cache');
   const { act, busy } = useAct();
   const clear = (name) => act(() => api(`/system/cache/${name}/clear`, { method: 'POST' })).then(c.reload);
   if (!c.data) return null;
@@ -57,9 +58,100 @@ function Row({ label, hint, htmlFor, children }) {
   );
 }
 
+// Sign in with Plex: open plex.tv to approve, then FansCut saves the token.
+function PlexSignIn({ onDone }) {
+  const [state, setState] = useState(null);
+  const start = async () => {
+    try {
+      const pin = await api('/plex/pin', { method: 'POST' });
+      window.open(pin.auth_url, '_blank', 'noopener');
+      setState({ text: 'Approve FansCut in the Plex tab that opened…' });
+      for (let i = 0; i < 90; i += 1) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const r = await api(`/plex/pin/${pin.id}`, { method: 'POST', body: {} });
+        if (r.done) {
+          setState({ ok: true, text: `Signed in${r.url ? `; using ${r.url}` : ''}.` });
+          onDone(r);
+          return;
+        }
+      }
+      setState({ ok: false, text: 'Timed out waiting for Plex. Try again.' });
+    } catch (e) {
+      setState({ ok: false, text: e.message });
+    }
+  };
+  return (
+    <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+      <button className="btn" type="button" onClick={start}>Sign in with Plex</button>
+      {state && <span role="status" className={state.ok == null ? 'muted tiny' : state.ok ? 'c-ready tiny' : 'c-danger tiny'}>{state.text}</span>}
+    </div>
+  );
+}
+
+// Scheduled tasks: when each runs, run it now, change its cron.
+function Schedules() {
+  const q = useApi('/schedules');
+  const { act, busy } = useAct();
+  const [edit, setEdit] = useState({});
+  if (!q.data) return null;
+  const save = (name) => act(() => api(`/schedules/${name}`, { method: 'PUT', body: { cron: edit[name] ?? '' } }), 'Schedule saved')
+    .then(() => setEdit((e) => { const n = { ...e }; delete n[name]; return n; }));
+  return (
+    <div className="stack10" style={{ paddingTop: 8 }}>
+      {q.data.map((t) => (
+        <div key={t.name} className="sched">
+          <div>
+            <b>{t.description}</b>
+            <div className="muted tiny">
+              {t.when}{t.next_run ? ` · next ${t.next_run.replace('T', ' ')}` : ''}
+              {t.last_run ? ` · last ${t.last_run.replace('T', ' ')}` : ''}
+              {t.last_error ? <span className="c-danger"> · failed: {t.last_error}</span> : null}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input className="inp mono" style={{ width: 150 }} aria-label={`${t.name} schedule`} placeholder="off"
+              value={edit[t.name] ?? t.cron} onChange={(e) => setEdit((x) => ({ ...x, [t.name]: e.target.value }))} />
+            {edit[t.name] != null && edit[t.name] !== t.cron && (
+              <button className="btn btn-sm" type="button" disabled={busy} onClick={() => save(t.name)}>Save</button>
+            )}
+            {t.running
+              ? <button className="btn btn-sm" type="button" onClick={() => act(() => api(`/schedules/${t.name}/cancel`, { method: 'POST' }))}>Stop</button>
+              : <button className="btn btn-sm" type="button" disabled={busy} onClick={() => act(() => api(`/schedules/${t.name}/run`, { method: 'POST' }), 'Started')}>Run now</button>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Where to send "job done / failed" messages.
+function NotifyTargets({ value, onChange }) {
+  const list = value || [];
+  const set = (i, k, v) => onChange(list.map((t, j) => (j === i ? { ...t, [k]: v } : t)));
+  return (
+    <div className="stack10" style={{ paddingTop: 8 }}>
+      {list.map((t, i) => (
+        <div key={i} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input className="inp mono" style={{ flex: '1 1 260px' }} aria-label="Notification URL" placeholder="https://ntfy.sh/my-topic"
+            value={t.url} onChange={(e) => set(i, 'url', e.target.value)} />
+          <select className="inp" aria-label="Format" value={t.format} onChange={(e) => set(i, 'format', e.target.value)}>
+            <option value="json">JSON webhook</option><option value="discord">Discord</option><option value="ntfy">ntfy</option>
+          </select>
+          <label className="tiny"><input type="checkbox" checked={t.events.includes('done')}
+            onChange={(e) => set(i, 'events', e.target.checked ? [...t.events, 'done'] : t.events.filter((x) => x !== 'done'))} /> done</label>
+          <label className="tiny"><input type="checkbox" checked={t.events.includes('failed')}
+            onChange={(e) => set(i, 'events', e.target.checked ? [...t.events, 'failed'] : t.events.filter((x) => x !== 'failed'))} /> failed</label>
+          <button className="btn btn-sm btn-ghost" type="button" aria-label="Remove" onClick={() => onChange(list.filter((_, j) => j !== i))}>✕</button>
+        </div>
+      ))}
+      <div><button className="btn btn-sm" type="button" onClick={() => onChange([...list, { url: '', format: 'json', events: ['done', 'failed'] }])}>Add a target</button></div>
+    </div>
+  );
+}
+
 // The webhook URL with the API key in it, and a way to replace a leaked key.
 function WebhookUrl() {
-  const key = useLoad(() => api('/auth/key'));
+  const key = useApi('/auth/key');
   const [shown, setShown] = useState(false);
   const { act, busy } = useAct();
   const k = key.data?.api_key;
@@ -78,13 +170,14 @@ function WebhookUrl() {
 }
 
 export function Settings() {
-  const { data, error, loading, reload } = useLoad(() => api('/settings'));
-  const fillers = useLoad(() => api('/fillers'));
+  const { data, error, loading, reload } = useApi('/settings');
+  const fillers = useApi('/fillers');
   const [cfg, setCfg] = useState(null);
   const { act, msg, busy, clear } = useAct();
   const [tests, setTests] = useState({});
-  const [active, setActive] = useState('sources');
-  useEffect(() => { if (data) setCfg(data); }, [data]);
+  const [active, setActive] = useUrlState('section', 'sources');
+  // seed the form once; background refetches must not wipe unsaved edits
+  useEffect(() => { if (data && !cfg) setCfg(data); }, [data, cfg]);
 
   if (error && !data) return <div className="page"><ErrorBox error={error} onRetry={reload} /></div>;
   if (loading || !cfg) return <div className="page"><Loading /></div>;
@@ -186,6 +279,7 @@ export function Settings() {
                 {input('library.plex.url', { 'aria-label': 'Plex URL', placeholder: 'http://plex:32400' })}
                 {input('library.plex.token', { 'aria-label': 'Plex token', type: 'password', autoComplete: 'off', placeholder: 'Token' })}
                 {testRow('plex', { url: lib.plex.url, token: lib.plex.token })}
+                <PlexSignIn onDone={(r) => setCfg((c) => setPath(setPath(c, 'library.plex.token', '***'), 'library.plex.url', r.url || c.library.plex.url))} />
               </div>
             </Row>
             <Row label="Sonarr" hint="Optional. Series, episodes and file paths, plus webhooks.">
@@ -306,6 +400,12 @@ export function Settings() {
                 {check('automation.auto_detect', 'Run OP/ED detection first')}
                 {check('automation.keep', 'Keep webhook renders')}
               </div>
+            </Row>
+            <Row label="Notifications" hint="Sent when a job finishes. Saved with the rest of the settings.">
+              <NotifyTargets value={cfg.notify?.targets} onChange={(v) => setCfg((c) => setPath(c, 'notify.targets', v))} />
+            </Row>
+            <Row label="Scheduled tasks" hint="Cron: minute hour day month weekday, local time. Empty = off. Saved as you go.">
+              <Schedules />
             </Row>
           </section>
 

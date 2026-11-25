@@ -92,3 +92,14 @@ def read(data_dir: Path, min_level: str = "DEBUG", search: str = "", skip: int =
     return {"results": matched,
             "page_info": {"skip": skip, "take": take, "results": total,
                           "pages": -(-total // take) if take else 0}}
+
+
+def attach_uvicorn() -> None:
+    """Send uvicorn's own logs (startup, errors) to the file too. Called once the
+    server is up: uvicorn replaces its loggers' handlers while it starts."""
+    if _handler is None:
+        return
+    for name in ("uvicorn", "uvicorn.error"):
+        lg = logging.getLogger(name)
+        if _handler not in lg.handlers and not lg.propagate:
+            lg.addHandler(_handler)

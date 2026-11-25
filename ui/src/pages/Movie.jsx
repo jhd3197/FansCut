@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
-import { api } from '../lib/api.js';
-import { useLoad } from '../lib/hooks.js';
 import { ErrorBox, Loading } from '../components/ui.jsx';
 import { Crumbs, KV, Section, hm } from '../components/kit.jsx';
 import { TimelineTile } from './Discover.jsx';
 import { FilmTile } from './Collection.jsx';
 import { movieTag } from './LibraryPage.jsx';
 import { TemplateDialog } from '../components/TemplateDialog.jsx';
+import { useApi } from '../lib/store.js';
+import { usePageTitle } from '../lib/hooks.js';
 
 const CODECS = {
   hevc: 'HEVC', h264: 'H.264', av1: 'AV1', vp9: 'VP9', mpeg2video: 'MPEG-2', mpeg4: 'MPEG-4',
@@ -65,7 +65,8 @@ function Health({ findings }) {
 export function MoviePage() {
   const { key } = useParams();
   const [tpl, setTpl] = useState(false);
-  const { data: m, error, loading, reload } = useLoad(() => api(`/library/movies/${encodeURIComponent(key)}`), [key]);
+  const { data: m, error, loading, reload } = useApi(`/library/movies/${encodeURIComponent(key)}`);
+  usePageTitle(m?.title);
 
   if (error && !m) return <div className="page"><Crumbs items={[['Library', '/library'], ['Movies', '/library'], [key]]} /><ErrorBox error={error} onRetry={reload} /></div>;
   if (loading || !m) return <div className="page"><Loading what="Reading the file" /></div>;

@@ -2,10 +2,11 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useLoad } from '../lib/hooks.js';
+import { useLoad, usePageTitle } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
 import { Crumbs, enc, hm, KV, Poster, SRC_COLOURS } from '../components/kit.jsx';
 import { ErrorBox, Loading } from '../components/ui.jsx';
+import { useApi } from '../lib/store.js';
 
 const CREDIT_LABELS = {
   author: 'Made by', based_on: 'Based on', repo: 'Repository', repository: 'Repository',
@@ -167,9 +168,10 @@ function Variants({ view, value, onChange }) {
 
 export function CutDetail() {
   const { id } = useParams();
-  const tl = useLoad(() => api(`/timelines/${enc(id)}`), [id]);
-  const variants = useLoad(() => api(`/timelines/${enc(id)}/variants`), [id]);
-  const sync = useLoad(() => api(`/timelines/${enc(id)}/sync`), [id]);
+  const tl = useApi(`/timelines/${enc(id)}`);
+  usePageTitle(tl.data?.title);
+  const variants = useApi(`/timelines/${enc(id)}/variants`);
+  const sync = useApi(`/timelines/${enc(id)}/sync`);
   const hasMovies = Object.values(tl.data?.doc?.sources || {}).some((s) => s.kind === 'movie');
   const movies = useLoad(() => (hasMovies ? api('/library/movies') : Promise.resolve({ movies: [] })), [hasMovies]);
   const [variant, setVariant] = useState('');

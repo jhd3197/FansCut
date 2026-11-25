@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { api, seriesPath } from '../lib/api.js';
-import { useAct, useLoad } from '../lib/hooks.js';
+import { useAct, useLoad, usePageTitle } from '../lib/hooks.js';
 import { CutTile, Crumbs, KV, PlainPoster, Section, enc } from '../components/kit.jsx';
 import { Dialog, ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import { MatchDialog } from '../components/MatchDialog.jsx';
 import { RecipeDialog, downloadJson, recipeFileName } from '../components/Recipe.jsx';
 import { audioSummary, showFolder, subtitleSummary } from './Episode.jsx';
+import { useApi } from '../lib/store.js';
 
 const BLANK = (title) => ({
   schema: 2, kind: 'timeline', title: `${title} — Timeline`,
@@ -44,8 +45,9 @@ export function ShowPage() {
   const { key } = useParams();
   const base = seriesPath(key);
   const nav = useNavigate();
-  const view = useLoad(() => api(`${base}/episodes`), [key]);
-  const tls = useLoad(() => api(`${base}/timelines`), [key]);
+  const view = useApi(`${base}/episodes`);
+  usePageTitle(view.data?.series?.title);
+  const tls = useApi(`${base}/timelines`);
   const eps = view.data?.episodes || [];
   const first = (eps.find((e) => e.has_file && e.season > 0) || eps.find((e) => e.has_file))?.id;
   const probe = useLoad(() => (first ? api(`${base}/episodes/${enc(first)}/info`).catch(() => null) : Promise.resolve(null)), [key, first]);

@@ -10,6 +10,7 @@ import { ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import { CutBar, cutPieces } from '../components/Timeline.jsx';
 import { TRIM_TITLES, TrimFields } from '../components/TrimFields.jsx';
 import { SegmentsFields } from '../components/SegmentsFields.jsx';
+import { useApi } from '../lib/store.js';
 
 // -- probe text, shared with the show page -------------------------------------------
 const LANGS = {
@@ -91,10 +92,10 @@ function Preview({ base, eid, what, onClose }) {
 export function EpisodePage() {
   const { key, eid } = useParams();
   const base = seriesPath(key);
-  const view = useLoad(() => api(`${base}/episodes`), [key]);
-  const info = useLoad(() => api(`${base}/episodes/${enc(eid)}/info`), [key, eid]);
+  const view = useApi(`${base}/episodes`);
+  const info = useApi(`${base}/episodes/${enc(eid)}/info`);
   const season = Number((/^S(\d+)/.exec(eid) || [])[1] ?? 1);
-  const plan = useLoad(() => api(`${base}/cut`, { method: 'POST', body: { seasons: [season] } }).catch(() => null), [key, season]);
+  const plan = useLoad(() => api(`${base}/cut`, { method: 'POST', read: true, body: { seasons: [season] } }).catch(() => null), [key, season]);
   const { act, msg, busy, clear } = useAct();
   const [preview, setPreview] = useState(null);
 

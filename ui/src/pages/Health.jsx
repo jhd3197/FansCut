@@ -3,6 +3,7 @@ import { api } from '../lib/api.js';
 import { useAct, useLoad } from '../lib/hooks.js';
 import { Dialog, ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import { KV } from '../components/kit.jsx';
+import { useApi } from '../lib/store.js';
 
 const KIND = {
   incomplete: 'Broken?',
@@ -31,7 +32,7 @@ function useElapsed(running) {
 }
 
 function System() {
-  const doc = useLoad(() => api('/doctor'));
+  const doc = useApi('/doctor');
   const ver = useLoad(() => fetch('/healthz').then((r) => r.json()).catch(() => null));
   const d = doc.data;
   return (
@@ -62,7 +63,7 @@ function System() {
 }
 
 export function Health() {
-  const last = useLoad(() => api('/library/check/last'));
+  const last = useApi('/library/check/last');
   const [result, setResult] = useState(null); // a fresh run replaces the cached one
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState(null);

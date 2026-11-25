@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#123A49" />
+  <title>FansCut is restarting</title>
+  <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml" />
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; font: 15px/1.5 system-ui, sans-serif;
+      background: #F5FAFC; color: #123A49; }
+    @media (prefers-color-scheme: dark) { body { background: #0C1A21; color: #E6F2F6; } }
+    main { max-width: 420px; padding: 24px; text-align: center; }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+    p { margin: 0 0 16px; opacity: .8; }
+    button { font: inherit; padding: 8px 16px; border-radius: 10px; border: 0; background: #00AEEF; color: #123A49; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>FansCut can't be reached</h1>
+    <p>The server is stopped or restarting. This page tries again every few seconds.</p>
+    <button type="button" onclick="location.reload()">Try now</button>
+  </main>
+  <script>
+    setInterval(() => {
+      fetch('/healthz', { cache: 'no-store' }).then((r) => { if (r.ok) location.reload(); }).catch(() => {});
+    }, 4000);
+  </script>
+</body>
+</html>

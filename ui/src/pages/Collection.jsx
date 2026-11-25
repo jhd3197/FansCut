@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad } from '../lib/hooks.js';
+import { useAct, usePageTitle } from '../lib/hooks.js';
 import { Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import { Crumbs, Section, enc, hm, palette } from '../components/kit.jsx';
 import { SuggestionDialog, SuggestionTile, TimelineTile } from './Discover.jsx';
 import { TemplateDialog } from '../components/TemplateDialog.jsx';
+import { useApi } from '../lib/store.js';
 
 // A plain film tile for a shelf: "NAME · 3" in the corner, the facts underneath.
 export function FilmTile({ m, tag }) {
@@ -29,7 +30,8 @@ export function FilmTile({ m, tag }) {
 
 export function CollectionPage() {
   const { name } = useParams(); // react-router hands params over decoded
-  const { data, error, loading, reload } = useLoad(() => api(`/library/collections/${enc(name)}`), [name]);
+  const { data, error, loading, reload } = useApi(`/library/collections/${enc(name)}`);
+  usePageTitle(name);
   const { act, msg, busy, clear } = useAct();
   const [open, setOpen] = useState(null);
   const [tpl, setTpl] = useState(false);

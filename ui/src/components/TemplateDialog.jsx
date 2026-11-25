@@ -2,14 +2,15 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad } from '../lib/hooks.js';
+import { useAct } from '../lib/hooks.js';
 import { Dialog, ErrorBox, Loading, Notice } from './ui.jsx';
+import { useApi } from '../lib/store.js';
 
 export function TemplateDialog({ onClose, movies: preMovies = [], seriesKey = '', template = '' }) {
   const nav = useNavigate();
-  const tq = useLoad(() => api('/templates'));
-  const mq = useLoad(() => api('/library/movies'));
-  const sq = useLoad(() => api('/library/series'));
+  const tq = useApi('/templates');
+  const mq = useApi('/library/movies');
+  const sq = useApi('/library/series');
   const [tid, setTid] = useState(template || (seriesKey ? 'chronological' : 'trilogy-merge'));
   const [title, setTitle] = useState('');
   const [picked, setPicked] = useState(preMovies);
@@ -91,7 +92,7 @@ export function TemplateDialog({ onClose, movies: preMovies = [], seriesKey = ''
       )}
       <div className="row wrap">
         <button className="btn" disabled={busy} onClick={() => act(
-          () => api(`/templates/${tid}/preview`, { method: 'POST', body }),
+          () => api(`/templates/${tid}/preview`, { method: 'POST', read: true, body }),
         ).then((r) => r && setFiles(r.files))}>Preview files</button>
         <button className="btn btn-primary" disabled={busy || (t?.needs === 'movies' ? picked.length === 0 : !series)}
           onClick={() => act(() => api(`/templates/${tid}/create`, { method: 'POST', body }))

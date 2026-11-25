@@ -1,5 +1,5 @@
 // Shared building blocks of the FansCut design: posters, tiles, sections, crumbs.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Children, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { artFallback, artSrcSet, artUrl } from '../lib/api.js';
 
@@ -323,10 +323,34 @@ export function Backdrop({ k, name, children }) {
 
 // A row of tiles that pages left and right with buttons (no scrollbar), or
 // opens into a full grid with "See all".
-export function Shelf({ title, count, id, children, wide }) {
+// Tiles render a batch at a time: a library of 1,400 films must not mount 1,400
+// posters at once. More render as the end of the row (or grid) comes into view.
+const BATCH = 40;
+
+function useWindowed(children, rootRef, horizontal) {
+  const items = Children.toArray(children);
+  const [limit, setLimit] = useState(BATCH);
+  const sentinel = useRef(null);
+  const more = items.length > limit;
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!more || !el || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver((es) => {
+      if (es.some((e) => e.isIntersecting)) setLimit((n) => n + BATCH);
+    }, { root: horizontal ? rootRef.current : null, rootMargin: '600px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [more, horizontal, rootRef, limit]);
+  const shown = items.slice(0, limit);
+  if (more) shown.push(<span key="__more" ref={sentinel} className="shelf-sentinel" aria-hidden="true" />);
+  return shown;
+}
+
+export function Shelf({ title, count, id, children, wide, actions }) {
   const ref = useRef(null);
   const [edges, setEdges] = useState({ start: true, end: true });
   const [all, setAll] = useState(false);
+  const tiles = useWindowed(children, ref, !all);
   const measure = useCallback(() => {
     const el = ref.current;
     if (!el) return;
@@ -348,6 +372,7 @@ export function Shelf({ title, count, id, children, wide }) {
         <h2 id={id}>{title}</h2>
         {count != null && <span className="n">{count}</span>}
         <span className="end row" style={{ gap: 6 }}>
+          {actions}
           {(scrolls || all) && (
             <button type="button" className="btn btn-sm btn-ghost" onClick={() => setAll((a) => !a)}>
               {all ? 'Show less' : 'See all'}
@@ -362,7 +387,7 @@ export function Shelf({ title, count, id, children, wide }) {
         </span>
       </div>
       <div ref={ref} className={`${all ? 'grid' : 'shelf'}${wide ? ' shelf-wide' : ''}`} onScroll={all ? undefined : measure}>
-        {children}
+        {tiles}
       </div>
     </section>
   );

@@ -20,7 +20,12 @@ export function detailOf(body, fallback) {
   return fallback;
 }
 
-export async function api(path, { method = 'GET', body } = {}) {
+// Set by store.js: called after a successful write so lists on screen refetch.
+let onWrite = null;
+export function setOnWrite(fn) { onWrite = fn; }
+
+// `read: true` marks a POST that only computes (a dry run): it changes nothing.
+export async function api(path, { method = 'GET', body, read = false } = {}) {
   const init = { method, headers: {} };
   if (body !== undefined) {
     init.headers['Content-Type'] = 'application/json';
@@ -38,6 +43,7 @@ export async function api(path, { method = 'GET', body } = {}) {
     if (res.status === 401 && code === 'auth') window.dispatchEvent(new Event(AUTH_EVENT));
     throw new ApiError(detailOf(data, `${res.status} ${res.statusText}`), res.status, code);
   }
+  if (method !== 'GET' && !read && onWrite) onWrite(path);
   return data;
 }
 

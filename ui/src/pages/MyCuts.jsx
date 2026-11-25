@@ -2,10 +2,11 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad, usePoll } from '../lib/hooks.js';
+import { useAct, usePoll, useUrlState } from '../lib/hooks.js';
 import { enc, hm, Poster, Seg } from '../components/kit.jsx';
 import { TemplateDialog } from '../components/TemplateDialog.jsx';
 import { Dialog, Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import { useApi } from '../lib/store.js';
 
 const ACTIVE = ['queued', 'running'];
 const GRID = { display: 'grid', gridTemplateColumns: '64px minmax(0, 1.4fr) minmax(0, 1.4fr) 110px auto', gap: 18, alignItems: 'center', padding: '14px 16px', borderTop: '1px solid var(--raised)' };
@@ -28,9 +29,9 @@ function status(cut, job) {
 }
 
 export function MyCuts() {
-  const cutsQ = useLoad(() => api('/cuts'));
-  const jobsQ = useLoad(() => api('/jobs'));
-  const [show, setShow] = useState('all');
+  const cutsQ = useApi('/cuts');
+  const jobsQ = useApi('/jobs');
+  const [show, setShow] = useUrlState('show', 'all');
   const [doomed, setDoomed] = useState(null);
   const [tpl, setTpl] = useState(false);
   const [updates, setUpdates] = useState(null);

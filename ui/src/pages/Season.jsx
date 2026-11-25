@@ -8,6 +8,7 @@ import { Crumbs, Seg, enc } from '../components/kit.jsx';
 import { Dialog, ErrorBox, Loading, Notice, Progress, StatusTag } from '../components/ui.jsx';
 import { CutBar, CutLegend } from '../components/Timeline.jsx';
 import { RecipeDialog } from '../components/Recipe.jsx';
+import { useApi } from '../lib/store.js';
 
 const ACTIVE = ['queued', 'running'];
 const PRESETS = [['canon_only', 'Canon only'], ['canon_mixed', 'Canon + mixed'], ['everything', 'Everything'], ['custom', 'Custom']];
@@ -52,7 +53,7 @@ function BuildDialog({ base, season, settings, job, setJob, onClose }) {
   const [dry, setDry] = useState(null);
   const { act, msg, busy, clear } = useAct();
   const body = useMemo(() => ({ seasons: scope === 'all' ? null : [season], options: opts }), [scope, season, opts]);
-  const cutQ = useLoad(() => api(`${base}/cut`, { method: 'POST', body }), [base, body]);
+  const cutQ = useLoad(() => api(`${base}/cut`, { method: 'POST', read: true, body }), [base, body]);
   const val = (k) => opts[k] ?? settings[k];
   const setOpt = (k, v) => { setDry(null); setOpts((o) => ({ ...o, [k]: v })); };
   const num = (k, label) => (
@@ -64,7 +65,7 @@ function BuildDialog({ base, season, settings, job, setJob, onClose }) {
   const cut = cutQ.data;
   const t = cut?.totals;
   const running = job && ACTIVE.includes(job.status);
-  const dryRun = () => act(async () => setDry(await api(`${base}/render`, { method: 'POST', body: { ...body, dry_run: true, mode } })));
+  const dryRun = () => act(async () => setDry(await api(`${base}/render`, { method: 'POST', read: true, body: { ...body, dry_run: true, mode } })));
   const render = () => act(async () => setJob(await api(`${base}/render`, { method: 'POST', body: { ...body, mode, keep, refresh } })), 'Render queued; it also shows in Jobs');
   const cancel = () => act(async () => setJob(await api(`/jobs/${job.id}/cancel`, { method: 'POST' })));
 
@@ -158,8 +159,8 @@ export function SeasonPage() {
   const season = Number(seasonParam);
   const base = seriesPath(key);
   const nav = useNavigate();
-  const view = useLoad(() => api(`${base}/episodes`), [key]);
-  const plan = useLoad(() => api(`${base}/cut`, { method: 'POST', body: { seasons: [season] } }), [key, season]);
+  const view = useApi(`${base}/episodes`);
+  const plan = useLoad(() => api(`${base}/cut`, { method: 'POST', read: true, body: { seasons: [season] } }), [key, season]);
   const { act, msg, busy, clear } = useAct();
   const [dialog, setDialog] = useState(null); // 'build' | 'recipe'
   const [job, setJob] = useState(null);

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad } from '../lib/hooks.js';
-import { Dialog, Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import { useAct, useLoad, useUrlState, useDebounced, useShelfLayout } from '../lib/hooks.js';
+import { Dialog, Empty, ErrorBox, Loading, Notice, SkeletonTiles } from '../components/ui.jsx';
 import { Backdrop, CutTile, KV, Search, Seg, Shelf, enc, hm } from '../components/kit.jsx';
 
 // -- shared with the Collection and Movie pages --------------------------------------------
@@ -212,12 +212,13 @@ async function loadAll() {
 export function Discover() {
   const { data: loaded, error, loading, reload } = useLoad(loadAll);
   const data = loaded?.items;
-  const [filter, setFilter] = useState('all');
-  const [q, setQ] = useState('');
+  const [filter, setFilter] = useUrlState('show', 'all');
+  const [q, setQ] = useUrlState('q');
+  const dq = useDebounced(q);
   const [open, setOpen] = useState(null);
   const [adding, setAdding] = useState(false);
 
-  const needle = q.trim().toLowerCase();
+  const needle = dq.trim().toLowerCase();
   const items = (data || []).filter((s) => (filter === 'all' || (filter === 'ready' ? s.status === 'ready' : s.status !== 'ready'))
     && (!needle || [s.title, s.tagline, s.category].some((x) => x && x.toLowerCase().includes(needle))));
 
@@ -228,6 +229,7 @@ export function Discover() {
     if (!byName.has(name)) { byName.set(name, []); shelves.push(name); }
     byName.get(name).push(s);
   }
+  const layout = useShelfLayout(shelves);
 
   return (
     <div className="page page-wide" style={{ gap: 30 }}>
@@ -241,7 +243,7 @@ export function Discover() {
       </div>
 
       <ErrorBox error={error} onRetry={reload} />
-      {loading && !data && <Loading what="Looking at your library" />}
+      {loading && !data && <SkeletonTiles n={12} />}
 
       {data && data.length === 0 && (
         <Empty>
@@ -266,11 +268,24 @@ export function Discover() {
         </Shelf>
       )}
 
-      {shelves.map((name, i) => (
-        <Shelf key={name} id={`shelf-${i}`} title={name} count={byName.get(name).length}>
+      {layout.visible.map((name, i) => (
+        <Shelf key={name} id={`shelf-${i}`} title={name} count={byName.get(name).length}
+          actions={(
+            <span className="shelf-tools">
+              <button type="button" className="btn btn-sm btn-ghost" aria-label={`Move ${name} up`} disabled={i === 0} onClick={() => layout.move(name, -1)}>↑</button>
+              <button type="button" className="btn btn-sm btn-ghost" aria-label={`Move ${name} down`} disabled={i === layout.visible.length - 1} onClick={() => layout.move(name, 1)}>↓</button>
+              <button type="button" className="btn btn-sm btn-ghost" aria-label={`Hide ${name}`} onClick={() => layout.hide(name)}>Hide</button>
+            </span>
+          )}>
           {byName.get(name).map((s) => <SuggestionTile key={s.id} s={s} onOpen={setOpen} />)}
         </Shelf>
       ))}
+      {layout.hidden.length > 0 && (
+        <p className="muted tiny" style={{ margin: 0 }}>
+          {layout.hidden.length} shelf{layout.hidden.length > 1 ? 'ves' : ''} hidden ({layout.hidden.join(', ')}).{' '}
+          <button type="button" className="btn btn-sm btn-ghost" onClick={layout.showAll}>Show them</button>
+        </p>
+      )}
 
       {data && data.length > 0 && (
         <p className="muted tiny" style={{ margin: 0 }}>

@@ -412,6 +412,10 @@ def env_locked() -> list[str]:
     return sorted(env_overrides())
 
 
+# Keys GET/PUT /api/settings add to the config; a PUT that sends them back is fine.
+ECHOED = frozenset({"env_locked", "restart_required", "restart_fields"})
+
+
 def merge_update(current: Config, incoming: dict[str, Any], *, from_http: bool = False
                  ) -> Config:
     """Apply a settings payload; a masked secret keeps the stored value.
@@ -425,7 +429,7 @@ def merge_update(current: Config, incoming: dict[str, Any], *, from_http: bool =
         for k, v in src.items():
             path = prefix + k
             if k not in dst:
-                if prefix == "" and k == "env_locked":  # echoed back by the settings page
+                if prefix == "" and k in ECHOED:  # read-only extras the settings page sends back
                     continue
                 raise ConfigError(f"unknown setting {path!r}")
             if isinstance(v, dict) and isinstance(dst.get(k), dict):

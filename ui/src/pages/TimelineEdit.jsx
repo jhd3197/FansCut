@@ -9,6 +9,7 @@ import {
 import { Dialog, ErrorBox, Loading, Notice, Progress, StatusTag } from '../components/ui.jsx';
 import { enc } from '../components/kit.jsx';
 import './TimelineEdit.css';
+import { useApi } from '../lib/store.js';
 
 const ACTIVE = ['queued', 'running'];
 // Deep, desaturated clip colours (from the design), one per source in recipe order.
@@ -84,13 +85,13 @@ function SyncReport({ report, onPreview }) {
 
 export function TimelineEdit() {
   const { id } = useParams();
-  const tl = useLoad(() => api(`/timelines/${enc(id)}`), [id]);
+  const tl = useApi(`/timelines/${enc(id)}`);
   const seriesKey = tl.data?.series_key;
   const base = seriesKey ? seriesPath(seriesKey) : null;
   const epsQ = useLoad(() => (seriesKey
     ? api(`${seriesPath(seriesKey)}/episodes`).catch(() => ({ episodes: [] }))
     : Promise.resolve(null)), [seriesKey]);
-  const syncQ = useLoad(() => api(`/timelines/${enc(id)}/sync`), [id]);
+  const syncQ = useApi(`/timelines/${enc(id)}/sync`);
   const varQ = useLoad(() => api(`/timelines/${enc(id)}/variants`).catch(() => null), [id]);
   const { act, msg, busy, clear } = useAct();
   const [doc, setDoc] = useState(null);
@@ -226,7 +227,7 @@ export function TimelineEdit() {
   }, 'Saved. Sync was reset: run it again before rendering.');
   const sync = () => act(async () => setJob(await api(`/timelines/${enc(id)}/sync`, { method: 'POST' })), 'Sync queued');
   const dryRun = () => act(async () => {
-    setDry(await api(`/timelines/${enc(id)}/render`, { method: 'POST', body: { dry_run: true, variant: variant || null } }));
+    setDry(await api(`/timelines/${enc(id)}/render`, { method: 'POST', read: true, body: { dry_run: true, variant: variant || null } }));
   });
   const exportRecipe = () => act(async () => downloadJson(recipeFileName(doc.title),
     await api(`/timelines/${enc(id)}/export?anchors=both`)), dirty ? 'Exported the saved version (with anchors); save to include your changes' : 'Exported with anchors');

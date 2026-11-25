@@ -6,6 +6,7 @@ import { useAct, useLoad, usePoll } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
 import { Crumbs, enc, hm, SRC_COLOURS } from '../components/kit.jsx';
 import { Dialog, ErrorBox, Loading, Notice, Progress } from '../components/ui.jsx';
+import { useApi } from '../lib/store.js';
 
 const ACTIVE = ['queued', 'running'];
 const STEP_STYLE = {
@@ -209,13 +210,13 @@ export function Build() {
   const { id } = useParams();
   const [search] = useSearchParams();
   const nav = useNavigate();
-  const tl = useLoad(() => api(`/timelines/${enc(id)}`), [id]);
-  const sync = useLoad(() => api(`/timelines/${enc(id)}/sync`), [id]);
-  const variants = useLoad(() => api(`/timelines/${enc(id)}/variants`), [id]);
-  const settings = useLoad(() => api('/settings'));
-  const jobs = useLoad(() => api('/jobs'));
+  const tl = useApi(`/timelines/${enc(id)}`);
+  const sync = useApi(`/timelines/${enc(id)}/sync`);
+  const variants = useApi(`/timelines/${enc(id)}/variants`);
+  const settings = useApi('/settings');
+  const jobs = useApi('/jobs');
   const [variant, setVariant] = useState(search.get('variant') || '');
-  const dry = useLoad(() => api(`/timelines/${enc(id)}/render`, { method: 'POST', body: { dry_run: true, variant: variant || null } }), [id, variant]);
+  const dry = useLoad(() => api(`/timelines/${enc(id)}/render`, { method: 'POST', read: true, body: { dry_run: true, variant: variant || null } }), [id, variant]);
   const [keep, setKeep] = useState(null);
   const [checked, setChecked] = useState({});
   const [job, setJob] = useState(null);

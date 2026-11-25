@@ -77,7 +77,7 @@ def restart_snapshot(cfg: Config) -> dict[str, object]:
     return out
 
 
-def _ensure_api_key(cfg: Config, path: Path) -> None:
+def ensure_api_key(cfg: Config, path: Path) -> None:
     """Generate the API key on first start and save it, so webhooks have one to check."""
     if cfg.server.api_key:
         return
@@ -117,6 +117,9 @@ def _mount_ui(app: FastAPI, ui: Path) -> None:
         if path and f.is_file() and f.is_relative_to(root):
             # Vite's assets/ names carry a content hash: cache them for good
             immutable = path.startswith("assets/")
+            if path == "sw.js":  # browsers must always see the current worker
+                return FileResponse(f, headers={"Cache-Control": "no-cache",
+                                                "Service-Worker-Allowed": "/"})
             return FileResponse(f, headers={"Cache-Control": "public, max-age=31536000, immutable"
                                             if immutable else "no-cache"})
         # index.html names the current bundle; never let a browser keep a stale one
@@ -130,13 +133,15 @@ def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
         cfg = config.load(path)
         logs.setup(cfg.data_dir)
         _autodetect(cfg, path)
-        _ensure_api_key(cfg, path)
+        ensure_api_key(cfg, path)
     elif not cfg.server.api_key:
         cfg.server.api_key = security.new_key()
     core = Core(cfg, Database(cfg.db_path))
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        logs.attach_uvicorn()
+        log.info("FansCut %s started (data in %s)", __version__, core.cfg.data_dir)
         if start_worker:
             core.worker.start()
             core.scheduler.start()

@@ -275,3 +275,70 @@ legend { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
 .bdrop-shade { position: absolute; inset: 0; background: linear-gradient(0deg, color-mix(in srgb, var(--tint) 88%, transparent) 0%, color-mix(in srgb, var(--tint) 45%, transparent) 60%, transparent 100%); }
 .bdrop-name { position: absolute; left: 14px; right: 14px; bottom: 12px; font: 700 clamp(17px, 1.25vw, 26px)/1.05 var(--display); color: #fff; text-shadow: 0 2px 8px #0008; text-wrap: balance; }
 .tile:hover .bdrop { transform: translateY(-3px); }
+
+/* -- shell: progress bar, banners, toasts, phone tab bar --------------------------- */
+.loadbar { position: fixed; top: 0; left: 0; height: 3px; width: 0; background: var(--sky); z-index: 60; opacity: 0; transition: width 8s cubic-bezier(.1, .7, .2, 1), opacity .3s; }
+.loadbar.is-on { width: 85%; opacity: 1; }
+.banner { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 14px; margin: 0 0 18px; border-radius: var(--radius-control); background: var(--panel2); border: 1px solid var(--line); }
+.banner > span { flex: 1 1 240px; }
+.toasts { position: fixed; right: 16px; top: 16px; z-index: 70; display: flex; flex-direction: column; gap: 8px; max-width: min(420px, calc(100vw - 32px)); }
+.toast { display: flex; gap: 10px; align-items: center; padding: 10px 12px 10px 14px; border-radius: var(--radius-control); background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); animation: toast-in .2s ease; }
+.toast > span { flex: 1; }
+.toast-ok { border-left: 0; box-shadow: inset 3px 0 0 var(--ok), var(--shadow); }
+.toast-err { box-shadow: inset 3px 0 0 var(--danger), var(--shadow); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } }
+.tabbar { display: none; }
+.sched { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.table.logs td { padding: 6px 10px; vertical-align: top; border-bottom: 1px solid var(--line); }
+.log-error td, .log-critical td { color: var(--danger); }
+.log-warning td { color: var(--warn); }
+@media (max-width: 760px) {
+  .side { display: none; }
+  .main { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+  .tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; background: var(--side); padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); justify-content: space-around; }
+  .tabbar a { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; color: #FFFFFFB3; font-size: 12px; padding: 6px 2px; border-radius: 8px; position: relative; }
+  .tabbar a.active { color: var(--deep-teal); background: var(--sky); font-weight: 600; }
+  .tabbar-count { position: absolute; top: 0; right: 18%; font: 500 10px/1 var(--mono); }
+  .toasts { top: auto; bottom: calc(80px + env(safe-area-inset-bottom)); right: 12px; left: 12px; max-width: none; }
+}
+
+/* -- skeletons while a shelf or grid loads -------------------------------------------- */
+.skel { background: linear-gradient(90deg, var(--panel2) 0%, var(--raised) 50%, var(--panel2) 100%); background-size: 200% 100%; animation: skel 1.4s ease-in-out infinite; border-radius: 10px; }
+.skel-tile { aspect-ratio: 2 / 3; }
+.skel-line { height: 12px; margin-top: 10px; width: 70%; border-radius: 6px; }
+@keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* -- dialogs: rendered in a portal, fade in ------------------------------------------- */
+.scrim { animation: fade-in .15s ease; }
+.dialog { animation: dialog-in .18s ease; }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+.confirm-armed { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* -- dark theme: follows the system setting ------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0C1A21; --side: #081217; --panel: #12242C; --panel2: #183039; --raised: #1D3843; --poster: #1A333D;
+    --line: #24414C; --line-hover: #3A6170;
+    --text: #E6F2F6; --muted: #93AEB9; --dim: #6C8A96; --text2: #C2D7DF;
+    --link: #4CC9F5; --on-accent: #062029;
+    --shadow: 0 6px 18px #0006; --shadow-hover: 0 14px 30px #0008;
+  }
+  a:hover { color: var(--text); }
+  .nav a.active, .tabbar a.active { color: #062029; }
+}
+
+/* -- less motion when the system asks for it ------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+  .tile:hover .pst { transform: none; }
+}
+
+/* tiles show their hover state for keyboard focus too */
+.tile:focus-visible { outline: 2px solid var(--sky); outline-offset: 3px; }
+.tile:focus-visible .pst { transform: translateY(-3px); box-shadow: var(--shadow-hover); }
+.shelf-sentinel { flex: 0 0 1px; width: 1px; height: 1px; }
+.shelf-tools { display: inline-flex; gap: 2px; opacity: 0; transition: opacity .15s; }
+.section:hover .shelf-tools, .section:focus-within .shelf-tools { opacity: 1; }
+@media (hover: none) { .shelf-tools { opacity: 1; } }

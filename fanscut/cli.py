@@ -23,7 +23,10 @@ from .errors import FansCutError
 def _serve(args: argparse.Namespace, cfg: config.Config) -> int:
     import uvicorn
 
-    from .server import create_app
+    from .server import create_app, ensure_api_key
+
+    # first start: make the API key and save it, so webhooks keep working across restarts
+    ensure_api_key(cfg, Path(args.config) if args.config else config.default_path())
 
     host, port = args.host or cfg.server.host, args.port or cfg.server.port
     # X-Forwarded-For/-Proto are believed only from these (a reverse proxy in front)
