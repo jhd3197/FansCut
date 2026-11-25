@@ -149,6 +149,7 @@ export function SuggestionDialog({ s, onClose }) {
             ))}
           </ul>
           {s.status === 'partly' && <span className="tiny muted">Installing still works; the missing pieces are skipped or use another audio track.</span>}
+          <Link to="/health" className="tiny" onClick={onClose}>See what’s wrong in Health</Link>
         </div>
       )}
       <Notice msg={msg} onClose={clear} />
