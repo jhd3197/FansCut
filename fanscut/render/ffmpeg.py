@@ -55,6 +55,17 @@ def _fps(rate: str) -> float:
     return float(f)
 
 
+PROBE_VERSION = 2  # bump when probe() learns new fields; cached entries re-probe
+
+_HDR_TRANSFER = {"smpte2084": "HDR10", "arib-std-b67": "HLG"}
+
+
+def _forced(s: dict[str, Any]) -> bool:
+    title = ((s.get("tags") or {}).get("title") or "").lower()
+    return bool((s.get("disposition") or {}).get("forced")) or any(
+        w in title for w in ("forced", "forzad", "foreign"))
+
+
 def probe(cfg: FFmpegCfg, path: str) -> dict[str, Any]:
     raw = run_capture(
         [cfg.probe_binary, "-v", "error", "-print_format", "json", "-show_format", "-show_streams",
@@ -62,23 +73,40 @@ def probe(cfg: FFmpegCfg, path: str) -> dict[str, Any]:
         timeout=120,
     )
     data = json.loads(raw or b"{}")
-    info: dict[str, Any] = {"duration": float(data.get("format", {}).get("duration") or 0)}
-    audio_tracks = []
+    info: dict[str, Any] = {"v": PROBE_VERSION,
+                            "duration": float(data.get("format", {}).get("duration") or 0)}
+    audio_tracks, subs = [], []
     for s in data.get("streams", []):
-        if s.get("codec_type") == "video" and "video" not in info:
+        disp = s.get("disposition") or {}
+        tags = s.get("tags") or {}
+        if (s.get("codec_type") == "video" and "video" not in info
+                and not disp.get("attached_pic")):
+            side = [d.get("side_data_type", "") for d in s.get("side_data_list") or []]
+            transfer = s.get("color_transfer") or ""
+            hdr = _HDR_TRANSFER.get(transfer, "SDR")
+            if any("DOVI" in x or "Dolby Vision" in x for x in side):
+                hdr = "DV" if hdr == "SDR" else f"DV+{hdr}"
             info["video"] = {
                 "codec": s.get("codec_name"), "width": s.get("width"), "height": s.get("height"),
                 "pix_fmt": s.get("pix_fmt"), "fps": _fps(s.get("avg_frame_rate", "0")),
+                "color_transfer": transfer, "color_primaries": s.get("color_primaries") or "",
+                "color_space": s.get("color_space") or "", "hdr": hdr,
+                "mastering": any("Mastering display" in x for x in side),
             }
         elif s.get("codec_type") == "audio":
             track = {"codec": s.get("codec_name"), "sample_rate": int(s.get("sample_rate") or 0),
                      "channels": s.get("channels"),
-                     "language": (s.get("tags") or {}).get("language", "")}
+                     "language": tags.get("language", ""), "title": tags.get("title", "")}
             audio_tracks.append(track)
             if "audio" not in info:
                 info["audio"] = {k: track[k] for k in ("codec", "sample_rate", "channels")}
+        elif s.get("codec_type") == "subtitle":
+            subs.append({"index": s.get("index"), "codec": s.get("codec_name"),
+                         "language": tags.get("language", ""), "title": tags.get("title", ""),
+                         "forced": _forced(s), "default": bool(disp.get("default"))})
     if audio_tracks:
         info["audio_tracks"] = audio_tracks
+    info["subtitle_tracks"] = subs
     return info
 
 
@@ -93,7 +121,9 @@ class Prober:
         st = os.stat(path)
         row = self.db.one("SELECT mtime, size, info FROM probe_cache WHERE path = ?", (path,))
         if row and row["mtime"] == st.st_mtime and row["size"] == st.st_size:
-            return json.loads(row["info"])
+            cached: dict[str, Any] = json.loads(row["info"])
+            if cached.get("v", 1) >= PROBE_VERSION:
+                return cached
         info = probe(self.cfg, path)
         self.db.execute(
             "INSERT OR REPLACE INTO probe_cache (path, mtime, size, info) VALUES (?,?,?,?)",
@@ -115,10 +145,14 @@ def decode_audio(
 
 
 def detect_crop(cfg: FFmpegCfg, path: str, start: float, duration: float) -> str | None:
-    """cropdetect over a window: the crop filter string, or None when nothing to crop."""
+    """cropdetect over a window: the crop filter string, or None when nothing to crop.
+
+    The black limit is relative (24/255) so 10-bit HDR, whose black sits at
+    64/1023, is judged like 8-bit video.
+    """
     proc = subprocess.run(
         [cfg.binary, "-v", "info", "-ss", f"{max(start, 0):.3f}", "-t", f"{duration:.3f}",
-         "-i", path, "-vf", "cropdetect=24:16:0", "-f", "null", "-"],
+         "-i", path, "-vf", "cropdetect=limit=0.094:round=16:reset=0", "-f", "null", "-"],
         capture_output=True, text=True, errors="replace", timeout=300, check=False)
     crop = None
     for m in re.finditer(r"crop=(\d+:\d+:\d+:\d+)", proc.stderr):

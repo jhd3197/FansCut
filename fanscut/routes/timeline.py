@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import CoreDep
 
@@ -67,6 +67,8 @@ class TimelineRenderBody(BaseModel):
     mode: Literal["auto", "copy", "encode"] = "auto"
     keep: bool | None = None
     refresh: bool = False
+    variant: str | None = Field(default=None, max_length=40)
+    toggles: dict[str, bool] | None = None
 
 
 @router.post("/timelines/{tid}/render")
@@ -75,5 +77,12 @@ def render_timeline(core: CoreDep, tid: str, body: TimelineRenderBody | None = N
     """dry_run=true returns the per-part plans; otherwise queues a render job."""
     body = body or TimelineRenderBody()
     if body.dry_run:
-        return core.timeline_dry_run(tid, body.mode)
-    return core.submit_timeline_render(tid, body.mode, body.keep, body.refresh)
+        return core.timeline_dry_run(tid, body.mode, body.variant, body.toggles)
+    return core.submit_timeline_render(tid, body.mode, body.keep, body.refresh,
+                                       variant=body.variant, toggles=body.toggles)
+
+
+@router.get("/timelines/{tid}/variants")
+def timeline_variants(core: CoreDep, tid: str) -> dict[str, Any]:
+    """Toggles (disabled ones name the film they need) and each variant's runtime."""
+    return core.timeline_variants(tid)

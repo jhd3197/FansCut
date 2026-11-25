@@ -709,17 +709,40 @@ class Core:
         except NotFoundError:
             return doc["series"].get("title", "Timeline")  # movie-only timeline
 
-    def timeline_dry_run(self, tid: str, mode: plan.Mode = "auto") -> dict[str, Any]:
+    def _toggle_state(self, doc: dict[str, Any],
+                      files: dict[str, tuple[str | None, float | None]],
+                      variant: str | None, toggles: dict[str, bool] | None
+                      ) -> tuple[set[tuple[int, int]], list[dict[str, Any]], str]:
+        """(segments switched off, toggle view, variant label) for one render."""
+        from .timeline import toggles as tg
+
+        available = {k for k, (f, _d) in files.items() if f}
+        values, view = tg.resolve(doc, available, variant, toggles)
+        return tg.off_set(doc, values), view, tg.variant_label(doc, variant)
+
+    def timeline_variants(self, tid: str) -> dict[str, Any]:
+        """Toggles (enabled or not, and why) and every variant's runtime."""
+        from .timeline import toggles as tg
+
+        doc, key, report = self._timeline_ctx(tid)
+        files = self._source_files(key, doc)
+        available = {k for k, (f, _d) in files.items() if f}
+        return tg.variants_view(doc, available, self._skip_set(report))
+
+    def timeline_dry_run(self, tid: str, mode: plan.Mode = "auto", variant: str | None = None,
+                         toggles: dict[str, bool] | None = None) -> dict[str, Any]:
         from .timeline import render as tl_render
 
         doc, key, report = self._timeline_ctx(tid)
         files = self._source_files(key, doc)
         corr = tl_render.corrected_map(report)
         skip = self._skip_set(report)
+        off, tview, vlabel = self._toggle_state(doc, files, variant, toggles)
         show = tl_render.show_name(self._timeline_series_title(key, doc), doc["title"])
+        show = tl_render.with_variant(show, vlabel)
         parts = []
         for pi, part in enumerate(doc["parts"]):
-            cut, warns = tl_render.part_cut(doc, pi, files, corr, skip)
+            cut, warns = tl_render.part_cut(doc, pi, files, corr, skip, off)
             if not cut.segments:
                 parts.append({"part": pi + 1, "title": part["title"], "skipped": True,
                               "warnings": warns})
@@ -735,7 +758,9 @@ class Core:
                                        for s in cut.segments],
                           "command": rp.command, "files": rp.files,
                           "warnings": warns + awarn + rp.warnings})
-        return {"show": show, "synced": bool(report),
+        return {"show": show, "synced": bool(report), "variant": variant or "",
+                "toggles": tview,
+                "runtime": round(sum(p.get("runtime", 0) for p in parts), 1),
                 "layout": "movie" if len(doc["parts"]) == 1 else "show", "parts": parts}
 
     def _timeline_part_path(self, show: str, doc: dict[str, Any], pi: int,
@@ -750,13 +775,20 @@ class Core:
 
     def submit_timeline_render(self, tid: str, mode: str = "auto", keep: bool | None = None,
                                refresh: bool = False,
-                               require_sync: bool = True) -> dict[str, Any]:
+                               require_sync: bool = True, variant: str | None = None,
+                               toggles: dict[str, bool] | None = None) -> dict[str, Any]:
+        from .timeline import toggles as tg
+
         doc, _key, report = self._timeline_ctx(tid)
         if require_sync and not report:
             raise FansCutError("run sync first: POST /api/timelines/{id}/sync")
-        return self.worker.submit("timeline_render", f"Render {doc['title']}",
+        tg.resolve(doc, set(), variant, toggles)  # unknown variant/toggle -> 400 now
+        label = tg.variant_label(doc, variant)
+        return self.worker.submit("timeline_render",
+                                  f"Render {doc['title']}" + (f" ({label})" if label else ""),
                                   {"timeline_id": tid, "mode": mode, "keep": keep,
-                                   "refresh": refresh})
+                                   "refresh": refresh, "variant": variant,
+                                   "toggles": toggles})
 
     def _job_timeline_render(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
         from .render.cache import render_hash
@@ -770,9 +802,16 @@ class Core:
         if keep is None:
             keep = self.cfg.render.keep
         episodes_files = self._source_files(key, doc)
+        bad, health = self._files_health([f for f, _d in episodes_files.values() if f])
+        if bad:
+            raise FansCutError("library check failed: " + "; ".join(
+                f"{Path(b['file']).name}: {b['message']} ({b['fix']})" for b in bad))
         corr = tl_render.corrected_map(report)
         skip = self._skip_set(report)
+        off, _tview, vlabel = self._toggle_state(doc, episodes_files, payload.get("variant"),
+                                                 payload.get("toggles"))
         show = tl_render.show_name(self._timeline_series_title(key, doc), doc["title"])
+        show = tl_render.with_variant(show, vlabel)
         movie_mode = len(doc["parts"]) == 1  # single-part edit -> Plex movie folder
         show_dir = self.cfg.output_dir / show
         show_dir.mkdir(parents=True, exist_ok=True)
@@ -781,11 +820,12 @@ class Core:
         else:
             (show_dir / "tvshow.nfo").write_text(tl_render.nfo_show(show), encoding="utf-8")
 
-        outputs, cached, warnings = [], 0, []
+        outputs, cached = [], 0
+        warnings = [f"{Path(h['file']).name}: {h['message']}" for h in health]
         self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="tl-render-", dir=self.cfg.data_dir) as tmp:
             for pi, part in enumerate(doc["parts"]):
-                cut, warns = tl_render.part_cut(doc, pi, episodes_files, corr, skip)
+                cut, warns = tl_render.part_cut(doc, pi, episodes_files, corr, skip, off)
                 warnings += warns
                 if not cut.segments:
                     warnings.append(f"part {pi + 1} ({part['title']}): nothing to render")
@@ -944,6 +984,56 @@ class Core:
                 "message": f"{len(hits)} possible repeat(s) of {eid} "
                            f"{payload['start']:.0f}–{payload['end']:.0f}s"}
 
+    # -- library check --------------------------------------------------------
+    @property
+    def checker(self) -> Any:
+        from .library.check import LibraryChecker
+
+        return LibraryChecker(self.cfg, self.db, self.prober, self.library)
+
+    def _all_timeline_sources(self) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+        out = []
+        for r in self.db.query("SELECT series_key, title, doc FROM timelines"):
+            doc = json.loads(r["doc"])
+            try:
+                files = self._source_files(r["series_key"], doc)
+            except Exception:  # noqa: BLE001 - a broken timeline must not stop the check
+                continue
+            out.append((r["title"], doc, {k: v[0] for k, v in files.items()}))
+        return out
+
+    def library_check(self, q: str = "", deep: bool = False) -> dict[str, Any]:
+        result: dict[str, Any] = self.checker.run(q=q, deep=deep,
+                                                  timelines=self._all_timeline_sources())
+        return result
+
+    def rename_file(self, file: str, to: str) -> dict[str, str]:
+        from .library.check import apply_rename
+
+        proposals = self.checker.run(q="", timelines=[])["renames"]
+        try:
+            done = apply_rename(proposals, file, to)
+        except (ValueError, OSError) as exc:
+            raise FansCutError(str(exc)) from exc
+        self.library.refresh()
+        return done
+
+    def _files_health(self, files: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """(errors, warnings) of the per-file check for the files a render will read."""
+        errors, warns = [], []
+        movies, _ = self.library.list_movies()
+        by_file = {m.file: m for m in movies if m.file}
+        for f in sorted(set(files)):
+            if not Path(f).is_file():
+                continue  # unreachable files are reported by the source resolution itself
+            mv = by_file.get(f)
+            found, _ed, _info = self.checker.check_file(
+                f, mv.title if mv else Path(f).stem, mv.year if mv else None,
+                mv.tmdb_id if mv else None)
+            errors += [x for x in found if x["severity"] == "error"]
+            warns += [x for x in found if x["severity"] == "warn"]
+        return errors, warns
+
     # -- first-run suggestions ----------------------------------------------------
     def _lang_ok(self, path: str | None) -> str | None:
         """None if fine, else the reason this file fails the preferred-language check."""
@@ -988,6 +1078,9 @@ class Core:
                     if not m or not m.file:
                         ed = f" ({entry.get('edition')})" if entry.get("edition") else ""
                         return None, None, f"movie {entry.get('tmdb')}{ed} not in the library"
+                    bad, _w = self._files_health([m.file])
+                    if bad:
+                        return None, None, f"{bad[0]['message']} — {bad[0]['fix']}"
                     return m.file, m.duration, self._lang_ok(m.file)
                 tvdb = (_doc.get("series") or {}).get("tvdb_id")
                 s = by_tvdb.get(tvdb) if tvdb else None

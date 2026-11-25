@@ -130,7 +130,20 @@ def _v5(conn: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2, _v3, _v4, _v5]
+def _v6(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE file_checks (
+            path   TEXT NOT NULL,
+            kind   TEXT NOT NULL,                  -- tail | crop
+            mtime  REAL NOT NULL,
+            size   INTEGER NOT NULL,
+            result TEXT NOT NULL,                  -- JSON
+            PRIMARY KEY (path, kind)
+        );
+    """)
+
+
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2, _v3, _v4, _v5, _v6]
 
 
 class Database:

@@ -70,6 +70,7 @@ def scan_series_dir(d: Path) -> list[Episode]:
     return [eps[k] for k in sorted(eps)]
 
 
+_TEMP = re.compile(r"(^muxing|\.tmp|\.part|\.partial)", re.IGNORECASE)
 _TMDB_TAG = re.compile(r"\{tmdb[=-](\d+)\}", re.IGNORECASE)
 
 
@@ -79,7 +80,8 @@ def list_movies_folder(root: Path) -> list[Movie]:
         return []
     out = []
     for d in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")):
-        vids = _videos(d)
+        # a half-finished mux ("muxing.tmp.mkv") never wins over a finished file
+        vids = sorted(_videos(d), key=lambda p: bool(_TEMP.search(p.name)))
         if not vids:
             continue
         tmdb = _TMDB_TAG.search(d.name)

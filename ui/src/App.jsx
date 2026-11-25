@@ -5,12 +5,14 @@ import { CutPage } from './pages/Cut.jsx';
 import { Timelines } from './pages/Timelines.jsx';
 import { TimelineEdit } from './pages/TimelineEdit.jsx';
 import { Suggestions } from './pages/Suggestions.jsx';
+import { Health } from './pages/Health.jsx';
 import { Jobs } from './pages/Jobs.jsx';
 import { Settings } from './pages/Settings.jsx';
 import { Doctor } from './pages/Doctor.jsx';
 import { Empty } from './components/ui.jsx';
 
-const NAV = [['/', 'Library'], ['/suggestions', 'Suggestions'], ['/jobs', 'Jobs'],
+const NAV = [['/', 'Library'], ['/suggestions', 'Suggestions'], ['/health', 'Health'],
+             ['/jobs', 'Jobs'],
              ['/settings', 'Settings'], ['/doctor', 'Status']];
 
 export function App() {
@@ -29,6 +31,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Library />} />
           <Route path="/suggestions" element={<Suggestions />} />
+          <Route path="/health" element={<Health />} />
           <Route path="/series/:key" element={<SeriesPage />} />
           <Route path="/series/:key/cut" element={<CutPage />} />
           <Route path="/series/:key/timelines" element={<Timelines />} />

@@ -39,15 +39,19 @@ def corrected_map(report: dict[str, Any] | None) -> dict[tuple[int, int, str], f
 def part_segments(doc: dict[str, Any], pi: int,
                   files: dict[str, tuple[str | None, float | None]],
                   corr: dict[tuple[int, int, str], float],
-                  skip: set[tuple[int, int]] | None = None
+                  skip: set[tuple[int, int]] | None = None,
+                  off: set[tuple[int, int]] | None = None
                   ) -> tuple[list[Segment], list[str]]:
     """One part's segments against resolved source files; plus warnings.
 
     files: {src: (path, duration|None)}; corr: corrected times from the sync
-    report; skip: (part, segment) pairs the sync flagged as not in this edition.
+    report; skip: (part, segment) pairs the sync flagged as not in this edition;
+    off: pairs switched off by the toggles (dropped silently).
     """
     segments, warnings = [], []
     for si, seg in enumerate(doc["parts"][pi]["segments"], start=1):
+        if (pi + 1, si) in (off or set()):
+            continue
         if (pi + 1, si) in (skip or set()):
             warnings.append(f"{seg['src']} segment {si}: not in your edition — skipped")
             continue
@@ -72,11 +76,17 @@ def part_segments(doc: dict[str, Any], pi: int,
 
 def part_cut(doc: dict[str, Any], pi: int, files: dict[str, tuple[str | None, float | None]],
              corr: dict[tuple[int, int, str], float],
-             skip: set[tuple[int, int]] | None = None) -> tuple[CutPlan, list[str]]:
-    segments, warnings = part_segments(doc, pi, files, corr, skip)
+             skip: set[tuple[int, int]] | None = None,
+             off: set[tuple[int, int]] | None = None) -> tuple[CutPlan, list[str]]:
+    segments, warnings = part_segments(doc, pi, files, corr, skip, off)
     kept = sorted({s.episode_id for s in segments})
     total = sum(s.duration for s in segments)
     return CutPlan(segments, kept, [], 0.0, total, CutOptions()), warnings
+
+
+def with_variant(show: str, label: str) -> str:
+    """The variant name goes into the output name: "Took (Film Cut) - Book Order"."""
+    return safe_name(f"{show} - {label}") if label else show
 
 
 def part_filename(show: str, pi: int, part_title: str, ext: str) -> str:
