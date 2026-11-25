@@ -89,3 +89,18 @@ def test_merge_does_not_edit_the_cached_lists(cfg):
     merged, _ = lib.list_movies()
     assert len(merged) == 1 and merged[0].collections == ["Voyages"]
     assert radarr[0].collections == [] and radarr[0].poster is None  # cached copy untouched
+
+
+def test_a_source_that_suddenly_lists_nothing_keeps_its_last_list(cfg):
+    from fanscut.library.service import Library
+    from fanscut.models import Series
+
+    lib = Library(cfg)
+    lib.sources = lambda: ["sonarr"]  # type: ignore[method-assign]
+    lists = {"now": [Series("sonarr:7", "sonarr", "Harbor Lights")]}
+    lib._series_of = lambda src: lists["now"]  # type: ignore[method-assign]
+    assert [s.title for s in lib.list_series()[0]] == ["Harbor Lights"]
+    lists["now"] = []
+    lib.warm()
+    series, errors = lib.list_series()
+    assert [s.title for s in series] == ["Harbor Lights"]

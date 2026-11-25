@@ -115,9 +115,9 @@ def role_of(key: str, server: Any) -> str | None:
     return None
 
 
-# Paths under /api that need no key even with auth on: the login handshake
-# itself and the status probe the UI uses to decide whether to ask for one.
-OPEN_PATHS = ("/api/auth/", "/api/status")
+# Paths under /api that need no key even with auth on: the login handshake,
+# which also tells the UI whether to ask for one.
+OPEN_PATHS = ("/api/auth/",)
 
 
 class GuardMiddleware(BaseHTTPMiddleware):

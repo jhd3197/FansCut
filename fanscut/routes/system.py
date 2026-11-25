@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import contextlib
+import functools
+import os
+import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import __version__, config, doctor
+from .. import __version__, config, doctor, logs
 from ..clients.plex import PlexClient
 from ..clients.radarr import RadarrClient
 from ..clients.sonarr import SonarrClient
@@ -23,8 +28,63 @@ router = APIRouter()
 
 
 @router.get("/healthz", tags=["system"])
-def healthz() -> dict[str, str]:
-    return {"status": "ok", "version": __version__}
+def healthz(core: CoreDep, request: Request) -> JSONResponse:
+    """200 when the database answers and the worker threads are up; 503 otherwise."""
+    problems = []
+    try:
+        core.db.one("SELECT 1")
+    except Exception as exc:  # noqa: BLE001 - any failure is "unhealthy"
+        problems.append(f"database: {exc.__class__.__name__}")
+    if request.app.state.worker_expected and not core.worker.alive():
+        problems.append("worker stopped")
+    body = {"status": "ok" if not problems else "unhealthy", "version": __version__,
+            "commit": commit(), "problems": problems}
+    return JSONResponse(body, status_code=200 if not problems else 503)
+
+
+@functools.cache
+def commit() -> str:
+    """The build's git commit: FANSCUT_COMMIT (set in the Docker image), else the repo's HEAD."""
+    env = os.environ.get("FANSCUT_COMMIT", "").strip()
+    if env:
+        return env[:12]
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / ".git").exists():
+        return ""
+    try:
+        out = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short=12", "HEAD"],
+                             capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def restart_needed(core: Any, request: Request) -> list[str]:
+    from ..server import restart_snapshot
+
+    now = restart_snapshot(core.cfg)
+    return [k for k, v in request.app.state.boot.items() if now.get(k) != v]
+
+
+@router.get("/api/status", tags=["system"])
+def status(core: CoreDep, request: Request) -> dict[str, Any]:
+    """Version and build, uptime, queue depth, and settings waiting for a restart.
+
+    The UI polls this to offer a reload when the server was updated."""
+    pending = restart_needed(core, request)
+    return {"version": __version__, "commit": commit(),
+            "started_at": round(request.app.state.started),
+            "uptime_seconds": round(time.time() - request.app.state.started),
+            "queue": core.jobs.depth(), "worker_alive": core.worker.alive(),
+            "restart_required": bool(pending), "restart_fields": pending,
+            "auth": core.cfg.server.auth}
+
+
+@router.get("/api/logs", tags=["system"])
+def get_logs(core: CoreDep, level: str = "INFO", search: str = "",
+             skip: int = Query(0, ge=0), take: int = Query(100, ge=1, le=500)) -> dict[str, Any]:
+    """The server log, newest first: at `level` or above, containing `search`."""
+    return logs.read(core.cfg.data_dir, level, search, skip, take)
 
 
 @router.get("/api/doctor", tags=["system"])
@@ -66,7 +126,9 @@ def put_settings(core: CoreDep, body: dict[str, Any], request: Request) -> dict[
     except OSError as exc:
         raise FansCutError(f"could not write {path}: {exc.strerror}") from exc
     core.apply_config(new)
-    return config.masked(new) | {"env_locked": config.env_locked()}
+    pending = restart_needed(core, request)
+    return config.masked(new) | {"env_locked": config.env_locked(),
+                                 "restart_required": bool(pending), "restart_fields": pending}
 
 
 class TestBody(BaseModel):

@@ -9,14 +9,19 @@ from pydantic import BaseModel, Field
 
 from .. import browse
 from ..security import rate_limit
-from . import CoreDep
+from . import CoreDep, paginate
 
 router = APIRouter(prefix="/api", tags=["browse"])
 
 
 @router.get("/library/movies")
-def list_movies(core: CoreDep) -> dict[str, Any]:
-    return browse.movies(core)
+def list_movies(core: CoreDep, skip: int | None = None,
+                take: int | None = None) -> dict[str, Any]:
+    out = browse.movies(core)
+    if take is not None and isinstance(out.get("movies"), list):
+        out["movies"], info = paginate(out["movies"], skip, take)
+        out["page_info"] = info
+    return out
 
 
 @router.get("/library/movies/{key:path}")

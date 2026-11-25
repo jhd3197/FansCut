@@ -48,10 +48,36 @@ class Library:
 
     # -- plumbing -----------------------------------------------------------
     def _cached(self, key: str, fn: Callable[[], Any]) -> Any:
-        return self.cache.get(key, fn)
+        return self.cache.get(key, partial(self._guarded, key, fn))
+
+    def _guarded(self, key: str, fn: Callable[[], Any]) -> Any:
+        """A source that listed things before and now lists nothing is more likely
+        mid-scan or misconfigured than empty: count it as a failure, so the cache
+        keeps serving the last list (and the error shows) instead of an empty library."""
+        val = fn()
+        if not val and key.startswith(("series:", "movies:")):
+            before = self.cache.peek(key)
+            if before:
+                raise ClientError(f"{key.split(':', 1)[1]} listed nothing (it had "
+                                  f"{len(before)}); keeping the last list")
+        return val
 
     def refresh(self) -> None:
         self.cache.clear()
+
+    def warm(self) -> dict[str, int]:
+        """Re-list every source in place (the scheduled background refresh): pages keep
+        serving the current lists until the new ones are in. Returns items per list."""
+        out: dict[str, int] = {}
+        for src in self.sources():
+            key = f"series:{src}"
+            self.cache.reload(key, partial(self._guarded, key, partial(self._series_of, src)))
+            out[key] = len(self.cache.peek(key) or [])
+        for src in self._movie_sources():
+            key = f"movies:{src}"
+            self.cache.reload(key, partial(self._guarded, key, partial(self._movies_of, src)))
+            out[key] = len(self.cache.peek(key) or [])
+        return out
 
     def _client(self, cls: type[Any], url: str, secret: str) -> Any:
         """One client (and so one pooled HTTP session) per server, reused across calls."""

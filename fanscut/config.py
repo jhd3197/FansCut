@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from .errors import ConfigError
 from .fsutil import atomic_write
@@ -164,6 +164,30 @@ class AutomationCfg(BaseModel):
     keep: bool = True  # keep flag for webhook-triggered renders
 
 
+class ScheduleCfg(BaseModel):
+    """Cron (minute hour day month weekday, local time) per task; "" = off."""
+
+    prune: str = "0 5 * * *"  # art cache, finished jobs, old catalogue replies
+    sweep_renders: str = "30 4 * * *"  # delete non-kept renders past render.ephemeral_days
+    library_refresh: str = "*/10 * * * *"  # re-list sources in the background
+    fillers_refresh: str = "0 6 * * 1"  # AniFiller snapshot, weekly (skipped when offline)
+    cut_updates: str = "0 7 * * *"  # look for new commits of installed community cuts
+    library_check: str = "0 3 * * 0"  # the Health page's whole-library check, weekly
+
+    @field_validator("*")
+    @classmethod
+    def _cron(cls, v: str) -> str:
+        from .scheduler import Cron, CronError
+
+        v = (v or "").strip()
+        if v:
+            try:
+                Cron.parse(v)
+            except CronError as exc:
+                raise ValueError(str(exc)) from exc
+        return v
+
+
 class NotifyTarget(BaseModel):
     url: str
     format: Literal["json", "discord", "ntfy"] = "json"
@@ -202,6 +226,7 @@ class Config(BaseModel):
     render: RenderCfg = Field(default_factory=RenderCfg)
     automation: AutomationCfg = Field(default_factory=AutomationCfg)
     notify: NotifyCfg = Field(default_factory=NotifyCfg)
+    schedule: ScheduleCfg = Field(default_factory=ScheduleCfg)
     ai: AICfg = Field(default_factory=AICfg)
     community: CommunityCfg = Field(default_factory=CommunityCfg)
 

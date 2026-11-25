@@ -97,3 +97,17 @@ cut:                     # defaults for every series; each series can override
   merge_gap: 1.0         # pieces closer than this (same file) are joined
   min_segment: 5.0       # shorter pieces are dropped
   transition: none       # none | fade (fade re-encodes)
+
+schedule:                # cron (minute hour day month weekday, local time); "" = off
+  prune: "0 5 * * *"     # art cache, finished jobs older than 30 days, old catalogue replies
+  sweep_renders: "30 4 * * *"
+  library_refresh: "*/10 * * * *"   # re-list sources in the background
+  fillers_refresh: "0 6 * * 1"
+  cut_updates: "0 7 * * *"
+  library_check: "0 3 * * 0"
+
+notify:                  # tell something when a job is done or failed
+  targets: []
+  # - url: https://ntfy.sh/my-fanscut
+  #   format: ntfy         # json | discord | ntfy
+  #   events: [done, failed]

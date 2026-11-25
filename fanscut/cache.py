@@ -133,6 +133,20 @@ class SourceCache:
             e = self._entry(key)
             e.value, e.stamp, e.error, e.refreshing = value, time.monotonic(), None, False
 
+    def reload(self, key: str, loader: Callable[[], Any]) -> None:
+        """Load `key` now and swap it in; readers keep the old value meanwhile."""
+        self._refresh(key, loader)
+
+    def peek(self, key: str) -> Any:
+        """The last loaded value, however old, without loading; None if never loaded."""
+        with self._lock:
+            e = self._data.get(key)
+            return e.value if e is not None and e.stamp else None
+
+    def keys(self) -> list[str]:
+        with self._lock:
+            return list(self._data)
+
     def _entry(self, key: str) -> _Entry:
         e = self._data.get(key)
         if e is None:

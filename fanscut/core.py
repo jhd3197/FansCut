@@ -39,6 +39,7 @@ from .net import apply_proxy
 from .planner import PRESETS, CutOptions, CutPlan, PlanEpisode, plan_cut
 from .render import ffmpeg, plan, run
 from .render.cache import RenderStore, render_hash
+from .scheduler import Scheduler
 
 UNSET: Any = object()  # "leave this field alone", distinct from None (= clear it)
 WHOLE = -1  # matches.season value for "the whole series"
@@ -107,6 +108,26 @@ class Core:
                              on_finish=self._job_finished)
         self._apply_lock = threading.Lock()
         self.apply_config(cfg)
+        self.scheduler = Scheduler({
+            "prune": ("Trim the art cache, finished jobs and old catalogue replies",
+                      lambda _c: self.prune()),
+            "sweep_renders": ("Delete renders not marked keep, past their days",
+                              lambda _c: self.sweep_renders()),
+            "library_refresh": ("Re-list Sonarr, Radarr, Plex and folders in the background",
+                                lambda _c: self.library.warm()),
+            "fillers_refresh": ("Download the latest AniFiller data",
+                                lambda _c: self.refresh_fillers()),
+            "cut_updates": ("Look for updates to installed community cuts",
+                            lambda _c: self.cut_updates()),
+            "library_check": ("Check the whole library for problems (Health page)",
+                              lambda _c: self.library_check()),
+        }, lambda: self.cfg.schedule.model_dump())
+
+    def prune(self) -> dict[str, Any]:
+        """Housekeeping: expired art and the oldest past the size cap, finished jobs
+        older than 30 days, catalogue replies far past their cache time."""
+        http_days = max(60, self.cfg.catalogues.cache_days * 4)
+        return {"art_removed": self.art.prune(), **self.db.prune(30, http_days)}
 
     def _pin(self, fn: Any) -> Any:
         """Run a job handler against the settings that were live when it started."""

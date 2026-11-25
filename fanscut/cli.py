@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import os
 import sys
 from pathlib import Path
 
-from . import __version__, config, doctor
+from . import __version__, config, doctor, logs
 from .core import Core
 from .db import Database
 from .errors import FansCutError
@@ -144,12 +143,12 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--file", help="recipe JSON to check (for validate)")
     r.set_defaults(fn=_recipe_dispatch)
     args = ap.parse_args(argv)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    logs.setup(None)
     try:
-        return int(args.fn(args, config.load(args.config)))
+        cfg = config.load(args.config)
+        if args.fn is _serve:  # the server also writes the rotating log file
+            logs.setup(cfg.data_dir)
+        return int(args.fn(args, cfg))
     except FansCutError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

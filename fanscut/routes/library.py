@@ -15,13 +15,14 @@ from ..errors import NotFoundError
 from ..models import Series
 from ..planner import PRESETS
 from ..security import rate_limit
-from . import CoreDep
+from . import CoreDep, paginate
 
 router = APIRouter(prefix="/api", tags=["library"])
 
 
 @router.get("/library/series")
-def list_series(core: CoreDep, q: str = "", source: str = "") -> dict[str, Any]:
+def list_series(core: CoreDep, q: str = "", source: str = "", skip: int | None = None,
+                take: int | None = None) -> dict[str, Any]:
     series, errors = core.library.list_series()
     matched = {r["series_key"] for r in core.db.query("SELECT DISTINCT series_key FROM matches")}
     needle = q.lower().strip()
@@ -30,7 +31,9 @@ def list_series(core: CoreDep, q: str = "", source: str = "") -> dict[str, Any]:
         if (source and s.source != source) or (needle and needle not in s.title.lower()):
             continue
         out.append({**asdict(s), "matched": s.key in matched, "art": art_ref(s)})
-    return {"sources": core.library.sources(), "errors": errors, "series": out}
+    page, info = paginate(out, skip, take)
+    return {"sources": core.library.sources(), "errors": errors, "series": page,
+            **({"page_info": info} if info else {})}
 
 
 @router.get("/library/check", dependencies=[Depends(rate_limit("check", 6, 60))])
