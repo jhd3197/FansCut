@@ -25,7 +25,7 @@ from ..planner import CutPlan
 
 def render_hash(series_key: str, cut: CutPlan, mode: str, ff: FFmpegCfg,
                 chapters: list[dict[str, Any]]) -> str:
-    files: dict[str, list[Any]] = {}
+    files: dict[str, list[Any] | None] = {}
     for s in cut.segments:
         if s.file in files:
             continue
@@ -101,7 +101,7 @@ class RenderStore:
         self.db.execute("DELETE FROM renders WHERE hash = ?", (h,))
         return r
 
-    def list(self, series_key: str | None = None) -> list[dict[str, Any]]:
+    def all(self, series_key: str | None = None) -> list[dict[str, Any]]:
         if series_key:
             rows = self.db.query("SELECT * FROM renders WHERE series_key = ?"
                                  " ORDER BY created_at DESC", (series_key,))

@@ -371,7 +371,7 @@ class Core:
 
     # -- rendered output (cache, keep/evict) ------------------------------------
     def list_renders(self, series_key: str | None = None) -> list[dict[str, Any]]:
-        return self.renders.list(series_key)
+        return self.renders.all(series_key)
 
     def set_render_keep(self, h: str, keep: bool) -> dict[str, Any]:
         row = self.renders.set_keep(h, keep)

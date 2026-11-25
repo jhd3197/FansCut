@@ -1,3 +1,4 @@
+import os
 import re
 from pathlib import Path
 
@@ -7,6 +8,11 @@ from fanscut.config import FFmpegCfg
 from fanscut.models import Segment
 from fanscut.planner import CutOptions, CutPlan
 from fanscut.render import plan as rp
+
+
+def q(path):
+    """The concat-list line for a path, the way _concat_quote writes it on this OS."""
+    return "file '" + os.path.abspath(path).replace("'", "'\\''") + "'"
 
 VID = {"codec": "h264", "width": 1280, "height": 720, "pix_fmt": "yuv420p", "fps": 24.0}
 AUD = {"codec": "aac", "sample_rate": 48000, "channels": 2}
@@ -37,8 +43,8 @@ def test_copy_mode_concat_list_and_chapters():
     plan = build()
     assert plan.mode == "copy"
     lines = plan.files["concat.txt"].splitlines()
-    assert lines[:3] == ["file '/m/a.mkv'", "inpoint 0.000", "outpoint 40.000"]
-    assert lines[-3:] == ["file '/m/b.mkv'", "inpoint 5.000", "outpoint 95.000"]
+    assert lines[:3] == [q("/m/a.mkv"), "inpoint 0.000", "outpoint 40.000"]
+    assert lines[-3:] == [q("/m/b.mkv"), "inpoint 5.000", "outpoint 95.000"]
     assert "-c" in plan.command and plan.command[plan.command.index("-c") + 1] == "copy"
     assert plan.command[-1] == str(OUT.with_name("Harbor Lights - fan cut.part.mkv"))
     assert [(c["title"], c["start"], c["end"]) for c in plan.chapters] == [
@@ -57,7 +63,8 @@ def test_contiguous_segments_of_one_file_are_joined():
 
 def test_single_quote_in_path_is_escaped():
     plan = build([Segment("S01E01", "/m/Kaito's/a.mkv", 0, 10)])
-    assert "file '/m/Kaito'\\''s/a.mkv'" in plan.files["concat.txt"]
+    assert q("/m/Kaito's/a.mkv") in plan.files["concat.txt"]
+    assert "'\\''" in plan.files["concat.txt"]  # the quote really is escaped
 
 
 def test_chapter_titles_escape_metadata_syntax():
