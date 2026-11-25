@@ -23,6 +23,18 @@ class BaseClient:
         if headers:
             self.session.headers.update(headers)
 
+    def get_image(self, path: str, params: dict[str, Any] | None = None) -> bytes | None:
+        """An image's bytes, or None when the server has none (no retries: art is optional)."""
+        try:
+            resp = self.session.get(f"{self.base_url}{path}", params=params, timeout=self.timeout,
+                                    headers={"Accept": "image/*"})
+        except requests.RequestException:
+            return None
+        ctype = resp.headers.get("Content-Type", "")
+        if resp.status_code != 200 or not ctype.startswith("image/") or not resp.content:
+            return None
+        return resp.content
+
     def _once(self, path: str, params: dict[str, Any] | None) -> Any:
         url = f"{self.base_url}{path}"
         try:

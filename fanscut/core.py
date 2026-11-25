@@ -19,6 +19,7 @@ import requests
 
 from . import ai as ai_mod
 from . import recipe as recipe_mod
+from .art import ArtStore
 from .catalogues import match as catalogue_match
 from .catalogues.http import CachedHttp
 from .config import Config
@@ -69,6 +70,7 @@ class Core:
         self.cfg = cfg
         self.prober = ffmpeg.Prober(cfg.ffmpeg, self.db)
         self.library = Library(cfg, self.prober)
+        self.art = ArtStore(self.library, cfg.data_dir / "art")
         cat = cfg.catalogues
         self.http_jikan = CachedHttp(self.db, 0.4, cat.cache_days, cat.offline, self.session)
         self.http_anilist = CachedHttp(self.db, 0.8, cat.cache_days, cat.offline, self.session)
@@ -1354,11 +1356,16 @@ class Core:
                             "detail": {}})
                 continue
 
+            art: list[str] = []
+
             def resolve(src: str, entry: dict[str, Any], _doc: dict = doc,
+                        _art: list[str] = art,
                         ) -> tuple[str | None, float | None, str | None]:
                 if entry.get("kind") == "movie":
                     m = self.library.find_movie(entry.get("tmdb"),
                                                 edition=entry.get("edition", ""))
+                    if m:
+                        _art.append(m.key)
                     if not m or not m.file:
                         ed = f" ({entry.get('edition')})" if entry.get("edition") else ""
                         return None, None, f"movie {entry.get('tmdb')}{ed} not in the library"
@@ -1375,13 +1382,14 @@ class Core:
                 if not s:
                     stitle = (_doc.get("series") or {}).get("title")
                     return None, None, f"series {stitle!r} not in the library"
+                _art.append(s.key)
                 eps = {e.id: e for e in self.library.episodes(s.key)}
                 e = eps.get(src)
                 if not e or not e.file:
                     return None, None, f"{src} has no file"
                 return e.file, e.duration, self._lang_ok(e.file)
 
-            out.append(suggest.from_recipe(f.name, doc, resolve))
+            out.append(suggest.from_recipe(f.name, doc, resolve, art))
 
         # (b) Plex collections the user partly or fully owns
         colls: dict[str, list[Any]] = {}

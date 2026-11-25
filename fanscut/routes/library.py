@@ -6,10 +6,12 @@ from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
+from ..art import media_type
 from ..core import UNSET, WHOLE
+from ..errors import NotFoundError
 from ..models import Series
 from ..planner import PRESETS
 from . import CoreDep
@@ -210,3 +212,13 @@ def put_segments(core: CoreDep, key: str, episode_id: str, body: SegmentsBody) -
 def delete_segments(core: CoreDep, key: str, episode_id: str) -> dict[str, bool]:
     core.set_segments(key, episode_id, None)
     return {"ok": True}
+
+@router.get("/art/{kind}/{key:path}")
+def artwork(core: CoreDep, kind: str, key: str, w: int = Query(500, ge=50, le=2000)) -> Response:
+    """A library item's poster or backdrop, from Plex, Radarr/Sonarr or files beside it."""
+    data = core.art.get(key, kind, w)
+    if not data:
+        raise NotFoundError(f"no {kind} for {key}")
+    # Art for a key rarely changes; the browser can keep it for a day.
+    return Response(data, media_type=media_type(data),
+                    headers={"Cache-Control": "public, max-age=86400"})

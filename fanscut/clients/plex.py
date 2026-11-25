@@ -24,6 +24,14 @@ class PlexClient(BaseClient):
     def identity(self) -> dict[str, Any]:
         return self._get("/")["MediaContainer"]
 
+    def artwork(self, rating_key: str, kind: str = "poster", width: int = 500) -> bytes | None:
+        """An item's poster (thumb) or backdrop (art), resized by Plex's photo transcoder."""
+        field = "thumb" if kind == "poster" else "art"
+        height = width * 3 // 2 if kind == "poster" else width * 9 // 16
+        return self.get_image("/photo/:/transcode", {
+            "url": f"/library/metadata/{rating_key}/{field}", "width": width, "height": height,
+            "minSize": 1, "upscale": 1})
+
     def sections(self) -> list[dict[str, Any]]:
         data = self._get("/library/sections")["MediaContainer"].get("Directory", [])
         return [{"key": str(s["key"]), "type": s["type"], "title": s["title"]} for s in data]

@@ -18,3 +18,8 @@ class RadarrClient(BaseClient):
 
     def list_movies(self) -> list[dict[str, Any]]:
         return self._get("/api/v3/movie")
+
+    def cover(self, movie_id: str, kind: str = "poster") -> bytes | None:
+        """Radarr's cached poster (500 px wide) or fanart (backdrop)."""
+        name = "poster-500.jpg" if kind == "poster" else "fanart.jpg"
+        return self.get_image(f"/api/v3/MediaCover/{movie_id}/{name}")
