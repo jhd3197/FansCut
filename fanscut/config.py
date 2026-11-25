@@ -111,6 +111,8 @@ class FFmpegCfg(BaseModel):
     preset: str = "medium"
     audio_bitrate: str = "192k"
     container: Literal["mkv", "mp4"] = "mkv"
+    # auto: HEVC 10-bit when a source is HDR (keeps PQ/HLG + mastering data), else H.264
+    video_codec: Literal["auto", "h264", "hevc"] = "auto"
 
 
 class CutCfg(BaseModel):

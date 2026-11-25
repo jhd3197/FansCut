@@ -326,7 +326,8 @@ class Core:
         stem = plan.safe_name(f"{series.title}{suffix} - fan cut")
         titles = {e.id: f"{e.id} {e.title}".strip() for e in episodes}
         provisional = self.cfg.output_dir / f"{stem}.{self.cfg.ffmpeg.container}"
-        rp = plan.build_plan(cut, self.cfg.ffmpeg, provisional, workdir, self.prober, titles, mode)
+        rp = plan.build_plan(cut, self.cfg.ffmpeg, provisional, workdir, self.prober, titles, mode,
+                             hdr_params=self._hdr_params)
         # The output is named after a hash of everything that shapes its bytes, so
         # re-rendering an unchanged cut finds the file already there (cache hit).
         h = render_hash(key, cut, rp.mode, self.cfg.ffmpeg, rp.chapters)
@@ -703,6 +704,9 @@ class Core:
                 amap[f] = idx
         return amap, warnings
 
+    def _hdr_params(self, path: str) -> str:
+        return ffmpeg.hdr10_params(self.cfg.ffmpeg, path)
+
     def _timeline_series_title(self, key: str, doc: dict[str, Any]) -> str:
         try:
             return self.library.get_series(key).title
@@ -791,6 +795,7 @@ class Core:
                                    "toggles": toggles})
 
     def _job_timeline_render(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+        from .render import subs
         from .render.cache import render_hash
         from .timeline import render as tl_render
 
@@ -820,7 +825,7 @@ class Core:
         else:
             (show_dir / "tvshow.nfo").write_text(tl_render.nfo_show(show), encoding="utf-8")
 
-        outputs, cached = [], 0
+        outputs, cached, sidecars = [], 0, 0
         warnings = [f"{Path(h['file']).name}: {h['message']}" for h in health]
         self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="tl-render-", dir=self.cfg.data_dir) as tmp:
@@ -837,7 +842,7 @@ class Core:
                 workdir.mkdir()
                 mode: plan.Mode = payload.get("mode", "auto") or "auto"
                 rp = plan.build_plan(cut, self.cfg.ffmpeg, out, workdir, self.prober,
-                                     mode=mode, audio_map=amap)
+                                     mode=mode, audio_map=amap, hdr_params=self._hdr_params)
                 h = render_hash(f"timeline:{tid}:{pi + 1}", cut, rp.mode, self.cfg.ffmpeg,
                                 rp.chapters)
                 if not payload.get("refresh") and (hit := self.renders.hit(h)):
@@ -851,6 +856,10 @@ class Core:
                     self.renders.add(h, key, f"{doc['title']} · part {pi + 1}", str(out),
                                      rp.mode, bool(keep), job_id=ctx.job_id)
                     outputs.append(str(out))
+                subs_written, subs_warn = subs.write_sidecars(
+                    self.cfg.ffmpeg, cut.segments, Path(outputs[-1]), self.prober)
+                warnings += subs_warn
+                sidecars += len(subs_written)
                 if not movie_mode:
                     nfo = tl_render.nfo_episode(part["title"], pi + 1)
                     out.with_suffix(".nfo").write_text(nfo, encoding="utf-8")
@@ -858,7 +867,7 @@ class Core:
                   or (self._write_poster(show_dir, outputs[0]) if outputs else None))
         plex_note = self._plex_finalize(show, outputs)
         return {"show": show, "parts": len(outputs), "cached": cached, "outputs": outputs,
-                "poster": poster,
+                "poster": poster, "subtitles": sidecars,
                 "warnings": warnings, "plex": plex_note,
                 "message": f"wrote {len(outputs)} part(s) to {show_dir} ({cached} cached)"}
 

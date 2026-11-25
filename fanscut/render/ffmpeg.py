@@ -110,6 +110,39 @@ def probe(cfg: FFmpegCfg, path: str) -> dict[str, Any]:
     return info
 
 
+def _ratio(v: Any) -> float:
+    try:
+        return float(Fraction(str(v)))
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def hdr10_params(cfg: FFmpegCfg, path: str) -> str:
+    """x265 master-display/max-cll from the first frame's side data ('' if none)."""
+    try:
+        raw = run_capture([cfg.probe_binary, "-v", "error", "-select_streams", "v:0",
+                           "-read_intervals", "%+#1", "-show_frames", "-show_entries",
+                           "frame=side_data_list", "-of", "json", path], timeout=120)
+    except FFmpegError:
+        return ""
+    side = [d for f in json.loads(raw or b"{}").get("frames", [])
+            for d in f.get("side_data_list") or []]
+    out = []
+    md = next((d for d in side if "Mastering display" in d.get("side_data_type", "")), None)
+    if md and md.get("red_x"):
+        def xy(k: str) -> int:
+            return round(_ratio(md[k]) * 50000)
+        out.append(f"master-display=G({xy('green_x')},{xy('green_y')})"
+                   f"B({xy('blue_x')},{xy('blue_y')})R({xy('red_x')},{xy('red_y')})"
+                   f"WP({xy('white_point_x')},{xy('white_point_y')})"
+                   f"L({round(_ratio(md['max_luminance']) * 10000)},"
+                   f"{round(_ratio(md['min_luminance']) * 10000)})")
+    cl = next((d for d in side if "Content light level" in d.get("side_data_type", "")), None)
+    if cl and cl.get("max_content"):
+        out.append(f"max-cll={int(cl['max_content'])},{int(cl.get('max_average') or 0)}")
+    return ":".join(out)
+
+
 class Prober:
     """probe() with results kept in SQLite, keyed by path and invalidated by mtime/size."""
 
