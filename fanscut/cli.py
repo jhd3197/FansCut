@@ -104,6 +104,17 @@ def _recipe_dispatch(args: argparse.Namespace, cfg: config.Config) -> int:
     return _recipe_ai(args, cfg)
 
 
+def _mcp(args: argparse.Namespace, cfg: config.Config) -> int:
+    import os
+
+    from . import mcp_server
+
+    host = "127.0.0.1" if cfg.server.host in ("0.0.0.0", "::") else cfg.server.host  # noqa: S104
+    url = args.url or os.environ.get("FANSCUT_URL") or f"http://{host}:{cfg.server.port}"
+    mcp_server.serve(url)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="fanscut", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -126,6 +137,10 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--apply", action="store_true", help="import the result, not just print it")
     r.add_argument("--file", help="recipe JSON to check (for validate)")
     r.set_defaults(fn=_recipe_dispatch)
+    m = sub.add_parser("mcp", help="MCP server (stdio) so an AI client can tag scenes")
+    m.add_argument("--url",
+                   help="FansCut to talk to (default: FANSCUT_URL or this config's server)")
+    m.set_defaults(fn=_mcp)
     args = ap.parse_args(argv)
     logging.basicConfig(
         level=logging.INFO,
