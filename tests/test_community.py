@@ -95,6 +95,21 @@ def test_install_records_sha_poster_and_updates(client, sonarr_mock, tmp_path):
     up = client.post(f"/api/cuts/{out['id']}/update").json()
     assert up["id"] == out["id"] and up["changed"] and up["sha"] == SHA2
     assert up["summary"].startswith("1 film re-timed")
+    assert up["rebuild"] == []  # not asked for
+
+    # with "rebuild when the recipe changes" on, an update queues sync then render
+    assert client.put(f"/api/timelines/{out['id']}/options",
+                      json={"auto_rebuild": True}).json() == {"auto_rebuild": True}
+    newer = {**new, "parts": [{"title": "Took", "segments": [
+        {"src": "AUJ", "start": 3.0, "end": 9.0}]}]}
+    sha3 = "c" * 40
+    sonarr_mock.add(responses.GET, f"{API}/commits/dev", json={"sha": sha3})
+    sonarr_mock.add(responses.GET, f"{API}/contents/fanscut.json?ref={sha3}",
+                    body=json.dumps(newer))
+    up2 = client.post(f"/api/cuts/{out['id']}/update").json()
+    kinds = [client.get(f"/api/jobs/{j}").json()["kind"] for j in up2["rebuild"]]
+    assert kinds == ["timeline_sync", "timeline_render"]
+    assert client.put("/api/timelines/nope/options", json={"auto_rebuild": True}).status_code == 404
     assert client.get(f"/api/timelines/{out['id']}").json()["title"] == "Took (v2)"
 
 

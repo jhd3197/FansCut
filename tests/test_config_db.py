@@ -225,7 +225,8 @@ def test_transaction_rolls_back(db):
 
 
 def test_deleting_a_timeline_cascades(db):
-    db.execute("INSERT INTO timelines VALUES ('t1','sonarr:7','T','{}','x','x')")
+    db.execute("INSERT INTO timelines (id, series_key, title, doc, created_at, updated_at)"
+               " VALUES ('t1','sonarr:7','T','{}','x','x')")
     db.execute("INSERT INTO timeline_syncs VALUES ('t1','{}','x')")
     db.execute("INSERT INTO installs VALUES ('t1','kaito/cut','main','s','', 'x','x')")
     db.execute("DELETE FROM timelines WHERE id='t1'")

@@ -25,6 +25,7 @@ class Job(BaseModel):
     message: str
     payload: dict[str, Any]
     result: dict[str, Any]
+    phase: dict[str, Any] = {}  # {"i", "n", "name", "detail"} while a build runs
     lane: str = "light"
     created_at: str
     updated_at: str

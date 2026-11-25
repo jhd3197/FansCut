@@ -12,6 +12,7 @@ import json
 import re
 import tempfile
 import threading
+import time
 import uuid
 from dataclasses import asdict, fields
 from pathlib import Path
@@ -584,6 +585,7 @@ class Core:
         out = {"id": r["id"], "series_key": r["series_key"], "title": r["title"],
                "parts": len(doc["parts"]), "sources": len(doc["sources"]),
                "category": doc.get("category") or "",
+               "auto_rebuild": bool(r["auto_rebuild"]),
                "updated_at": r["updated_at"],
                "synced": self.db.one(
                    "SELECT timeline_id FROM timeline_syncs WHERE timeline_id = ?",
@@ -678,7 +680,49 @@ class Core:
                           (tid,))
         if row is None:
             return None
-        return {**json.loads(row["report"]), "updated_at": row["updated_at"]}
+        report: dict[str, Any] = {**json.loads(row["report"]), "updated_at": row["updated_at"]}
+        overrides = report.get("overrides") or {}
+        for src in report.get("sources", {}).values():  # a nudged cut point wins
+            for b in src.get("boundaries", []):
+                key = f"{b['part']}:{b['segment']}:{b['side']}"
+                if key in overrides:
+                    b["auto"] = b.get("corrected")
+                    b["corrected"] = overrides[key]
+                    b["manual"] = True
+        return report
+
+    def set_cut_point(self, tid: str, part: int, segment: int, side: str,
+                      t: float | None) -> dict[str, Any]:
+        """Build → nudge: pin one cut point to time t in the user's copy (None = back to
+        what sync found). Kept across re-syncs; a saved recipe edit resets the sync."""
+        if side not in ("start", "end"):
+            raise FansCutError("side is start or end")
+        row = self.db.one("SELECT report FROM timeline_syncs WHERE timeline_id = ?", (tid,))
+        if row is None:
+            raise FansCutError("run sync first: POST /api/timelines/{id}/sync")
+        report = json.loads(row["report"])
+        found = next((b for s in report.get("sources", {}).values()
+                      for b in s.get("boundaries", [])
+                      if (b["part"], b["segment"], b["side"]) == (part, segment, side)), None)
+        if found is None:
+            raise NotFoundError(f"no cut point {part}.{segment} {side}")
+        key = f"{part}:{segment}:{side}"
+        overrides = report.setdefault("overrides", {})
+        if t is None:
+            overrides.pop(key, None)
+        else:
+            other = next((b for s in report.get("sources", {}).values()
+                          for b in s.get("boundaries", [])
+                          if (b["part"], b["segment"]) == (part, segment) and b["side"] != side),
+                         None)
+            if other is not None:
+                o = overrides.get(f"{part}:{segment}:{other['side']}", other.get("corrected"))
+                if o is not None and (t >= o if side == "start" else t <= o):
+                    raise FansCutError("a segment's start must stay before its end")
+            overrides[key] = round(float(t), 3)
+        self.db.execute("UPDATE timeline_syncs SET report = ? WHERE timeline_id = ?",
+                        (dumps(report), tid))
+        return self.timeline_sync_report(tid) or {}
 
     def submit_timeline_sync(self, tid: str) -> dict[str, Any]:
         row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
@@ -749,6 +793,12 @@ class Core:
                             "total_boundaries": len(results), "segments": segs, **meta, **rec}
         report = {"timeline_id": tid, "sources": sources,
                   "unmatched_sources": [s for s, v in sources.items() if not v["matched"]]}
+        old = self.db.one("SELECT report FROM timeline_syncs WHERE timeline_id = ?", (tid,))
+        kept = (json.loads(old["report"]).get("overrides") or {}) if old else {}
+        names = {f"{b['part']}:{b['segment']}:{b['side']}" for v in sources.values()
+                 for b in v.get("boundaries", [])}
+        if kept:
+            report["overrides"] = {k: v for k, v in kept.items() if k in names}
         now = _dt.datetime.now().isoformat(timespec="seconds")
         self.db.execute(
             "INSERT OR REPLACE INTO timeline_syncs (timeline_id, report, updated_at)"
@@ -823,6 +873,8 @@ class Core:
                 if ((s.fx or {}).get("video") or {}).get("grade") and not s.fx.get("speed")]
         if not todo:
             return cut
+        ctx.phase(2, 5, "Effect segments",
+                  f"part {pi + 1} · {len(todo)} graded through EffectCraft")
         segs = list(cut.segments)
         for n, i in enumerate(todo, start=1):
             ctx.progress(0.0, f"part {pi + 1}: EffectCraft grade {n}/{len(todo)}")
@@ -934,6 +986,8 @@ class Core:
         if keep is None:
             keep = self.cfg.render.keep
         episodes_files = self._source_files(key, doc)
+        ctx.phase(1, 5, "Check files and cut points",
+                  f"{len(episodes_files)} source{'s' if len(episodes_files) != 1 else ''}")
         bad, health = self._files_health([f for f, _d in episodes_files.values() if f])
         if bad:
             raise FansCutError("library check failed: " + "; ".join(
@@ -953,6 +1007,7 @@ class Core:
             (show_dir / "tvshow.nfo").write_text(tl_render.nfo_show(show), encoding="utf-8")
 
         outputs, cached, sidecars = [], 0, 0
+        stats: list[dict[str, Any]] = []  # wall time per built part, for estimates
         warnings = [f"{Path(h['file']).name}: {h['message']}" for h in health]
         self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="tl-render-", dir=self.cfg.data_dir) as tmp:
@@ -972,22 +1027,31 @@ class Core:
                                      mode=mode, audio_map=amap, hdr_params=self._hdr_params)
                 h = render_hash(f"timeline:{tid}:{pi + 1}", cut, rp.mode, self.cfg.ffmpeg,
                                 rp.chapters)
+                n_parts = len(doc["parts"])
                 if not payload.get("refresh") and (hit := self.renders.hit(h)):
+                    ctx.phase(3, 5, "Cut and join",
+                              f"part {pi + 1} of {n_parts} · {part['title']} · reused, unchanged")
                     cached += 1
                     outputs.append(hit["path"])
                 else:
-                    ctx.progress(pi / len(doc["parts"]),
-                                 f"part {pi + 1}/{len(doc['parts'])}: {part['title']}")
+                    ctx.progress(pi / n_parts, f"part {pi + 1}/{n_parts}: {part['title']}")
+                    t0 = time.monotonic()
                     graded = self._through_effectcraft(cut, workdir, ctx, pi)
                     if graded is not cut:  # the hash stays the recipe's, not the temp files'
                         rp = plan.build_plan(graded, self.cfg.ffmpeg, out, workdir,
                                              self.prober, mode=mode, audio_map=amap,
                                              hdr_params=self._hdr_params)
-                    run.execute(rp, workdir, ctx.part(pi, len(doc["parts"])), ctx.cancel)
+                    ctx.phase(3, 5, "Cut and join", f"part {pi + 1} of {n_parts} · {part['title']}"
+                              f" · {'copied' if rp.mode == 'copy' else 're-encoded'}")
+                    run.execute(rp, workdir, ctx.part(pi, n_parts), ctx.cancel)
+                    stats.append({"runtime": round(cut.final_runtime, 1), "mode": rp.mode,
+                                  "seconds": round(time.monotonic() - t0, 1),
+                                  "height": self._out_height(cut)})
                     self.renders.drop_path(str(out), except_hash=h)
                     self.renders.add(h, key, f"{doc['title']} · part {pi + 1}", str(out),
                                      rp.mode, bool(keep), job_id=ctx.job_id)
                     outputs.append(str(out))
+                ctx.phase(4, 5, "Subtitles and poster", f"part {pi + 1} of {n_parts}")
                 subs_written, subs_warn = subs.write_sidecars(
                     self.cfg.ffmpeg, cut.segments, Path(outputs[-1]), self.prober)
                 warnings += subs_warn
@@ -999,10 +1063,12 @@ class Core:
         if self.cfg.render.poster:
             poster = (self._installed_poster(tid, show_dir)
                       or (self._write_poster(show_dir, outputs[0]) if outputs else None))
+        ctx.phase(5, 5, "Add to Plex", "rescan and collection" if self.cfg.library.plex.url
+                  else "no Plex set up: the files are in the output folder")
         plex_note = self._plex_finalize(show, outputs,
                                         collection=payload.get("collection", True), tid=tid)
         return {"show": show, "parts": len(outputs), "cached": cached, "outputs": outputs,
-                "poster": poster, "subtitles": sidecars,
+                "poster": poster, "subtitles": sidecars, "stats": stats,
                 "warnings": warnings, "plex": plex_note,
                 "message": f"wrote {len(outputs)} part(s) to {show_dir} ({cached} cached)"}
 
@@ -1172,6 +1238,99 @@ class Core:
         url, machine = self._plex_server()
         return (f"{url}/web/index.html#!/server/{machine}/playlist"
                 f"?key={quote(f'/playlists/{pid}', safe='')}")
+
+    # -- build estimates --------------------------------------------------------------
+    # Output seconds made per wall second when nothing was measured on this machine yet.
+    TYPICAL_SPEED = {"copy": 40.0, ("encode", "4k"): 0.4, ("encode", "hd"): 1.6,
+                     ("encode", "sd"): 4.0}
+    GPU_FACTOR = 5.0  # NVENC against libx264
+    HEVC_FACTOR = 0.5  # x265 on the CPU against x264
+
+    @staticmethod
+    def _res_class(height: int) -> str:
+        return "4k" if height >= 1600 else "hd" if height >= 700 else "sd"
+
+    def _out_height(self, cut: Any) -> int:
+        heights = []
+        for s in cut.segments:
+            try:
+                heights.append(int((self.prober(s.file).get("video") or {}).get("height") or 0))
+            except Exception:  # noqa: BLE001 - only for statistics
+                continue
+        return max(heights, default=0)
+
+    def _measured_speed(self, mode: str, res: str) -> float | None:
+        """Speed of the last builds on this machine with this mode and size: output
+        seconds over wall seconds, summed, so long builds count more than tiny ones."""
+        made = took = 0.0
+        for r in self.db.query("SELECT result FROM jobs WHERE kind = 'timeline_render' AND"
+                               " status = 'done' ORDER BY updated_at DESC LIMIT 30"):
+            for st in (json.loads(r["result"]).get("stats") or []):
+                if (st.get("mode") == mode and st.get("seconds", 0) > 0
+                        and self._res_class(int(st.get("height") or 0)) == res):
+                    made += float(st["runtime"])
+                    took += float(st["seconds"])
+        return made / took if took else None
+
+    def timeline_estimate(self, tid: str, variant: str | None = None) -> dict[str, Any]:
+        """CutDetail's "Build on this PC": about how long, and why."""
+        dry = self.timeline_dry_run(tid, "auto", variant)
+        live = [p for p in dry["parts"] if not p.get("skipped")]
+        files = {s["file"] for p in live for s in p["segments"] if s.get("file")}
+        infos = []
+        for f in files:
+            try:
+                infos.append(self.prober(f))
+            except Exception:  # noqa: BLE001 - an unreadable file shows up elsewhere
+                continue
+        videos = [i.get("video") or {} for i in infos]
+        height = max((int(v.get("height") or 0) for v in videos), default=0)
+        res = self._res_class(height)
+        hdr = any(v.get("hdr") not in (None, "", "SDR") for v in videos)
+        codecs = sorted({str(v.get("codec")) for v in videos if v.get("codec")})
+        fx = [s for p in live for s in p["segments"] if s.get("fx")]
+        graded = [s for s in fx if (s["fx"].get("video") or {}).get("grade")
+                  and not s["fx"].get("speed")]
+        ec = bool(self.cfg.render.effectcraft_cli and self.cfg.render.effectcraft_grade)
+        seconds, basis = 0.0, "measured"
+        for p in live:
+            mode = "copy" if p["mode"] == "copy" else "encode"
+            speed = self._measured_speed(mode, res)
+            if speed is None:
+                basis = "typical"
+                if mode == "copy":
+                    speed = self.TYPICAL_SPEED["copy"]
+                else:
+                    speed = self.TYPICAL_SPEED[("encode", res)]
+                    if self.cfg.ffmpeg.nvenc:
+                        speed *= self.GPU_FACTOR
+                    elif hdr or self.cfg.ffmpeg.video_codec == "hevc":
+                        speed *= self.HEVC_FACTOR
+            seconds += p["runtime"] / speed + 10  # plus opening files and writing the part
+        if ec and graded:
+            seconds += sum(s["duration"] for s in graded) / 0.5
+        res_name = {"4k": "4K", "hd": "1080p", "sd": "SD"}[res] if height else "unknown size"
+        reasons = [f"{res_name}{' HDR' if hdr else ''}"]
+        if any(p["mode"] != "copy" for p in live):
+            why = next((p["reason"] for p in live if p["mode"] != "copy"), "")
+            reasons.append(f"re-encoded{': ' + why if why else ''}")
+        else:
+            reasons.append("copied as-is, no re-encode")
+        if len(codecs) > 1:
+            reasons.append(f"{len(codecs)} codecs ({', '.join(c.upper() for c in codecs)})")
+        if fx:
+            reasons.append(f"{len(fx)} effect segment{'s' if len(fx) != 1 else ''}"
+                           + (" through EffectCraft" if ec and graded else ""))
+        label = ("Quick build" if seconds < 120 else "Build" if seconds < 1800 else "Long build")
+        return {"seconds": round(seconds), "label": label, "reasons": reasons, "basis": basis,
+                "parts": len(live), "gpu": self.cfg.ffmpeg.nvenc, "runtime": dry["runtime"]}
+
+    def set_timeline_options(self, tid: str, auto_rebuild: bool) -> dict[str, Any]:
+        if self.db.one("SELECT 1 FROM timelines WHERE id = ?", (tid,)) is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        self.db.execute("UPDATE timelines SET auto_rebuild = ? WHERE id = ?",
+                        (int(bool(auto_rebuild)), tid))
+        return {"auto_rebuild": bool(auto_rebuild)}
 
     # -- preview clips and stills (sync review, Build, the editor, Health) ---------
     def _episode_file(self, key: str, episode_id: str) -> str:
@@ -1496,8 +1655,15 @@ class Core:
             " updated_at) VALUES (?,?,?,?,?,COALESCE((SELECT installed_at FROM installs WHERE"
             " timeline_id = ?), ?),?)",
             (tid, repo.slug, branch, sha, poster or (row["poster"] if row else ""), tid, now, now))
+        rebuild: list[str] = []
+        opt = self.db.one("SELECT auto_rebuild FROM timelines WHERE id = ?", (tid,))
+        if summary and opt and opt["auto_rebuild"]:  # an update to a cut set to rebuild itself
+            sync = self.submit_timeline_sync(tid)
+            render = self.submit_timeline_render(tid, require_sync=False)  # sync runs first
+            rebuild = [sync["id"], render["id"]]
         return {"id": tid, "title": clean["title"], "repo": repo.url, "ref": branch, "sha": sha,
-                "changed": changed, "poster": bool(poster), "summary": summary}
+                "changed": changed, "poster": bool(poster), "summary": summary,
+                "rebuild": rebuild}
 
     def _fill_movie_durations(self, doc: Any) -> Any:
         """Movie sources may omit duration; the user's copy supplies it."""

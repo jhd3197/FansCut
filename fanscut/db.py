@@ -210,7 +210,16 @@ def _v9() -> str:
     """
 
 
-MIGRATIONS: list[Callable[[], str]] = [_v1, _v2, _v3, _v4, _v5, _v6, _v7, _v8, _v9]
+def _v10() -> str:
+    # A running job's structured phase ({"i", "n", "name", "detail"}) for the Jobs page,
+    # and a cut's "rebuild only what changed when the recipe changes" option.
+    return """
+        ALTER TABLE jobs ADD COLUMN phase TEXT NOT NULL DEFAULT '{}';
+        ALTER TABLE timelines ADD COLUMN auto_rebuild INTEGER NOT NULL DEFAULT 0;
+    """
+
+
+MIGRATIONS: list[Callable[[], str]] = [_v1, _v2, _v3, _v4, _v5, _v6, _v7, _v8, _v9, _v10]
 
 
 class Database:
