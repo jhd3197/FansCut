@@ -18,6 +18,7 @@ Run it with ``fanscut mcp`` (stdio). Point it at another FansCut with
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -404,7 +405,7 @@ def make_timeline(
     return f'Created timeline {t["id"]} "{t["title"]}". Open it in FansCut to sync and render.'
 
 
-TOOLS = [
+TOOLS: list[Callable[..., Any]] = [
     list_films,
     film_overview,
     index_film,

@@ -339,7 +339,8 @@ def test_scene_api_end_to_end(sc, monkeypatch):
     by_keys = sc.post("/api/scenes/to-timeline",
                       json={"collection": "Any name", "tag": "christmas", "films": [key]})
     assert by_keys.status_code == 201, by_keys.text
-    assert sc.post("/api/scenes/to-timeline", json={"collection": "x", "tag": "christmas",
-                                                    "films": ["nope:1"]}).status_code == 404
+    unknown = sc.post("/api/scenes/to-timeline", json={"collection": "x", "tag": "christmas",
+                                                       "films": ["nope:1"]})
+    assert unknown.status_code == 404
 
     assert sc.delete(f"/api/scenes/tags/{t['id']}").status_code == 204
