@@ -2,6 +2,7 @@
 import { Children, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { artFallback, artSrcSet, artUrl } from '../lib/api.js';
+import { useFrom } from '../lib/hooks.js';
 
 // Poster palettes: [background, shade, accent, title colour]. Picked by a hash of the title,
 // so a cut always gets the same art. No images: the recipe never ships artwork.
@@ -129,6 +130,7 @@ export function statusText(status) {
 }
 
 export function CutTile({ to, title, sub, tag, kind, face, genres, meta, status, note, onClick, art, layout, badge }) {
+  const from = useFrom();
   const [cls, label] = STATUS[status] || ['muted', status || ''];
   const drawn = <Poster title={title} sub={sub} tag={tag} kind={kind} face={face} genres={genres} bare />;
   // Under the art: the name, then one line with a status dot. A note only when
@@ -143,7 +145,7 @@ export function CutTile({ to, title, sub, tag, kind, face, genres, meta, status,
       </div>
     </>
   );
-  if (to) return <Link className="tile" to={to}>{inner}</Link>;
+  if (to) return <Link className="tile" to={to} state={from}>{inner}</Link>;
   return <button type="button" className="tile tile-btn" onClick={onClick}>{inner}</button>;
 }
 
@@ -177,10 +179,10 @@ export function Section({ title, count, end, children, id }) {
 export function Crumbs({ items }) {
   return (
     <nav className="crumbs" aria-label="Breadcrumb">
-      {items.map(([label, to], i) => (
+      {items.map(([label, to, state], i) => (
         <span key={i} className="row" style={{ gap: 8 }}>
           {i > 0 && <span aria-hidden="true">/</span>}
-          {to ? <Link to={to}>{label}</Link> : <span className="here">{label}</span>}
+          {to ? <Link to={to} state={state}>{label}</Link> : <span className="here">{label}</span>}
         </span>
       ))}
     </nav>

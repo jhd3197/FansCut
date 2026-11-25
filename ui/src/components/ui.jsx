@@ -137,3 +137,43 @@ export function Progress({ value }) {
 export function StatusTag({ status }) {
   return <span className={`tag tag-${status}`}>{status}</span>;
 }
+
+// A "More" button with a short list of secondary actions. Items: [label, onSelect | {to}, {danger}].
+// Closes on Escape, a click outside, or picking an item; arrow keys move between items.
+export function MoreMenu({ label = 'More', items, LinkAs }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => { if (!box.current?.contains(e.target)) setOpen(false); };
+    const key = (e) => {
+      if (e.key === 'Escape') { setOpen(false); box.current?.querySelector('button')?.focus(); }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        const all = [...box.current.querySelectorAll('[role="menuitem"]')];
+        const i = all.indexOf(document.activeElement);
+        all[(i + (e.key === 'ArrowDown' ? 1 : all.length - 1)) % all.length]?.focus();
+        e.preventDefault();
+      }
+    };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key);
+    box.current?.querySelector('[role="menuitem"]')?.focus();
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', key); };
+  }, [open]);
+  return (
+    <span className="menu" ref={box}>
+      <button type="button" className="btn" style={{ height: 32 }} aria-haspopup="menu" aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}>{label}</button>
+      {open && (
+        <span className="menu-list" role="menu">
+          {items.filter(Boolean).map(([text, act, opts = {}]) => (act?.to && LinkAs
+            ? <LinkAs key={text} to={act.to} role="menuitem" className="menu-item" onClick={() => setOpen(false)}>{text}</LinkAs>
+            : (
+              <button key={text} type="button" role="menuitem" className={`menu-item${opts.danger ? ' c-danger' : ''}`}
+                onClick={() => { setOpen(false); act(); }}>{text}</button>
+            )))}
+        </span>
+      )}
+    </span>
+  );
+}

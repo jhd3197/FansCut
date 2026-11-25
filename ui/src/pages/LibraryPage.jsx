@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad, useUrlState, useDebounced } from '../lib/hooks.js';
+import { useAct, useHashScroll, useLoad, useUrlState, useDebounced } from '../lib/hooks.js';
 import { Empty, ErrorBox, Loading, Notice, SkeletonTiles } from '../components/ui.jsx';
 import { Backdrop, MediaTile, Search, Section, Shelf, enc } from '../components/kit.jsx';
 
@@ -45,6 +45,7 @@ export function LibraryPage() {
   // series sources only list Sonarr/Plex/folder shows; a movies-only library is still set up
   const noSources = data && !(data.series.sources || []).length && !(data.movies.movies || []).length && !errors.length;
   const nothing = data && !collections.length && !series.length && !movies.length;
+  useHashScroll(!!data);
 
   return (
     <div className="page page-wide">

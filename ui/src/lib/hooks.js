@@ -1,6 +1,6 @@
 // @ts-check
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { useLocation, useSearchParams } from 'react-router';
 import { toast } from './toast.js';
 
 // Load on mount (and when `deps` change); `reload()` refetches without blanking the page.
@@ -55,6 +55,34 @@ export function usePageTitle(title) {
   useEffect(() => {
     document.title = title ? `${title} · FansCut` : 'FansCut';
   }, [title]);
+}
+
+// Link state that lets the next page's crumb lead back here ("Discover / Took").
+// The label is this page's tab title, which every page sets.
+export function useFrom() {
+  const { pathname, search, hash } = useLocation();
+  const label = (typeof document !== 'undefined' ? document.title : '').split(' · ')[0];
+  return label && label !== 'FansCut' ? { from: { label, to: pathname + search + hash } } : undefined;
+}
+
+// Where the crumb root of a cut page goes: back to the page that opened it,
+// else My cuts. Carried along to the cut's Build and editor pages.
+export function useCrumbRoot() {
+  const from = useLocation().state?.from;
+  return { root: from ? [from.label, from.to] : ['My cuts', '/my-cuts'], state: from ? { from } : undefined };
+}
+
+// Scroll to the URL's #fragment once the page has the element (lists load late).
+export function useHashScroll(ready) {
+  const { hash } = useLocation();
+  const done = useRef('');
+  useEffect(() => {
+    if (!ready || !hash || done.current === hash) return;
+    const el = document.getElementById(decodeURIComponent(hash.slice(1)));
+    if (!el) return;
+    done.current = hash;
+    el.scrollIntoView({ block: 'start' });
+  }, [ready, hash]);
 }
 
 // Run an async action; its outcome (ok text or error) shows as a toast, so it

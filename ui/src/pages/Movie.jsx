@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { ErrorBox, Loading } from '../components/ui.jsx';
 import { Crumbs, KV, Section, hm } from '../components/kit.jsx';
-import { TimelineTile } from './Discover.jsx';
+import { SuggestionDialog, SuggestionTile, TimelineTile } from './Discover.jsx';
 import { FilmTile } from './Collection.jsx';
 import { movieTag } from './LibraryPage.jsx';
 import { TemplateDialog } from '../components/TemplateDialog.jsx';
@@ -65,10 +65,12 @@ function Health({ findings }) {
 export function MoviePage() {
   const { key } = useParams();
   const [tpl, setTpl] = useState(false);
+  const [open, setOpen] = useState(null);
   const { data: m, error, loading, reload } = useApi(`/library/movies/${encodeURIComponent(key)}`);
+  const sugg = useApi('/suggestions', { quiet: true });
   usePageTitle(m?.title);
 
-  if (error && !m) return <div className="page"><Crumbs items={[['Library', '/library'], ['Movies', '/library'], [key]]} /><ErrorBox error={error} onRetry={reload} /></div>;
+  if (error && !m) return <div className="page"><Crumbs items={[['Library', '/library'], ['Movies', '/library#movies-h'], [key]]} /><ErrorBox error={error} onRetry={reload} /></div>;
   if (loading || !m) return <div className="page"><Loading what="Reading the file" /></div>;
 
   const p = m.probe;
@@ -87,9 +89,14 @@ export function MoviePage() {
       : <Health findings={m.findings} />],
   ];
 
+  // suggestions that use this film and are not installed yet
+  const installed = new Set(m.cuts.map((c) => c.title));
+  const ideas = (sugg.data?.suggestions || []).filter((s) => s.keys?.includes(m.key) && !installed.has(s.title));
+  const shelf = m.cuts.length + ideas.length;
+
   return (
     <div className="page" style={{ gap: 30 }}>
-      <Crumbs items={[['Library', '/library'], ['Movies', '/library'], [m.title]]} />
+      <Crumbs items={[['Library', '/library'], ['Movies', '/library#movies-h'], [m.title]]} />
 
       <div className="hero" style={{ gap: 28 }}>
         <div className="pst pst-plain" style={{ width: 200, flex: 'none' }}>
@@ -109,13 +116,15 @@ export function MoviePage() {
         </div>
       </div>
 
-      {m.cuts.length > 0 && (
-        <Section id="m-cuts" title="Cuts and playlists with this film" count={m.cuts.length}>
+      {shelf > 0 && (
+        <Section id="m-cuts" title="Cuts and playlists with this film" count={shelf}>
           <div className="shelf">
             {m.cuts.map((c) => <TimelineTile key={c.id} c={c} />)}
+            {ideas.map((s) => <SuggestionTile key={s.id} s={s} onOpen={setOpen} />)}
           </div>
         </Section>
       )}
+      {open && <SuggestionDialog s={open} onClose={() => setOpen(null)} />}
 
       {m.collection_films.map((c, i) => (
         <Section key={c.name} id={`m-coll-${i}`} title={`In the collection: ${c.name}`} count={c.films.length}

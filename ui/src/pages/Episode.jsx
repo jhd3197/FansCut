@@ -213,7 +213,12 @@ export function EpisodePage() {
           preview={ep.has_file ? (kind, range) => setPreview({ kind, range }) : undefined} />
         {preview && <Preview base={base} eid={eid} what={preview} onClose={() => setPreview(null)} />}
         <div className="row wrap">
-          <Link className="btn" to={`${showTo}/season/${ep.season}`}>Back to {seasonName(ep.season).toLowerCase()}</Link>
+          {i.cuts.length > 0 ? (
+            <Link className="btn" to={`/cuts/${enc(i.cuts[0].id)}/edit`}
+              title={`Edit this episode's place in “${i.cuts[0].title}”`}>Open in editor</Link>
+          ) : (
+            <Link className="btn" to={`${showTo}/season/${ep.season}`}>Back to {seasonName(ep.season).toLowerCase()}</Link>
+          )}
           <button type="button" className="btn" disabled={busy || !userTrims.length} onClick={resetAll}
             title="Forget your edits to the trims of this episode">Reset to detected</button>
         </div>

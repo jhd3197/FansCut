@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useLoad, usePageTitle } from '../lib/hooks.js';
+import { useCrumbRoot, useLoad, usePageTitle } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
 import { Crumbs, enc, hm, KV, Poster, SRC_COLOURS } from '../components/kit.jsx';
 import { ErrorBox, Loading } from '../components/ui.jsx';
@@ -148,6 +148,7 @@ function Variants({ view, value, onChange }) {
               <input type="radio" name="variant" checked={value === v.id} onChange={() => onChange(v.id)} style={{ margin: '3px 0 0' }} />
               <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 <b style={{ fontWeight: 600 }}>{v.label}</b>
+                {v.description && <span className="tiny" style={{ color: 'var(--text2)' }}>{v.description}</span>}
                 <span className="tiny muted">{hm(v.runtime / 60)}</span>
                 {v.blocked.map((b) => (
                   <span key={b.id} className="tiny c-danger">{b.label}: {b.reason}</span>
@@ -175,6 +176,7 @@ export function CutDetail() {
   const hasMovies = Object.values(tl.data?.doc?.sources || {}).some((s) => s.kind === 'movie');
   const movies = useLoad(() => (hasMovies ? api('/library/movies') : Promise.resolve({ movies: [] })), [hasMovies]);
   const [variant, setVariant] = useState('');
+  const crumb = useCrumbRoot();
 
   if (tl.error && !tl.data) return <div className="page"><ErrorBox error={tl.error} onRetry={tl.reload} /></div>;
   if (!tl.data) return <div className="page"><Loading /></div>;
@@ -204,7 +206,7 @@ export function CutDetail() {
 
   return (
     <div className="page">
-      <Crumbs items={[['My cuts', '/my-cuts'], [doc.title]]} />
+      <Crumbs items={[crumb.root, [doc.title]]} />
       <div className="hero">
         <div style={{ width: 240, flex: 'none' }}>
           <Poster title={doc.title} sub={subtitle} tag={doc.category || 'Cut'} kind={posterKind(doc)} />
@@ -217,8 +219,8 @@ export function CutDetail() {
           </div>
           {description && <p style={{ margin: 0, color: 'var(--text2)', maxWidth: 620 }}>{description}</p>}
           <div className="row wrap">
-            <Link className="btn btn-primary" to={buildTo}>Build this cut</Link>
-            <Link className="btn" to={`/cuts/${enc(id)}/edit`}>Open in editor</Link>
+            <Link className="btn btn-primary" to={buildTo} state={crumb.state}>Build this cut</Link>
+            <Link className="btn" to={`/cuts/${enc(id)}/edit`} state={crumb.state}>Open in editor</Link>
             {url && <a className="btn" href={url} target="_blank" rel="noreferrer">View on GitHub</a>}
           </div>
           <Variants view={variants.data} value={chosen?.id ?? ''} onChange={setVariant} />
@@ -229,6 +231,11 @@ export function CutDetail() {
         <SourceList doc={doc} missing={tl.data.missing || []} report={report} movieKeys={movieKeys} seriesKey={tl.data.series_key} />
         <Segments doc={doc} values={chosen?.toggles} report={report} />
       </div>
+      <p className="tiny muted" style={{ margin: 0, maxWidth: 720 }}>
+        Joining is automatic: every cut point is lined up with your own copies, the audio track in your preferred
+        language is picked, each source’s text subtitles are re-timed to the cut, and chapters mark where each
+        source starts. Sources that share codecs are copied without re-encoding.
+      </p>
       <section aria-labelledby="c-about" className="section" style={{ gap: 12 }}>
         <h2 id="c-about">About this cut</h2>
         <KV rows={[

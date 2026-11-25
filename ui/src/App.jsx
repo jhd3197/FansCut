@@ -137,6 +137,23 @@ export function App() {
     if (fixed[where]) document.title = `${fixed[where]} · FansCut`;
   }, [where]);
   if (locked) return <KeyGate />;
+  // The editor is full screen, like an NLE: no app sidebar (its bar has a Home link).
+  if (/^\/cuts\/[^/]+\/edit\/?$/.test(where)) {
+    return (
+      <div className="shell-full">
+        <LoadingBar />
+        <main className="main main-full">
+          <StatusChecker />
+          <ErrorBoundary resetKey={where}>
+            <Suspense fallback={<div className="page"><Loading /></div>}>
+              <Routes><Route path="/cuts/:id/edit" element={<TimelineEdit />} /></Routes>
+            </Suspense>
+          </ErrorBoundary>
+        </main>
+        <Toasts />
+      </div>
+    );
+  }
   return (
     <div className="shell">
       <LoadingBar />

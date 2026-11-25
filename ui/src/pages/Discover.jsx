@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad, useUrlState, useDebounced, useShelfLayout } from '../lib/hooks.js';
+import { useAct, useFrom, useLoad, useUrlState, useDebounced, useShelfLayout } from '../lib/hooks.js';
 import { Dialog, Empty, ErrorBox, Loading, Notice, SkeletonTiles } from '../components/ui.jsx';
 import { Backdrop, CutTile, KV, Search, Seg, Shelf, enc, hm } from '../components/kit.jsx';
 
@@ -104,6 +104,7 @@ const STATUS_CLASS = { ready: 'c-ready', partly: 'c-warn', missing: 'c-danger' }
 // What a suggestion is, its status, what is missing, and the install button.
 export function SuggestionDialog({ s, onClose }) {
   const navigate = useNavigate();
+  const from = useFrom();
   const { act, msg, busy, clear } = useAct();
   const isPlaylist = s.kind === 'watch_order';
 
@@ -116,7 +117,7 @@ export function SuggestionDialog({ s, onClose }) {
     if (!res) return;
     if (res.action === 'playlist') return;
     const tid = res.timeline || (repo ? res.id : null);
-    navigate(tid ? `/cuts/${enc(tid)}` : '/jobs');
+    navigate(tid ? `/cuts/${enc(tid)}` : '/jobs', { state: from });
   };
 
   const d = s.detail || {};

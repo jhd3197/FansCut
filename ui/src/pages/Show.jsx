@@ -8,6 +8,7 @@ import { MatchDialog } from '../components/MatchDialog.jsx';
 import { RecipeDialog, downloadJson, recipeFileName } from '../components/Recipe.jsx';
 import { audioSummary, showFolder, subtitleSummary } from './Episode.jsx';
 import { useApi } from '../lib/store.js';
+import { SuggestionDialog, SuggestionTile } from './Discover.jsx';
 
 const BLANK = (title) => ({
   schema: 2, kind: 'timeline', title: `${title} — Timeline`,
@@ -24,10 +25,33 @@ function yearSpan(eps, fallback) {
 }
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+// A recipe's category ("Canon cut", "Chronological") as caption text; never on the art.
+const cutKind = (t) => (t.category ? t.category.charAt(0).toUpperCase() + t.category.slice(1) : 'Timeline');
+
+// "Missing OVA 1, Final Chapters and 2 more": which specials, so the gap means something.
+function missingNote(eps) {
+  const gone = eps.filter((e) => !e.has_file).map((e) => e.title || e.id);
+  const head = gone.slice(0, 2).join(', ');
+  return gone.length > 2 ? `Missing ${head} and ${gone.length - 2} more` : `Missing ${head}`;
+}
+
 function SeasonTile({ to, season, eps }) {
   const onDisk = eps.filter((e) => e.has_file).length;
   const missing = eps.length - onDisk;
   const special = season === 0;
+  if (special && missing) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <SeasonLink to={to} season={season} eps={eps} onDisk={onDisk} missing={missing} special
+          note={missingNote(eps)} />
+        <Link to="/health" className="tiny">Why this matters: see Health</Link>
+      </div>
+    );
+  }
+  return <SeasonLink to={to} season={season} eps={eps} onDisk={onDisk} missing={missing} special={special} />;
+}
+
+function SeasonLink({ to, season, eps, onDisk, missing, special, note }) {
   return (
     <Link to={to} style={{ display: 'flex', flexDirection: 'column', gap: 8, color: 'var(--text)', textDecoration: 'none' }}>
       <div style={{ aspectRatio: '16 / 9', borderRadius: 6, background: special && missing ? 'color-mix(in srgb, var(--danger) 8%, var(--panel))' : 'var(--poster)', border: '1px solid var(--line)', display: 'flex', alignItems: 'flex-end', padding: 14, boxSizing: 'border-box' }}>
@@ -36,7 +60,7 @@ function SeasonTile({ to, season, eps }) {
         </span>
       </div>
       <span style={{ fontSize: 13, fontWeight: 600 }}>{missing ? `${onDisk} of ${plural(eps.length, 'episode')}` : plural(eps.length, 'episode')}</span>
-      <span className={`tiny ${missing ? 'c-danger' : 'muted'}`}>{missing ? `${missing} missing` : yearSpan(eps) || ' '}</span>
+      <span className={`tiny ${missing ? 'c-danger' : 'muted'}`}>{note || (missing ? `${missing} missing` : yearSpan(eps) || ' ')}</span>
     </Link>
   );
 }
@@ -48,6 +72,8 @@ export function ShowPage() {
   const view = useApi(`${base}/episodes`);
   usePageTitle(view.data?.series?.title);
   const tls = useApi(`${base}/timelines`);
+  const sugg = useApi('/suggestions', { quiet: true });
+  const [idea, setIdea] = useState(null);
   const eps = view.data?.episodes || [];
   const first = (eps.find((e) => e.has_file && e.season > 0) || eps.find((e) => e.has_file))?.id;
   const probe = useLoad(() => (first ? api(`${base}/episodes/${enc(first)}/info`).catch(() => null) : Promise.resolve(null)), [key, first]);
@@ -78,6 +104,8 @@ export function ShowPage() {
   const audio = audioSummary(info?.probe);
   const folder = showFolder(info?.file);
   const timelines = tls.data?.timelines || [];
+  const have = new Set(timelines.map((t) => t.title));
+  const ideas = (sugg.data?.suggestions || []).filter((x) => x.keys?.includes(key) && !have.has(x.title));
 
   const autoMatch = () => act(async () => {
     const r = await api(`${base}/match/auto`, { method: 'POST' });
@@ -110,7 +138,7 @@ export function ShowPage() {
 
   return (
     <div className="page" style={{ gap: 30 }}>
-      <Crumbs items={[['Library', '/library'], ['Shows', '/library'], [series.title]]} />
+      <Crumbs items={[['Library', '/library'], ['Shows', '/library#shows-h'], [series.title]]} />
       <Notice msg={msg} onClose={clear} />
 
       <div className="hero" style={{ gap: 28 }}>
@@ -158,7 +186,7 @@ export function ShowPage() {
         )}
       </Section>
 
-      <Section id="s-cuts" title="Cuts and playlists for this show" count={timelines.length} end={(
+      <Section id="s-cuts" title="Cuts and playlists for this show" count={timelines.length + ideas.length} end={(
         <span className="row">
           <button type="button" className="btn btn-sm" onClick={() => file.current.click()} disabled={busy}>Import timeline</button>
           <button type="button" className="btn btn-sm" onClick={() => create(BLANK(series.title))} disabled={busy}>New timeline</button>
@@ -167,15 +195,15 @@ export function ShowPage() {
       )}>
         {tls.error && <ErrorBox error={tls.error} onRetry={tls.reload} />}
         {!tls.data && !tls.error && <Loading />}
-        {tls.data && timelines.length === 0 && (
+        {tls.data && timelines.length === 0 && ideas.length === 0 && (
           <p className="muted" style={{ margin: 0 }}>No timelines yet. A timeline is a reordered or merged cut of this show, kept as a recipe. Import one or start a new one.</p>
         )}
-        {timelines.length > 0 && (
+        {timelines.length + ideas.length > 0 && (
           <div className="shelf">
             {timelines.map((t) => (
               <div key={t.id} style={{ flex: '0 0 164px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <CutTile to={`/cuts/${enc(t.id)}`} title={t.title} sub={series.title} tag="Timeline" kind="order"
-                  meta={`${plural(t.parts, 'part')} · ${plural(t.sources, 'source')}`}
+                <CutTile to={`/cuts/${enc(t.id)}`} title={t.title} sub={series.title} tag={cutKind(t)} kind="order"
+                  meta={`${cutKind(t)} · ${plural(t.parts, 'part')} · ${plural(t.sources, 'source')}`}
                   status={t.synced ? 'ready' : undefined} note={t.synced ? 'Synced' : 'Not synced yet'} />
                 <span className="row" style={{ gap: 4 }}>
                   <button type="button" className="btn btn-sm btn-ghost" onClick={() => exportTl(t)} aria-label={`Export ${t.title}`}>Export</button>
@@ -183,9 +211,11 @@ export function ShowPage() {
                 </span>
               </div>
             ))}
+            {ideas.map((x) => <SuggestionTile key={x.id} s={x} onOpen={setIdea} />)}
           </div>
         )}
       </Section>
+      {idea && <SuggestionDialog s={idea} onClose={() => setIdea(null)} />}
 
       {dialog === 'match' && <MatchDialog series={series} matches={matches} onClose={() => setDialog(null)} onChanged={view.reload} />}
       {dialog === 'recipe' && <RecipeDialog series={series} onClose={() => setDialog(null)} onImported={view.reload} />}

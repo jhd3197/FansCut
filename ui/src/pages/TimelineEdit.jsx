@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { api, seriesPath } from '../lib/api.js';
-import { useAct, useLoad, usePoll } from '../lib/hooks.js';
+import { useAct, useCrumbRoot, useLoad, usePoll } from '../lib/hooks.js';
 import { fmtDuration, fmtTime, parseTime } from '../lib/time.js';
 import {
   flatSegments, moveItem, recipeIssues, rulerTicks, segmentSync, sourceJoins, syncCounts,
@@ -85,6 +85,7 @@ function SyncReport({ report, onPreview }) {
 
 export function TimelineEdit() {
   const { id } = useParams();
+  const crumb = useCrumbRoot();
   const tl = useApi(`/timelines/${enc(id)}`);
   const seriesKey = tl.data?.series_key;
   const base = seriesKey ? seriesPath(seriesKey) : null;
@@ -314,12 +315,12 @@ export function TimelineEdit() {
 
   return (
     <div className="page page-wide">
-      
       <Notice msg={msg} onClose={clear} />
       <div className="nle">
         <div className="bar">
           <div className="bar-l">
-            <Link to={`/cuts/${enc(id)}`} className="bt" aria-label="Back to the cut">← Cut</Link>
+            <Link to="/" className="bt" aria-label="FansCut home" title="FansCut home">⌂</Link>
+            <Link to={`/cuts/${enc(id)}`} state={crumb.state} className="bt" aria-label="Back to the cut">← Cut</Link>
             <b className="ell" style={{ fontSize: 14, maxWidth: 320 }}>{doc.title}</b>
             <span style={{ color: 'var(--nm)' }}>{runtimeNote}{dirty ? ' · unsaved' : ''}</span>
           </div>
@@ -343,7 +344,7 @@ export function TimelineEdit() {
             <input ref={file} type="file" accept="application/json,.json" hidden onChange={onFile} data-testid="recipe-file" />
             <button type="button" className="bt" onClick={exportRecipe} disabled={busy}>Export recipe</button>
             <button type="button" className="bt" onClick={save} disabled={busy}>Save</button>
-            <Link to={`/cuts/${enc(id)}/build`} className="bt bp">Render</Link>
+            <Link to={`/cuts/${enc(id)}/build`} state={crumb.state} className="bt bp">Render</Link>
           </div>
         </div>
 
@@ -674,7 +675,7 @@ export function TimelineEdit() {
               <span className="on">Render check</span>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                 <button type="button" className="bt" onClick={dryRun} disabled={busy}>Dry run</button>
-                <Link to={`/cuts/${enc(id)}/build`} className="bt bp">Render…</Link>
+                <Link to={`/cuts/${enc(id)}/build`} state={crumb.state} className="bt bp">Render…</Link>
               </span>
             </div>
             <div className="wide">

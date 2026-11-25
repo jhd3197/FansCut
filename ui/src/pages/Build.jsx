@@ -2,7 +2,7 @@
 import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad, usePoll } from '../lib/hooks.js';
+import { useAct, useCrumbRoot, useLoad, usePoll } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
 import { Crumbs, enc, hm, SRC_COLOURS } from '../components/kit.jsx';
 import { Dialog, ErrorBox, Loading, Notice, Progress } from '../components/ui.jsx';
@@ -163,7 +163,7 @@ function Review({ doc, weak, checked, onCheck, onPreview, editTo }) {
   );
 }
 
-function BuildPlan({ dry, error, loading }) {
+function BuildPlan({ dry, error, loading, effectcraft, plex }) {
   if (error) return <ErrorBox error={error} />;
   if (!dry) return loading ? <Loading what="Planning the build" /> : null;
   const parts = dry.parts || [];
@@ -171,6 +171,11 @@ function BuildPlan({ dry, error, loading }) {
   const copy = live.filter((p) => p.mode === 'copy').reduce((a, p) => a + p.runtime, 0);
   const encode = live.filter((p) => p.mode !== 'copy').reduce((a, p) => a + p.runtime, 0);
   const warnings = parts.flatMap((p) => p.warnings || []);
+  const fx = live.flatMap((p) => (p.segments || []).filter((s) => s.fx && Object.keys(s.fx).length));
+  const fxSecs = fx.reduce((a, s) => a + (s.duration || 0), 0);
+  const graded = fx.filter((s) => s.fx.video?.grade && !s.fx.speed).length;
+  const join = ['subtitles re-timed to the cut', 'a chapter per source', plex && 'Plex refreshed']
+    .filter(Boolean).join(', ');
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <span className="tiny muted">Where the time goes</span>
@@ -183,6 +188,11 @@ function BuildPlan({ dry, error, loading }) {
       <dl className="kv">
         {copy > 0 && (<><dt><span className="c-ready">■</span> Copy</dt><dd>{fmtTime(copy)} copied as-is: fast, minutes</dd></>)}
         {encode > 0 && (<><dt><span className="c-accent">■</span> Re-encode</dt><dd>{fmtTime(encode)} re-encoded: most of the time</dd></>)}
+        {fx.length > 0 && (
+          <><dt>Effects</dt><dd>{fx.length} segment{fx.length === 1 ? '' : 's'} ({fmtTime(fxSecs)}) with speed, fades, grades or titles
+            {graded > 0 && (effectcraft ? ` · ${graded} graded through EffectCraft` : ` · ${graded} graded with ffmpeg (EffectCraft is not set up)`)}</dd></>
+        )}
+        {live.length > 0 && (<><dt>Join</dt><dd>Quick, at the end: {join}</dd></>)}
         <dt>Runtime</dt><dd>{hm(dry.runtime / 60)} · {dry.layout === 'movie' ? 'one film' : `${live.length} episode${live.length === 1 ? '' : 's'}`}</dd>
         {live.map((p) => (
           <div key={p.part} style={{ display: 'contents' }}>
@@ -221,6 +231,8 @@ export function Build() {
   const [checked, setChecked] = useState({});
   const [job, setJob] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [collection, setCollection] = useState(true);
+  const crumb = useCrumbRoot();
   const { act, msg, busy, clear } = useAct();
 
   const pollJob = useCallback(async () => {
@@ -262,7 +274,7 @@ export function Build() {
 
   const runSync = () => act(async () => setJob(await api(`/timelines/${enc(id)}/sync`, { method: 'POST' })), 'Matching cut points against your files');
   const start = () => act(async () => {
-    await api(`/timelines/${enc(id)}/render`, { method: 'POST', body: { variant: variant || null, keep: keepValue } });
+    await api(`/timelines/${enc(id)}/render`, { method: 'POST', body: { variant: variant || null, keep: keepValue, collection: plex && collection } });
     nav('/jobs');
   });
   const onCheck = (keys, on) => setChecked((c) => {
@@ -279,7 +291,7 @@ export function Build() {
 
   return (
     <div className="page" style={{ maxWidth: 980 }}>
-      <Crumbs items={[['My cuts', '/my-cuts'], [doc.title, `/cuts/${enc(id)}`], ['Build']]} />
+      <Crumbs items={[crumb.root, [doc.title, `/cuts/${enc(id)}`, crumb.state], ['Build']]} />
       <Stepper steps={steps} />
       <Notice msg={msg} onClose={clear} />
 
@@ -330,6 +342,7 @@ export function Build() {
                 <input type="radio" name="variant" checked={(chosen?.id ?? '') === v.id} onChange={() => setVariant(v.id)} style={{ margin: '3px 0 0' }} />
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   <b style={{ fontWeight: 600 }}>{v.label}</b>
+                  {v.description && <span className="tiny" style={{ color: 'var(--text2)' }}>{v.description}</span>}
                   <span className="tiny muted">{hm(v.runtime / 60)}</span>
                   {v.blocked.map((b) => <span key={b.id} className="tiny c-danger">{b.label}: {b.reason}</span>)}
                 </span>
@@ -337,7 +350,8 @@ export function Build() {
             ))}
           </fieldset>
         )}
-        <BuildPlan dry={dry.data} error={dry.error} loading={dry.loading} />
+        <BuildPlan dry={dry.data} error={dry.error} loading={dry.loading} plex={plex}
+          effectcraft={Boolean(settings.data?.render?.effectcraft_cli && settings.data?.render?.effectcraft_grade)} />
         {settings.data && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid var(--raised)', paddingTop: 14 }}>
             <span className="tiny muted">Speed-ups</span>
@@ -355,12 +369,17 @@ export function Build() {
             <input type="checkbox" checked={keepValue} onChange={(e) => setKeep(e.target.checked)} />
             Keep the file{settings.data?.render?.ephemeral_days ? ` (otherwise it’s cleaned up after ${settings.data.render.ephemeral_days} days)` : ''}
           </label>
-          {plex && <span className="muted">When it’s done, FansCut refreshes Plex and adds it to the “FansCut” collection.</span>}
+          {plex && (
+            <label className="check">
+              <input type="checkbox" checked={collection} onChange={(e) => setCollection(e.target.checked)} />
+              Add it to the “FansCut” collection in Plex
+            </label>
+          )}
         </div>
       </section>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
-        <Link className="btn" to={`/cuts/${enc(id)}`}>Back</Link>
+        <Link className="btn" to={`/cuts/${enc(id)}`} state={crumb.state}>Back</Link>
         <div className="row wrap">
           {blocker && <span className="muted" style={{ fontSize: 13 }}>{blocker}</span>}
           {rendering && <Link className="btn" to="/jobs">Open in Jobs</Link>}

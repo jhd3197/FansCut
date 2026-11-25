@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { LabelBadge, Progress } from './ui.jsx';
+import { LabelBadge, MoreMenu, Progress } from './ui.jsx';
 import { TrimFields } from './TrimFields.jsx';
 import { SegmentsFields } from './SegmentsFields.jsx';
 import { EpisodeTrack } from './Timeline.jsx';
@@ -131,5 +131,22 @@ describe('settings helper', () => {
     const b = setPath(a, 'x.y', 9);
     expect(b).toEqual({ x: { y: 9, z: 2 } });
     expect(a.x.y).toBe(1);
+  });
+});
+
+describe('MoreMenu', () => {
+  it('opens, runs an item and closes; Escape closes it too', () => {
+    const del = vi.fn();
+    render(<MoreMenu items={[['Delete…', del, { danger: true }], false]} />);
+    const more = screen.getByRole('button', { name: 'More' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(more);
+    expect(more.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    expect(del).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(more);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 });

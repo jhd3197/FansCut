@@ -5,7 +5,7 @@ import { api } from '../lib/api.js';
 import { useAct, usePoll, useUrlState } from '../lib/hooks.js';
 import { enc, hm, Poster, Seg } from '../components/kit.jsx';
 import { TemplateDialog } from '../components/TemplateDialog.jsx';
-import { Dialog, Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import { Dialog, Empty, ErrorBox, Loading, MoreMenu, Notice } from '../components/ui.jsx';
 import { useApi } from '../lib/store.js';
 
 const ACTIVE = ['queued', 'running'];
@@ -122,12 +122,18 @@ export function MyCuts() {
                   {upd[c.id]?.update && <span className="c-accent"> → {upd[c.id].latest.slice(0, 7)}</span>}
                 </span>
                 <span className="row wrap" style={{ gap: 6, justifyContent: 'flex-end' }}>
-                  {upd[c.id]?.update && <button type="button" className="btn btn-primary" style={{ height: 32 }} disabled={busy} onClick={() => update(c)}>Update</button>}
-                  {building
-                    ? <Link className="btn" style={{ height: 32 }} to="/jobs">Open in Jobs</Link>
-                    : <Link className="btn" style={{ height: 32 }} to={`/cuts/${enc(c.id)}/build`}>Build</Link>}
-                  <Link className="btn" style={{ height: 32 }} to={`/cuts/${enc(c.id)}/edit`}>Open in editor</Link>
-                  <button type="button" className="btn btn-ghost" style={{ height: 32 }} onClick={() => setDoomed(c)}>Delete</button>
+                  {/* one primary action; the rest live in More */}
+                  {upd[c.id]?.update
+                    ? <button type="button" className="btn btn-primary" style={{ height: 32 }} disabled={busy} onClick={() => update(c)}>Update</button>
+                    : building
+                      ? <Link className="btn" style={{ height: 32 }} to="/jobs">Open in Jobs</Link>
+                      : <Link className="btn" style={{ height: 32 }} to={`/cuts/${enc(c.id)}/build`}>Build</Link>}
+                  <MoreMenu LinkAs={Link} items={[
+                    upd[c.id]?.update && !building && ['Build', { to: `/cuts/${enc(c.id)}/build` }],
+                    upd[c.id]?.update && building && ['Open in Jobs', { to: '/jobs' }],
+                    ['Open in editor', { to: `/cuts/${enc(c.id)}/edit` }],
+                    ['Delete…', () => setDoomed(c), { danger: true }],
+                  ]} />
                 </span>
               </li>
             );
