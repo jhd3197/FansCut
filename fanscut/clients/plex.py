@@ -29,7 +29,8 @@ class PlexClient(BaseClient):
         return [{"key": str(s["key"]), "type": s["type"], "title": s["title"]} for s in data]
 
     def shows(self, section_key: str) -> list[dict[str, Any]]:
-        return self._get(f"/library/sections/{section_key}/all", {"type": 2})["MediaContainer"].get(
+        return self._get(f"/library/sections/{section_key}/all",
+                         {"type": 2, "includeGuids": 1})["MediaContainer"].get(
             "Metadata", []
         )
 
@@ -39,7 +40,8 @@ class PlexClient(BaseClient):
         )
 
     def movies(self, section_key: str) -> list[dict[str, Any]]:
-        return self._get(f"/library/sections/{section_key}/all", {"type": 1})["MediaContainer"].get(
+        return self._get(f"/library/sections/{section_key}/all",
+                         {"type": 1, "includeGuids": 1})["MediaContainer"].get(
             "Metadata", []
         )
 

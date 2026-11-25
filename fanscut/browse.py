@@ -91,9 +91,7 @@ def collection(core: Core, name: str) -> dict[str, Any]:
 
 def movie(core: Core, key: str) -> dict[str, Any]:
     ms, _ = core.library.list_movies()
-    m = next((x for x in ms if x.key == key), None)
-    if m is None:
-        raise NotFoundError(f"movie {key} not found")
+    m = next((x for x in ms if x.key == key), None) or core.library.get_movie(key)
     health = _health_by_file(core)
     row = movie_row(m, health)
     info: dict[str, Any] | None = None

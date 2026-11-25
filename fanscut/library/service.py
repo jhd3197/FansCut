@@ -6,6 +6,7 @@ Durations missing from the source come from ffprobe, cached in SQLite.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from functools import partial
@@ -73,8 +74,13 @@ class Library:
         return map_path(path, self.cfg.library.path_mappings)
 
     # -- series ---------------------------------------------------------------
-    def list_series(self) -> tuple[list[Series], dict[str, str]]:
-        """All series plus {source: error} for sources that failed (others still list)."""
+    def list_series(self, merged: bool = True) -> tuple[list[Series], dict[str, str]]:
+        """All series plus {source: error} for sources that failed (others still list).
+
+        With Sonarr and Plex both on, a show they both have is listed once, as
+        Sonarr's (it knows the series type and alternate titles); merged=False
+        keeps every source's copy, for looking a series up by any of its keys.
+        """
         out: list[Series] = []
         errors: dict[str, str] = {}
         for src in self.sources():
@@ -82,6 +88,8 @@ class Library:
                 out.extend(self._cached(f"series:{src}", partial(self._series_of, src)))
             except ClientError as exc:
                 errors[src] = str(exc)
+        if merged:
+            out = _merge_series(out)
         return sorted(out, key=lambda s: s.title.lower()), errors
 
     def _series_of(self, src: str) -> list[Series]:
@@ -126,15 +134,20 @@ class Library:
         )
 
     def get_series(self, key: str) -> Series:
-        series, _ = self.list_series()
+        series, _ = self.list_series(merged=False)
         for s in series:
             if s.key == key:
                 return s
         raise NotFoundError(f"series {key} not found")
 
     # -- movies ----------------------------------------------------------------
-    def list_movies(self) -> tuple[list[Movie], dict[str, str]]:
-        """All movies plus {source: error}; sources: radarr, plex movie sections, folder."""
+    def list_movies(self, merged: bool = True) -> tuple[list[Movie], dict[str, str]]:
+        """All movies plus {source: error}; sources: radarr, plex movie sections, folder.
+
+        The same file seen by Radarr and Plex is listed once (Radarr's entry,
+        with Plex's collections added); a second edition is a second file and
+        stays. merged=False keeps every copy, for lookups by any key.
+        """
         out: list[Movie] = []
         errors: dict[str, str] = {}
         for src in self._movie_sources():
@@ -142,7 +155,16 @@ class Library:
                 out.extend(self._cached(f"movies:{src}", partial(self._movies_of, src)))
             except ClientError as exc:
                 errors[src] = str(exc)
+        if merged:
+            out = _merge_movies(out)
         return sorted(out, key=lambda m: m.title.lower()), errors
+
+    def get_movie(self, key: str) -> Movie:
+        movies, _ = self.list_movies(merged=False)
+        for m in movies:
+            if m.key == key:
+                return m
+        raise NotFoundError(f"movie {key} not found")
 
     def _movie_sources(self) -> list[str]:
         lib = self.cfg.library
@@ -261,3 +283,87 @@ class Library:
                 duration=ms / 1000 if ms else None, air_date=m.get("originallyAvailableAt"),
             ))
         return out
+
+
+# -- one entry per show / file across sources -------------------------------------
+def _title_key(title: str, year: int | None) -> tuple[str, int | None]:
+    return ("".join(ch for ch in title.lower() if ch.isalnum()), year)
+
+
+def _merge_series(items: list[Series]) -> list[Series]:
+    """Drop later sources' copies of a show already listed (same TVDB id, else title + year).
+
+    Sources come in priority order (Sonarr, Plex, folder); the kept entry
+    picks up ids it lacked from the dropped copy.
+    """
+    kept: list[Series] = []
+    by_tvdb: dict[int, Series] = {}
+    by_title: dict[tuple[str, int | None], Series] = {}
+    for s in items:
+        tk = _title_key(s.title, s.year)
+        hit = (by_tvdb.get(s.tvdb_id) if s.tvdb_id else None) or by_title.get(tk)
+        if hit is not None and (not hit.tvdb_id or not s.tvdb_id or hit.tvdb_id == s.tvdb_id):
+            hit.tvdb_id = hit.tvdb_id or s.tvdb_id
+            hit.tmdb_id = hit.tmdb_id or s.tmdb_id
+            hit.episode_count = hit.episode_count or s.episode_count
+            if hit.tvdb_id:
+                by_tvdb.setdefault(hit.tvdb_id, hit)
+            continue
+        kept.append(s)
+        if s.tvdb_id:
+            by_tvdb.setdefault(s.tvdb_id, s)
+        by_title.setdefault(tk, s)
+    return kept
+
+
+def _file_key(path: str) -> str:
+    return os.path.normcase(os.path.normpath(path))
+
+
+def _merge_movies(items: list[Movie]) -> list[Movie]:
+    """One entry per file: Radarr's, with Plex's collections, tmdb id and runtime added.
+
+    Two files of one film (Theatrical and Extended) stay two entries. An
+    entry with no file (Radarr still wanting it) is dropped when another
+    source has the film on disk, and replaced by that copy.
+    """
+    kept: list[Movie] = []
+    by_file: dict[str, Movie] = {}
+    fileless: dict[object, Movie] = {}
+
+    def ids(m: Movie) -> list[object]:
+        return ([("tmdb", m.tmdb_id)] if m.tmdb_id else []) + [_title_key(m.title, m.year)]
+
+    def absorb(into: Movie, other: Movie) -> None:
+        into.tmdb_id = into.tmdb_id or other.tmdb_id
+        into.duration = into.duration or other.duration
+        into.collections = list(dict.fromkeys([*into.collections, *other.collections]))
+
+    for m in items:
+        if m.file:
+            fk = _file_key(m.file)
+            if fk in by_file:
+                absorb(by_file[fk], m)
+                continue
+            stale = next((fileless.pop(i) for i in ids(m) if i in fileless), None)
+            if stale is None:
+                # a file renamed since Radarr last looked: its path is gone, this one is real
+                stale = next((k for k in kept if k.file and set(ids(k)) & set(ids(m))
+                              and not os.path.exists(k.file) and os.path.exists(m.file)), None)
+                if stale is not None:
+                    by_file.pop(_file_key(stale.file or ""), None)
+            if stale is not None:
+                kept.remove(stale)
+                for i in ids(stale):
+                    fileless.pop(i, None)
+                absorb(m, stale)
+            kept.append(m)
+            by_file[fk] = m
+            continue
+        on_disk = next((k for k in kept if k.file and set(ids(k)) & set(ids(m))), None)
+        if on_disk is not None or any(i in fileless for i in ids(m)):
+            continue
+        kept.append(m)
+        for i in ids(m):
+            fileless[i] = m
+    return kept
