@@ -66,9 +66,34 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/secret-scan.yml
 
+  # A run whose branch has moved on must not move the image aliases back. It
+  # skips publishing instead of failing: the newer push's run publishes, and
+  # the checks this commit passed stay green.
+  freshness:
+    name: Still the branch head
+    needs: [backend-gate, frontend-gate, docker-gate, secret-scan-gate]
+    runs-on: ubuntu-latest
+    outputs:
+      current: ${{ steps.head.outputs.current }}
+    steps:
+      - id: head
+        env:
+          BRANCH: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" --jq .object.sha)
+          if [ "$head" = "$GITHUB_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$BRANCH has moved on to ${head:0:7}; that run publishes instead."
+          fi
+
   publish:
     name: Publish container and release
-    needs: [backend-gate, frontend-gate, docker-gate, secret-scan-gate]
+    needs: freshness
+    if: needs.freshness.outputs.current == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -81,16 +106,6 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
-      - name: Refuse stale runs before updating image aliases
-        env:
-          BRANCH: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          current=$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)
-          if [ "$current" != "$GITHUB_SHA" ]; then
-            echo "::error::This branch has advanced; its newer run will publish."
-            exit 1
-          fi
       - name: Resolve version and stamp the container source
         id: version
         run: python .github/scripts/release_version.py
