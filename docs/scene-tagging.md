@@ -58,8 +58,9 @@ Hogwarts: snow, presents, the feast"). The job:
 4. optionally (**Also look at scenes with no dialogue**) shows every
    near-silent scene too, one grid each, for scenes the dialogue can't reveal;
 5. puts each edge on a camera cut nobody is talking across (an end may move up
-   to 20 seconds later, a start 20 seconds earlier) so no line is cut off, and leaves proposals. A stretch already
-   tagged with the same tag is skipped, so running it again is safe.
+   to 20 seconds later, a start 20 seconds earlier) so no line is cut off, and
+   leaves proposals. A stretch already tagged with the same tag is skipped, so
+   running it again is safe.
 
 Any [Prompture](https://github.com/jhd3197/prompture) model works:
 `claude/...`, `google/...`, `openai/...`, `ollama/...`. A local vision model
