@@ -1,0 +1,23 @@
+# NVIDIA GPU override for NVENC encoding. It uses the same image; it only
+# hands the container the host's GPU. Needs the NVIDIA driver and the NVIDIA
+# Container Toolkit on the host.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# Then turn on Settings > Rendering > NVENC (or ffmpeg.nvenc: true in
+# config.yaml). Check that the encoders are visible:
+#
+#   docker exec fanscut ffmpeg -hide_banner -encoders | grep nvenc
+
+services:
+  fanscut:
+    environment:
+      # "video" is the capability NVENC needs; compute/utility for nvidia-smi.
+      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

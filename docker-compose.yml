@@ -3,17 +3,24 @@ name: fanscut
 # 1. mkdir -p config data output && chown 1000:1000 config data output
 # 2. cp config.docker.example.yaml config/config.yaml   (then edit it)
 # 3. point the /media volume below at your library
-# 4. docker compose up -d --build, then open http://localhost:6464
+# 4. docker compose up -d, then open http://localhost:6464
+#    (from source instead: uncomment "build: ." below, then "docker compose up -d --build")
+# NVIDIA GPU (NVENC): docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 
 services:
   fanscut:
-    build: .
-    image: fanscut:latest
+    # :latest follows main releases; :dev follows the dev branch.
+    image: ghcr.io/jhd3197/fanscut:latest
+    # build: .
     container_name: fanscut
     restart: unless-stopped
-    # No auth in the app: keep this on a trusted network or behind a reverse proxy.
+    # tini reaps ffmpeg children; renders get time to stop cleanly on upgrade.
+    init: true
+    stop_grace_period: 30s
+    # No auth in the app, so it listens on this machine only. To reach it from
+    # your LAN use "6464:6464", ideally behind a reverse proxy with auth.
     ports:
-      - "6464:6464"
+      - "127.0.0.1:6464:6464"
     volumes:
       # config.yaml lives here (see config.docker.example.yaml)
       - ./config:/config
@@ -30,6 +37,12 @@ services:
       FANSCUT_SONARR_API_KEY: ${FANSCUT_SONARR_API_KEY:-}
       FANSCUT_PLEX_URL: ${FANSCUT_PLEX_URL:-}
       FANSCUT_PLEX_TOKEN: ${FANSCUT_PLEX_TOKEN:-}
+      FANSCUT_RADARR_URL: ${FANSCUT_RADARR_URL:-}
+      FANSCUT_RADARR_API_KEY: ${FANSCUT_RADARR_API_KEY:-}
+      FANSCUT_AI_API_KEY: ${FANSCUT_AI_API_KEY:-}
+      FANSCUT_GITHUB_TOKEN: ${FANSCUT_GITHUB_TOKEN:-}
+      # job times and schedules use this zone, e.g. Europe/Madrid
+      TZ: ${TZ:-UTC}
     security_opt:
       - no-new-privileges:true
     cap_drop:

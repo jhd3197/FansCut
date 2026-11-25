@@ -24,3 +24,11 @@ client_secret*.json
 .doppler/
 ui/node_modules/
 ui/dist/
+graphify-out/
+screenshots/
+docs/
+dev.ps1
+dev.sh
+node_modules/
+*.log
+.planning/
