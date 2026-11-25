@@ -18,8 +18,14 @@ class Series:
     alt_titles: list[str] = field(default_factory=list)
     tvdb_id: int | None = None
     tmdb_id: int | None = None
-    episode_count: int = 0
+    episode_count: int = 0  # episodes with a file
+    episode_total: int = 0  # episodes that exist (aired), when the source knows; else 0
+    season_count: int = 0  # regular seasons, specials not counted
     is_anime: bool = False
+    collections: list[str] = field(default_factory=list)  # Plex collection tags
+    # where its art lives: an https URL (TMDB, via Sonarr) or a Plex path
+    poster: str | None = None
+    backdrop: str | None = None
 
 
 @dataclass
@@ -47,6 +53,11 @@ class Movie:
     file: str | None = None  # local path after path mapping; None = not on disk
     duration: float | None = None  # seconds
     collections: list[str] = field(default_factory=list)  # Plex collection tags
+    plex_key: str | None = None  # Plex ratingKey, kept when Radarr's entry absorbs Plex's
+    tmdb_collection: int | None = None  # TMDB collection id (Radarr), e.g. 119 for LOTR
+    # where its art lives: an https URL (TMDB, via Radarr) or a Plex path
+    poster: str | None = None
+    backdrop: str | None = None
 
 
 @dataclass

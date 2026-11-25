@@ -1,13 +1,15 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { api, seriesPath } from '../lib/api.js';
-import { useAct, useLoad, usePoll } from '../lib/hooks.js';
+import { useAct, useCrumbRoot, useLoad, usePoll } from '../lib/hooks.js';
 import { fmtDuration, fmtTime, parseTime } from '../lib/time.js';
 import {
   flatSegments, moveItem, recipeIssues, rulerTicks, segmentSync, sourceJoins, syncCounts,
 } from '../lib/timeline.js';
 import { Dialog, ErrorBox, Loading, Notice, Progress, StatusTag } from '../components/ui.jsx';
 import { enc } from '../components/kit.jsx';
+import './TimelineEdit.css';
+import { useApi } from '../lib/store.js';
 
 const ACTIVE = ['queued', 'running'];
 // Deep, desaturated clip colours (from the design), one per source in recipe order.
@@ -23,52 +25,6 @@ function downloadJson(name, data) {
 const recipeFileName = (title) => `${title.replace(/[^\w.-]+/g, '_') || 'timeline'}.fanscut.json`;
 
 // Editor chrome, scoped to .nle. Colours follow the design's editor screen.
-const NLE_CSS = `
-.nle { --nb:#161616; --np:#1F1F1F; --nl:#2B2B2B; --nt:#E6E6E6; --nm:#9A9A9A; --nc:#C9C9C9; --nblue:#2F7BF5; --nlink:#5B9BFF;
-  background:var(--nb); color:var(--nt); font-size:13px; line-height:1.4; border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; gap:6px; padding-bottom:6px; }
-.nle .bar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; }
-.nle .bar-l, .nle .bar-r { display:flex; flex-wrap:wrap; align-items:center; gap:14px; }
-.nle .mtab { all:unset; cursor:pointer; color:var(--nc); padding:2px 0; }
-.nle .mtab[aria-selected=true] { color:var(--nlink); text-decoration:underline; text-underline-offset:6px; }
-.nle .mtab:focus-visible, .nle .bt:focus-visible, .nle .clip:focus-visible, .nle .prow:focus-visible { outline:2px solid var(--nlink); outline-offset:1px; }
-.nle .panes { display:flex; flex-wrap:wrap; gap:6px; padding:0 6px; }
-.nle .pn { background:var(--np); border:1px solid var(--nl); border-radius:6px; display:flex; flex-direction:column; min-width:0; }
-.nle .ph { display:flex; align-items:center; gap:16px; padding:8px 12px; border-bottom:1px solid var(--nl); color:var(--nm); }
-.nle .ph .on { color:var(--nt); text-decoration:underline; text-underline-offset:4px; }
-.nle .bt { all:unset; box-sizing:border-box; cursor:pointer; height:28px; padding:0 10px; border-radius:5px; border:1px solid #333; background:#262626; color:var(--nt); font-size:12px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
-.nle .bt:hover:not(:disabled) { border-color:#4A4A4A; }
-.nle .bt:disabled { opacity:.45; cursor:not-allowed; }
-.nle .bp { background:var(--nblue); border-color:var(--nblue); color:#fff; font-weight:600; }
-.nle .sel { font:13px var(--font); color:var(--nt); background:var(--nb); border:1px solid #333; border-radius:4px; height:26px; padding:0 6px; width:100%; min-width:0; }
-.nle textarea.sel { height:auto; padding:6px; }
-.nle .list { list-style:none; margin:0; padding:6px 0; display:flex; flex-direction:column; }
-.nle .prow { display:grid; grid-template-columns:12px 12px minmax(0,1fr) auto; gap:8px; align-items:center; padding:4px 12px; }
-.nle button.prow { all:unset; box-sizing:border-box; display:grid; grid-template-columns:12px 12px minmax(0,1fr) auto; gap:8px; align-items:center; padding:4px 12px; cursor:pointer; width:100%; }
-.nle .prow:hover { background:#262626; }
-.nle .prow[aria-pressed=true] { background:#222A36; }
-.nle .sw { width:10px; height:10px; border-radius:2px; }
-.nle .ell { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.nle .kvp { display:grid; grid-template-columns:96px minmax(0,1fr); gap:8px 10px; align-items:center; margin:0; }
-.nle .kvp dt { color:var(--nc); } .nle .kvp dd { margin:0; min-width:0; }
-.nle .grp { display:flex; flex-direction:column; gap:8px; padding-bottom:12px; border-bottom:1px solid var(--nl); }
-.nle .grp:last-child { border-bottom:0; }
-.nle .tc { font-family:var(--mono); color:var(--nlink); font-variant-numeric:tabular-nums; }
-.nle .tl { display:grid; grid-template-columns:minmax(180px,22%) minmax(0,1fr); }
-.nle .tl-h { display:grid; grid-template-columns:30px minmax(0,1fr) auto; gap:8px; align-items:center; height:34px; padding:0 12px; border-bottom:1px solid #242424; }
-.nle .lane { position:relative; height:34px; border-bottom:1px solid #242424; }
-.nle .clip { all:unset; box-sizing:border-box; cursor:pointer; position:absolute; top:5px; bottom:5px; border-radius:3px; padding:0 6px; font-size:11px; line-height:24px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#F2F2F2; min-width:3px; }
-.nle .clip[aria-pressed=true] { outline:2px solid var(--nt); outline-offset:-2px; }
-.nle .clip.off { opacity:.45; background-image:repeating-linear-gradient(135deg, transparent 0 6px, rgba(0,0,0,.35) 6px 9px); }
-.nle .clip.drop { box-shadow:inset 3px 0 0 #F2A93B; }
-.nle .join { position:absolute; top:5px; padding:0 6px; font-size:11px; line-height:16px; color:#1A1203; background:#F2A93B; border-radius:3px; white-space:nowrap; transform:translateX(-1px); }
-.nle .viewer { flex:1; display:flex; align-items:center; justify-content:center; padding:16px; background:#191919; min-height:240px; }
-.nle .screen { position:relative; width:100%; max-width:820px; aspect-ratio:16 / 9; background:#000; display:flex; align-items:center; justify-content:center; outline:1px solid var(--nblue); outline-offset:-1px; }
-.nle .screen video { width:100%; height:100%; }
-.nle .dot { width:9px; height:9px; border-radius:2px; flex:none; }
-.nle .wide { padding:12px 14px; display:flex; flex-direction:column; gap:12px; }
-.nle .table { font-size:12px; }
-`;
-
 function TimeInput({ value, onCommit, label }) {
   const [text, setText] = useState(null);
   const shown = text ?? fmtTime(value, 1);
@@ -129,13 +85,14 @@ function SyncReport({ report, onPreview }) {
 
 export function TimelineEdit() {
   const { id } = useParams();
-  const tl = useLoad(() => api(`/timelines/${enc(id)}`), [id]);
+  const crumb = useCrumbRoot();
+  const tl = useApi(`/timelines/${enc(id)}`);
   const seriesKey = tl.data?.series_key;
   const base = seriesKey ? seriesPath(seriesKey) : null;
   const epsQ = useLoad(() => (seriesKey
     ? api(`${seriesPath(seriesKey)}/episodes`).catch(() => ({ episodes: [] }))
     : Promise.resolve(null)), [seriesKey]);
-  const syncQ = useLoad(() => api(`/timelines/${enc(id)}/sync`), [id]);
+  const syncQ = useApi(`/timelines/${enc(id)}/sync`);
   const varQ = useLoad(() => api(`/timelines/${enc(id)}/variants`).catch(() => null), [id]);
   const { act, msg, busy, clear } = useAct();
   const [doc, setDoc] = useState(null);
@@ -271,7 +228,7 @@ export function TimelineEdit() {
   }, 'Saved. Sync was reset: run it again before rendering.');
   const sync = () => act(async () => setJob(await api(`/timelines/${enc(id)}/sync`, { method: 'POST' })), 'Sync queued');
   const dryRun = () => act(async () => {
-    setDry(await api(`/timelines/${enc(id)}/render`, { method: 'POST', body: { dry_run: true, variant: variant || null } }));
+    setDry(await api(`/timelines/${enc(id)}/render`, { method: 'POST', read: true, body: { dry_run: true, variant: variant || null } }));
   });
   const exportRecipe = () => act(async () => downloadJson(recipeFileName(doc.title),
     await api(`/timelines/${enc(id)}/export?anchors=both`)), dirty ? 'Exported the saved version (with anchors); save to include your changes' : 'Exported with anchors');
@@ -358,12 +315,12 @@ export function TimelineEdit() {
 
   return (
     <div className="page page-wide">
-      <style>{NLE_CSS}</style>
       <Notice msg={msg} onClose={clear} />
       <div className="nle">
         <div className="bar">
           <div className="bar-l">
-            <Link to={`/cuts/${enc(id)}`} className="bt" aria-label="Back to the cut">← Cut</Link>
+            <Link to="/" className="bt" aria-label="FansCut home" title="FansCut home">⌂</Link>
+            <Link to={`/cuts/${enc(id)}`} state={crumb.state} className="bt" aria-label="Back to the cut">← Cut</Link>
             <b className="ell" style={{ fontSize: 14, maxWidth: 320 }}>{doc.title}</b>
             <span style={{ color: 'var(--nm)' }}>{runtimeNote}{dirty ? ' · unsaved' : ''}</span>
           </div>
@@ -387,7 +344,7 @@ export function TimelineEdit() {
             <input ref={file} type="file" accept="application/json,.json" hidden onChange={onFile} data-testid="recipe-file" />
             <button type="button" className="bt" onClick={exportRecipe} disabled={busy}>Export recipe</button>
             <button type="button" className="bt" onClick={save} disabled={busy}>Save</button>
-            <Link to={`/cuts/${enc(id)}/build`} className="bt bp">Render</Link>
+            <Link to={`/cuts/${enc(id)}/build`} state={crumb.state} className="bt bp">Render</Link>
           </div>
         </div>
 
@@ -482,16 +439,16 @@ export function TimelineEdit() {
                 </div>
                 <div className="viewer">
                   <div className="screen">
-                    {viewer && !videoErr && base && !isMovie(viewer.src) ? (
+                    {viewer && !videoErr ? (
                       <video key={`${viewer.src}@${viewer.t}`} controls autoPlay
-                        src={`/api/series/${enc(seriesKey)}/episodes/${enc(viewer.src)}/preview?t=${viewer.t}`}
+                        src={`/api/timelines/${enc(id)}/sources/${enc(viewer.src)}/preview?t=${viewer.t}`}
                         onLoadedMetadata={(e) => { e.currentTarget.currentTime = viewer.t - clipBase; }}
                         onTimeUpdate={(e) => setNow(clipBase + e.currentTarget.currentTime)}
                         onError={() => setVideoErr(true)} />
                     ) : (
                       <span style={{ color: '#666', padding: 16, textAlign: 'center' }}>
                         {!viewer ? 'Select a segment to preview it'
-                          : videoErr || isMovie(viewer.src) || !base ? `No preview for ${viewer.src} (previews play episode files only)` : ''}
+                          : `No preview for ${viewer.src}: it isn't in your library${dirty ? ', or the recipe has unsaved sources (save first)' : ''}`}
                       </span>
                     )}
                   </div>
@@ -718,7 +675,7 @@ export function TimelineEdit() {
               <span className="on">Render check</span>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                 <button type="button" className="bt" onClick={dryRun} disabled={busy}>Dry run</button>
-                <Link to={`/cuts/${enc(id)}/build`} className="bt bp">Render…</Link>
+                <Link to={`/cuts/${enc(id)}/build`} state={crumb.state} className="bt bp">Render…</Link>
               </span>
             </div>
             <div className="wide">

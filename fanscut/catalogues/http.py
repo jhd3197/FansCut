@@ -52,16 +52,23 @@ class CachedHttp:
         return hashlib.sha256(blob.encode()).hexdigest()
 
     def request(self, method: str, url: str, *, params: dict[str, Any] | None = None,
-                body: dict[str, Any] | None = None) -> Any:
+                body: dict[str, Any] | None = None, ttl: float | None = None,
+                transform: Callable[[Any], Any] | None = None) -> Any:
+        """Cached JSON. `ttl` (seconds) overrides the default; 0 always refetches (a
+        stale copy is still the fallback). `transform` trims the reply before it is
+        stored, so the cache keeps only what callers read."""
         key = self._key(method, url, [params, body])
         row = self.db.one("SELECT body, fetched_at FROM http_cache WHERE key = ?", (key,))
-        fresh = row is not None and time.time() - row["fetched_at"] < self.ttl
+        max_age = self.ttl if ttl is None else ttl
+        fresh = row is not None and time.time() - row["fetched_at"] < max_age
         if row and (fresh or self.offline):
             return json.loads(row["body"])
         if self.offline:
             raise ClientError("offline mode and nothing cached")
         try:
             data = self._fetch(method, url, params, body)
+            if transform is not None:
+                data = transform(data)
         except ClientError:
             if row:  # stale beats nothing
                 return json.loads(row["body"])

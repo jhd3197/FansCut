@@ -7,10 +7,10 @@ import re
 import pytest
 
 from fanscut import mcp_server as m
-from tests.conftest import needs_ffmpeg
+from tests.conftest import needs_ffmpeg, needs_prompture_video
 from tests.test_scenes import film_dir, sc  # noqa: F401 - fixtures
 
-pytestmark = needs_ffmpeg
+pytestmark = [needs_ffmpeg, needs_prompture_video]
 
 
 @pytest.fixture

@@ -7,14 +7,16 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from . import CoreDep
+from . import CoreDep, paginate
 
 router = APIRouter(prefix="/api", tags=["renders"])
 
 
 @router.get("/renders")
-def list_renders(core: CoreDep, series: str | None = None) -> dict[str, Any]:
-    return {"renders": core.list_renders(series)}
+def list_renders(core: CoreDep, series: str | None = None, skip: int | None = None,
+                 take: int | None = None) -> dict[str, Any]:
+    page, info = paginate(core.list_renders(series), skip, take)
+    return {"renders": page, **({"page_info": info} if info else {})}
 
 
 class KeepBody(BaseModel):

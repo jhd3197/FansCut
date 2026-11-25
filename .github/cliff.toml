@@ -1,0 +1,30 @@
+# git-cliff: release notes from the commits since the last stable tag.
+# Commits here are plain imperative sentences ("Add X", "Fix Y"), so they are
+# grouped by their first word.
+[changelog]
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+{% for commit in commits %}
+- {{ commit.message | split(pat="\n") | first | trim }} ({{ commit.id | truncate(length=7, end="") }})\
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = false
+filter_unconventional = false
+split_commits = false
+protect_breaking_commits = false
+filter_commits = false
+tag_pattern = 'v[0-9]+\.[0-9]+\.[0-9]+$'
+sort_commits = "oldest"
+commit_parsers = [
+  { message = "^Merge ", skip = true },
+  { message = "^Bump ", group = "<!-- 4 -->Dependencies" },
+  { message = "^(Add|Support|Allow|Show|Let|Make)", group = "<!-- 0 -->Added" },
+  { message = "^(Fix|Stop|Keep|Guard|Handle|Prevent)", group = "<!-- 1 -->Fixed" },
+  { message = "^(Remove|Drop|Delete)", group = "<!-- 3 -->Removed" },
+  { message = ".*", group = "<!-- 2 -->Changed" },
+]

@@ -140,8 +140,12 @@ def _variants(raw: Any, toggles: dict[str, dict[str, Any]]) -> list[dict[str, An
         for k, on in vals.items():
             if k not in toggles or not isinstance(on, bool):
                 raise TimelineError(f"variant {vid}.toggles.{k}: unknown toggle or not a bool")
-        out.append({"id": vid, "label": _text(v.get("label"), f"variant {vid}.label", 60),
-                    "toggles": dict(vals)})
+        row = {"id": vid, "label": _text(v.get("label"), f"variant {vid}.label", 60),
+               "toggles": dict(vals)}
+        if v.get("description") is not None:  # one line for the variant picker
+            row["description"] = _text(v["description"], f"variant {vid}.description", 160,
+                                       required=False)
+        out.append(row)
     return out
 
 

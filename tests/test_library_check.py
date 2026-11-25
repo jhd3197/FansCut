@@ -156,6 +156,13 @@ def test_aot_missing_final_chapters_and_ovas(cfg):
     assert any("OVAs missing" in t for t in text)
     assert any(t.startswith("87 of 89 episodes") for t in text)
     assert any("no Japanese or English audio; found Chinese, French" in t for t in text)
+    final = next(f for f in found if "Final Chapters" in f["message"])
+    assert final["items"] == ["S04E29", "S04E30"]  # Health's "Show list"
+
+    # a whole run tags every series finding with the show it belongs to
+    run = chk.run(timelines=[])
+    assert run["findings"] and all(f["ref"] == {"kind": "series", "key": "plex:1"}
+                                   for f in run["findings"])
 
 
 def test_check_endpoint_and_confirmed_rename(client, tmp_path: Path):

@@ -8,12 +8,19 @@ Run what CI runs, from the repo root:
 ./dev.sh validate
 ```
 
-It runs `ruff check .`, `mypy fanscut/`, `pytest`, and the UI lint, unit tests
-(Vitest) and build. Commit when it ends with `all good`. Checking
+It runs `ruff check .`, `mypy fanscut/`, `pytest` (with an 85% coverage floor in
+CI), and the UI lint, type check (`tsc` over files marked `// @ts-check`), unit
+tests (Vitest) and build. Browser tests are separate: `cd ui && npm run build &&
+npm run e2e` (Playwright starts its own server on a throwaway library). Commit when it ends with `all good`. Checking
 only the files you touched is not enough: CI checks the whole package, and mypy
 catches what ruff does not.
 
-Set up with `./dev.sh setup`, or by hand: `pip install -e ".[dev]"`. A venv
+Set up with `./dev.sh setup`, or by hand: `pip install -e ".[dev]"`.
+
+Dependencies: `requirements.txt` lists the runtime packages; `requirements.lock`
+pins them and everything they pull in, with hashes, for the Docker image.
+After changing `requirements.txt`, refresh the lock:
+`uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes -o requirements.lock`. A venv
 outside the repo works too: `FANSCUT_VENV=/path/to/venv ./dev.sh validate`.
 
 Optional: `pip install pre-commit && pre-commit install` runs ruff, mypy and
@@ -45,7 +52,8 @@ gitleaks on each commit.
   real ffmpeg generate tiny lavfi videos and skip when ffmpeg is missing.
 - The repo does not run `ruff format`; run `ruff check` (safe fixes only).
 - Plain imperative commit messages ("Add cut planner"), small logical commits.
-- No auth, accounts or cloud services: FansCut is single-user and self-hosted.
+- No accounts or cloud services: FansCut is single-user and self-hosted. The
+  only auth is the optional API key (`fanscut/security.py`).
 
 ## Layout
 

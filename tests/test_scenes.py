@@ -14,7 +14,7 @@ from fanscut.scenes import index as idx
 from fanscut.scenes import store as st
 from fanscut.scenes import subs, tagger
 from fanscut.server import create_app
-from tests.conftest import needs_ffmpeg
+from tests.conftest import needs_ffmpeg, needs_prompture_video
 
 SRT = """1
 00:00:01,000 --> 00:00:03,500
@@ -212,6 +212,7 @@ def sc(cfg, tmp_path, film_dir, monkeypatch):
 
 
 @needs_ffmpeg
+@needs_prompture_video
 def test_scene_api_end_to_end(sc, monkeypatch):
     key = sc.key
     assert sc.get("/api/scenes/film", params={"key": key}).json()["index"] is None

@@ -20,6 +20,20 @@ HAVE_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is 
 needs_ffmpeg = pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg/ffprobe not installed")
 
 
+def _has_prompture_video() -> bool:
+    try:
+        from prompture.media.understand import frames  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+# Scene indexing needs Prompture's frames module (contact sheets, shot cuts),
+# which is newer than Prompture 1.19.1.
+needs_prompture_video = pytest.mark.skipif(not _has_prompture_video(),
+                                           reason="Prompture without media.understand.frames")
+
+
 @pytest.fixture
 def cfg(tmp_path: Path) -> Config:
     c = Config()
@@ -95,6 +109,15 @@ def make_video(path: Path, seconds: float = 6, size: str = "160x120", wav: Path 
          "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(path)],
         check=True)
     return path
+
+
+@pytest.fixture(autouse=True)
+def test_host(monkeypatch):
+    """Starlette's TestClient sends Host: testserver; let the Host guard accept it."""
+    from fanscut import security
+
+    monkeypatch.setattr(security, "ALWAYS_ALLOWED", {"testserver"})
+    security.reset_rate_limits()
 
 
 @pytest.fixture(autouse=True)

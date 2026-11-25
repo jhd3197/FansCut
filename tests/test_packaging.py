@@ -27,6 +27,16 @@ def test_requirements_list_every_core_dependency():
     assert _names(required) == _names(pyproject["project"]["dependencies"])
 
 
+def test_the_lock_pins_every_requirement():
+    """requirements.lock (what Docker installs) must cover requirements.txt."""
+    lines = (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    required = _names([ln.split("#")[0] for ln in lines if ln.strip() and not ln.startswith("#")])
+    lock = (ROOT / "requirements.lock").read_text(encoding="utf-8")
+    pinned = {ln.split("==")[0].strip().lower().replace("_", "-")
+              for ln in lock.splitlines() if "==" in ln and not ln.startswith((" ", "#"))}
+    assert set(required) <= pinned
+
+
 def _unknown_keys(model: type[BaseModel], data: dict[str, Any], prefix: str = "") -> list[str]:
     out = []
     for key, value in data.items():

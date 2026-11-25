@@ -1,3 +1,4 @@
+// @ts-check
 // Timeline math, kept free of React so it can be tested.
 
 export const TRIM_KINDS = ['recap', 'intro', 'outro', 'preview'];

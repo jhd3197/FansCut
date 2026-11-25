@@ -2,9 +2,10 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad, usePoll } from '../lib/hooks.js';
+import { useAct, usePoll } from '../lib/hooks.js';
 import { enc } from '../components/kit.jsx';
-import { Dialog, Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import { ConfirmButton, Dialog, Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import { useApi } from '../lib/store.js';
 
 const ACTIVE = ['queued', 'running'];
 
@@ -162,13 +163,13 @@ function Recent({ jobs, onRemove, busy }) {
                 return (
                   <tr key={j.id}>
                     <td>{jobName(j)}</td>
-                    <td className={cls} style={{ color: cls ? undefined : '#C4C7CD', overflowWrap: 'anywhere' }}>
+                    <td className={cls} style={{ color: cls ? undefined : 'var(--text2)', overflowWrap: 'anywhere' }}>
                       {j.status === 'failed' ? `Failed: ${result}` : j.status === 'cancelled' ? 'Cancelled' : result}
                     </td>
                     <td className="mono muted" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{when(j.updated_at || j.created_at)}</td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {link && <Link to={link[0]}>{link[1]}</Link>}
-                      <button className="btn btn-sm btn-ghost" type="button" disabled={busy} onClick={() => onRemove(j)} aria-label={`Remove ${j.title}`}>Remove</button>
+                      <ConfirmButton className="btn btn-sm btn-ghost" disabled={busy} onConfirm={() => onRemove(j)} confirmText="Remove?">Remove</ConfirmButton>
                     </td>
                   </tr>
                 );
@@ -182,7 +183,7 @@ function Recent({ jobs, onRemove, busy }) {
 }
 
 function Renders({ act, busy, version }) {
-  const { data, error, reload } = useLoad(() => api('/renders'), [version]);
+  const { data, error, reload } = useApi('/renders');
   const [doomed, setDoomed] = useState(null);
   const renders = data?.renders || [];
   const call = (path, method, body, ok) => act(async () => {
@@ -243,7 +244,7 @@ function Renders({ act, busy, version }) {
 }
 
 export function Jobs() {
-  const { data, error, loading, reload } = useLoad(() => api('/jobs'));
+  const { data, error, loading, reload } = useApi('/jobs');
   const { act, msg, busy, clear } = useAct();
   const jobs = data?.jobs || [];
   const active = jobs.filter((j) => ACTIVE.includes(j.status));

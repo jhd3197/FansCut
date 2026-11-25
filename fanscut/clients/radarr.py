@@ -4,17 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import BaseClient
+from .base import ArrClient
 
 
-class RadarrClient(BaseClient):
+class RadarrClient(ArrClient):
     service = "Radarr"
-
-    def __init__(self, base_url: str, api_key: str, timeout: float = 30):
-        super().__init__(base_url, timeout, {"X-Api-Key": api_key})
-
-    def system_status(self) -> dict[str, Any]:
-        return self._get("/api/v3/system/status")
 
     def list_movies(self) -> list[dict[str, Any]]:
         return self._get("/api/v3/movie")
+
+    def cover(self, movie_id: str, kind: str = "poster") -> bytes | None:
+        """Radarr's cached poster (500 px wide) or fanart (backdrop)."""
+        name = "poster-500.jpg" if kind == "poster" else "fanart.jpg"
+        return self.get_image(f"/api/v3/MediaCover/{movie_id}/{name}")

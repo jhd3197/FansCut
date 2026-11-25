@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import contextlib
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from .errors import ConfigError
+from .fsutil import atomic_write
 
 MASK = "***"
 
@@ -35,9 +37,27 @@ ENV_FIELDS = {
 }
 
 
+def Secret(default: str = "") -> Any:  # noqa: N802 - reads like a type in the models
+    """A secret field: masked by the settings API and kept when "***" comes back."""
+    return Field(default=default, json_schema_extra={"secret": True})
+
+
 class ServerCfg(BaseModel):
     host: str = "127.0.0.1"
     port: int = 6464
+    # "none": anyone who can reach the server may use it (keep it on a trusted
+    # network). "api_key": every /api call needs the API key (or viewer_key, read-only).
+    auth: Literal["none", "api_key"] = "none"
+    api_key: str = Secret()  # generated on first start; webhooks always need it
+    viewer_key: str = Secret()  # optional second key that may only read
+    allowed_hosts: list[str] = Field(default_factory=list)  # extra Host names to serve
+    trusted_proxies: list[str] = Field(default_factory=list)  # IPs whose X-Forwarded-* count
+
+
+class NetworkCfg(BaseModel):
+    timeout: float = 10.0  # seconds for Sonarr/Radarr/Plex calls (tests use 8)
+    proxy: str = ""  # outbound HTTP(S) proxy for internet calls, e.g. http://proxy:3128
+    proxy_bypass_local: bool = True  # LAN/loopback servers (Plex, *arr) skip the proxy
 
 
 class PathsCfg(BaseModel):
@@ -47,17 +67,17 @@ class PathsCfg(BaseModel):
 
 class SonarrCfg(BaseModel):
     url: str = ""
-    api_key: str = ""
+    api_key: str = Secret()
 
 
 class RadarrCfg(BaseModel):
     url: str = ""
-    api_key: str = ""
+    api_key: str = Secret()
 
 
 class PlexCfg(BaseModel):
     url: str = ""
-    token: str = ""
+    token: str = Secret()
     sections: list[str] = Field(default_factory=list)  # empty = every show section
     movie_sections: list[str] = Field(default_factory=list)  # empty = every movie section
 
@@ -84,10 +104,15 @@ class LibraryCfg(BaseModel):
     path_mappings: list[PathMapping] = Field(default_factory=list)
 
 
+class ArtCfg(BaseModel):
+    cache_remote: bool = False  # fetch TMDB/TVDB art through FansCut (offline/private setups)
+    cache_mb: int = 1024  # the art cache folder is trimmed past this size
+
+
 class CataloguesCfg(BaseModel):
     offline: bool = False
     cache_days: int = 14
-    tmdb_api_key: str = ""  # secret; cast lists for films outside Plex. Prefer FANSCUT_TMDB_API_KEY
+    tmdb_api_key: str = Secret()  # cast for films outside Plex; prefer FANSCUT_TMDB_API_KEY
 
 
 class FillersCfg(BaseModel):
@@ -133,6 +158,10 @@ class RenderCfg(BaseModel):
     language: str = ""  # preferred audio language tag (e.g. jpn, eng); "" = first track
     effectcraft_cli: str = ""  # path to effectcraft-cli; "" = grades stay in ffmpeg
     effectcraft_grade: bool = True  # route segment grades through EffectCraft when it's set
+    # "Add to Plex", after every build (Plex must be set up under library.plex)
+    plex_refresh: bool = True  # rescan the Plex sections the output lands in
+    plex_collection: str = "FansCut"  # add the result to this collection; "" = don't
+    poster: bool = True  # write poster.jpg next to the output (the cut's, else a frame)
 
 
 class AutomationCfg(BaseModel):
@@ -141,9 +170,44 @@ class AutomationCfg(BaseModel):
     keep: bool = True  # keep flag for webhook-triggered renders
 
 
+class ScheduleCfg(BaseModel):
+    """Cron (minute hour day month weekday, local time) per task; "" = off."""
+
+    prune: str = "0 5 * * *"  # art cache, finished jobs, old catalogue replies
+    sweep_renders: str = "30 4 * * *"  # delete non-kept renders past render.ephemeral_days
+    library_refresh: str = "*/10 * * * *"  # re-list sources in the background
+    fillers_refresh: str = "0 6 * * 1"  # AniFiller snapshot, weekly (skipped when offline)
+    cut_updates: str = "0 7 * * *"  # look for new commits of installed community cuts
+    library_check: str = "0 3 * * 0"  # the Health page's whole-library check, weekly
+
+    @field_validator("*")
+    @classmethod
+    def _cron(cls, v: str) -> str:
+        from .scheduler import Cron, CronError
+
+        v = (v or "").strip()
+        if v:
+            try:
+                Cron.parse(v)
+            except CronError as exc:
+                raise ValueError(str(exc)) from exc
+        return v
+
+
+class NotifyTarget(BaseModel):
+    url: str
+    format: Literal["json", "discord", "ntfy"] = "json"
+    events: list[Literal["done", "failed"]] = Field(
+        default_factory=lambda: ["done", "failed"])  # type: ignore[arg-type]
+
+
+class NotifyCfg(BaseModel):
+    targets: list[NotifyTarget] = Field(default_factory=list)
+
+
 class CommunityCfg(BaseModel):
     index_url: str = "https://raw.githubusercontent.com/jhd3197/fanscut-recipes/main/index.json"
-    github_token: str = ""  # secret, for private cut repos; prefer FANSCUT_GITHUB_TOKEN
+    github_token: str = Secret()  # secret, for private cut repos; prefer FANSCUT_GITHUB_TOKEN
     offline: bool = False
 
 
@@ -154,21 +218,25 @@ class AICfg(BaseModel):
     model: str = ""
     vision_model: str = ""  # model that looks at frames when tagging; empty = model
     base_url: str = ""
-    api_key: str = ""  # secret; prefer FANSCUT_AI_API_KEY over the config file
+    api_key: str = Secret()  # secret; prefer FANSCUT_AI_API_KEY over the config file
     timeout: int = 120
 
 
 class Config(BaseModel):
     server: ServerCfg = Field(default_factory=ServerCfg)
     paths: PathsCfg = Field(default_factory=PathsCfg)
+    network: NetworkCfg = Field(default_factory=NetworkCfg)
     library: LibraryCfg = Field(default_factory=LibraryCfg)
     catalogues: CataloguesCfg = Field(default_factory=CataloguesCfg)
+    art: ArtCfg = Field(default_factory=ArtCfg)
     fillers: FillersCfg = Field(default_factory=FillersCfg)
     fingerprint: FingerprintCfg = Field(default_factory=FingerprintCfg)
     ffmpeg: FFmpegCfg = Field(default_factory=FFmpegCfg)
     cut: CutCfg = Field(default_factory=CutCfg)
     render: RenderCfg = Field(default_factory=RenderCfg)
     automation: AutomationCfg = Field(default_factory=AutomationCfg)
+    notify: NotifyCfg = Field(default_factory=NotifyCfg)
+    schedule: ScheduleCfg = Field(default_factory=ScheduleCfg)
     ai: AICfg = Field(default_factory=AICfg)
     community: CommunityCfg = Field(default_factory=CommunityCfg)
 
@@ -223,19 +291,60 @@ def _dig(d: dict[str, Any], path: str) -> tuple[dict[str, Any], str]:
 
 
 def parse(raw: dict[str, Any] | None) -> Config:
+    raw = {k: v for k, v in (raw or {}).items() if k != "config_version"}
     try:
-        return Config.model_validate(raw or {})
+        return Config.model_validate(raw)
     except ValidationError as exc:
         raise ConfigError(str(exc)) from exc
 
 
+# -- versioned migrations of the raw file ------------------------------------------
+# Each step takes the raw dict at version N-1 and returns it at version N, so a
+# renamed or moved key keeps the user's value. Add a step and bump CONFIG_VERSION.
+def _m1(raw: dict[str, Any]) -> dict[str, Any]:
+    return raw  # version 1: the first versioned layout (files before it had no number)
+
+
+CONFIG_MIGRATIONS: list[Callable[[dict[str, Any]], dict[str, Any]]] = [_m1]
+CONFIG_VERSION = len(CONFIG_MIGRATIONS)
+
+
+def migrate(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """(raw at CONFIG_VERSION, whether a step changed anything). A no-op step does
+    not count, so a hand-written, commented config.yaml is not rewritten for it."""
+    import copy
+
+    have = raw.pop("config_version", 0)
+    if not isinstance(have, int) or have < 0:
+        have = 0
+    if have > CONFIG_VERSION:
+        raise ConfigError(f"config_version {have} is newer than this FansCut understands "
+                          f"({CONFIG_VERSION}); update FansCut")
+    before = copy.deepcopy(raw)
+    for step in CONFIG_MIGRATIONS[have:]:
+        raw = step(raw)
+    return raw, raw != before
+
+
 def load(path: Path | str | None = None) -> Config:
     p = Path(path) if path else default_path()
-    raw = _read_raw(p)
+    raw, changed = migrate(_read_raw(p))
+    if changed and p.is_file():
+        # keep the pre-migration file, then write the migrated one
+        with contextlib.suppress(OSError):
+            atomic_write(p.with_name(p.name + ".pre-migrate.bak"), p.read_bytes())
+            save(parse(_with_env(raw)), p)
+    return parse(_with_env(raw))
+
+
+def _with_env(raw: dict[str, Any]) -> dict[str, Any]:
+    import copy
+
+    raw = copy.deepcopy(raw)
     for path_, val in env_overrides().items():
         d, leaf = _dig(raw, path_)
         d[leaf] = val
-    return parse(raw)
+    return raw
 
 
 def _read_raw(p: Path) -> dict[str, Any]:
@@ -272,25 +381,40 @@ def save(cfg: Config, path: Path | str) -> None:
             for k in path_.split("."):
                 src = src.get(k) if isinstance(src, dict) else None
             d[leaf] = src if isinstance(src, str) else ""
-    p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    with contextlib.suppress(OSError):
-        p.chmod(0o600)  # may hold secrets; best effort, fails quietly on Windows
+    data = {"config_version": CONFIG_VERSION, **data}
+    # temp file + rename: a crash mid-save cannot corrupt config.yaml; the old one
+    # stays as config.yaml.bak. 0600: it may hold secrets.
+    atomic_write(p, yaml.safe_dump(data, sort_keys=False), backup=True, mode=0o600)
+
+
+def _secret_paths(model: type[BaseModel], prefix: str = "") -> list[str]:
+    out: list[str] = []
+    for name, f in model.model_fields.items():
+        extra = f.json_schema_extra
+        if isinstance(extra, dict) and extra.get("secret"):
+            out.append(prefix + name)
+        ann = f.annotation
+        if isinstance(ann, type) and issubclass(ann, BaseModel):
+            out += _secret_paths(ann, f"{prefix}{name}.")
+    return out
+
+
+# Every field declared with Secret(), as dotted paths. New secrets are masked by default.
+SECRET_PATHS = tuple(_secret_paths(Config))
+
+# Fields the settings API will not change: they name programs FansCut runs, or
+# hold the keys that guard the API. Set them in config.yaml or the environment.
+READ_ONLY_HTTP = ("ffmpeg.binary", "ffmpeg.probe_binary", "render.effectcraft_cli",
+                  "server.api_key", "server.viewer_key", "server.auth",
+                  "server.allowed_hosts", "server.trusted_proxies")
 
 
 def masked(cfg: Config) -> dict[str, Any]:
     d = cfg.model_dump()
-    if d["library"]["sonarr"]["api_key"]:
-        d["library"]["sonarr"]["api_key"] = MASK
-    if d["library"]["radarr"]["api_key"]:
-        d["library"]["radarr"]["api_key"] = MASK
-    if d["library"]["plex"]["token"]:
-        d["library"]["plex"]["token"] = MASK
-    if d["ai"]["api_key"]:
-        d["ai"]["api_key"] = MASK
-    if d["community"]["github_token"]:
-        d["community"]["github_token"] = MASK
-    if d["catalogues"]["tmdb_api_key"]:
-        d["catalogues"]["tmdb_api_key"] = MASK
+    for path in SECRET_PATHS:
+        parent, leaf = _dig(d, path)
+        if parent.get(leaf):
+            parent[leaf] = MASK
     return d
 
 
@@ -298,16 +422,33 @@ def env_locked() -> list[str]:
     return sorted(env_overrides())
 
 
-def merge_update(current: Config, incoming: dict[str, Any]) -> Config:
-    """Apply a settings payload; a masked secret keeps the stored value."""
+# Keys GET/PUT /api/settings add to the config; a PUT that sends them back is fine.
+ECHOED = frozenset({"env_locked", "restart_required", "restart_fields"})
+
+
+def merge_update(current: Config, incoming: dict[str, Any], *, from_http: bool = False
+                 ) -> Config:
+    """Apply a settings payload; a masked secret keeps the stored value.
+
+    Unknown keys are refused rather than silently dropped. With from_http, a
+    change to a READ_ONLY_HTTP field is refused too (sending the current value
+    back is fine: the settings page posts the whole object)."""
     merged = current.model_dump()
 
-    def walk(dst: dict[str, Any], src: dict[str, Any]) -> None:
+    def walk(dst: dict[str, Any], src: dict[str, Any], prefix: str) -> None:
         for k, v in src.items():
+            path = prefix + k
+            if k not in dst:
+                if prefix == "" and k in ECHOED:  # read-only extras the settings page sends back
+                    continue
+                raise ConfigError(f"unknown setting {path!r}")
             if isinstance(v, dict) and isinstance(dst.get(k), dict):
-                walk(dst[k], v)
+                walk(dst[k], v, path + ".")
             elif v != MASK:
+                if from_http and path in READ_ONLY_HTTP and v != dst[k]:
+                    raise ConfigError(f"{path} can only be changed in config.yaml or the "
+                                      "environment")
                 dst[k] = v
 
-    walk(merged, incoming)
+    walk(merged, incoming, "")
     return parse(merged)

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
-import { useAct, useLoad } from '../lib/hooks.js';
+import { useAct, useUrlState } from '../lib/hooks.js';
 import { ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import './Settings.css';
+import { useApi } from '../lib/store.js';
 
 // Immutable set at a dotted path: set(cfg, 'library.sonarr.url', v)
 export function setPath(obj, path, value) {
@@ -10,31 +12,41 @@ export function setPath(obj, path, value) {
 }
 
 const SECTIONS = [
-  ['sources', 'Sources'], ['output', 'Output'], ['render', 'Rendering'], ['cut', 'Cut defaults'],
-  ['ai', 'AI'], ['auto', 'Automation'], ['data', 'Filler data'],
+  ['sources', 'Sources'], ['output', 'Output'], ['plex-out', 'Add to Plex'], ['render', 'Rendering'], ['cut', 'Cut defaults'],
+  ['ai', 'AI'], ['auto', 'Automation'], ['data', 'Filler data'], ['system', 'Caches & network'],
 ];
+
+const mb = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`);
+
+// Cache sizes and hit counts, each with a clear button.
+function CachePanel() {
+  const c = useApi('/system/cache');
+  const { act, busy } = useAct();
+  const clear = (name) => act(() => api(`/system/cache/${name}/clear`, { method: 'POST' })).then(c.reload);
+  if (!c.data) return null;
+  const { art, library, http } = c.data;
+  const rows = [
+    ['art', 'Posters and backdrops', `${art.images} images · ${mb(art.bytes)} of ${mb(art.max_bytes)} · ${art.counts.hit} hits, ${art.counts.miss} fetched, ${art.counts.error} failed`],
+    ['library', 'Library listings', `${library.entries} lists · ${library.hits} hits, ${library.stale} served while refreshing, ${library.failures} failures`],
+    ['http', 'Catalogue lookups', `${http.rows} replies · ${mb(http.bytes)}`],
+  ];
+  return (
+    <div className="stack10" style={{ paddingTop: 8 }}>
+      {rows.map(([name, label, detail]) => (
+        <div key={name} style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-sm" type="button" disabled={busy} onClick={() => clear(name)}>Clear</button>
+          <span><b>{label}</b> <span className="muted tiny">{detail}</span></span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const CODECS = [
   ['auto', 'Automatic (HEVC 10-bit for HDR, H.264 otherwise)'],
   ['hevc', 'HEVC 10-bit (keeps HDR)'],
   ['h264', 'H.264 (plays everywhere, no HDR)'],
 ];
-
-const CSS = `
-.settings .sub a { display:block; padding:6px 10px; border-radius:5px; color:var(--muted); font-size:13px; }
-.settings .sub a:hover, .settings .sub a[aria-current=true] { color:var(--text); background:var(--panel2); }
-.settings .srow { display:grid; grid-template-columns:minmax(0,220px) minmax(0,1fr); gap:8px 24px; align-items:start; padding:16px 0; border-top:1px solid #22262B; }
-.settings .srow > .lbl { font-size:13px; font-weight:500; padding-top:8px; }
-.settings .hint { display:block; font-weight:400; color:var(--muted); font-size:12px; margin-top:2px; }
-.settings .inp { font:14px var(--font); color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:6px; height:36px; padding:0 10px; width:100%; max-width:420px; }
-.settings .inp.mono { font-family:var(--mono); font-size:13px; }
-.settings .inp:disabled { opacity:.6; }
-.settings .stack10 { display:flex; flex-direction:column; gap:10px; }
-.settings .ck { display:flex; gap:10px; align-items:center; font-size:13px; }
-.settings .ck input { accent-color:var(--accent); margin:0; width:16px; height:16px; }
-.settings h2.sh { margin:0 0 4px; font-size:17px; font-weight:700; }
-@media (max-width: 640px) { .settings .srow { grid-template-columns:1fr; } }
-`;
 
 function Row({ label, hint, htmlFor, children }) {
   const head = <>{label}{hint && <span className="hint">{hint}</span>}</>;
@@ -46,14 +58,131 @@ function Row({ label, hint, htmlFor, children }) {
   );
 }
 
+// Sign in with Plex: open plex.tv to approve, then FansCut saves the token.
+function PlexSignIn({ onDone }) {
+  const [state, setState] = useState(null);
+  const start = async () => {
+    try {
+      const pin = await api('/plex/pin', { method: 'POST' });
+      window.open(pin.auth_url, '_blank', 'noopener');
+      setState({ text: 'Approve FansCut in the Plex tab that opened…' });
+      for (let i = 0; i < 90; i += 1) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const r = await api(`/plex/pin/${pin.id}`, { method: 'POST', body: {} });
+        if (r.done) {
+          setState({ ok: true, text: `Signed in${r.url ? `; using ${r.url}` : ''}.` });
+          onDone(r);
+          return;
+        }
+      }
+      setState({ ok: false, text: 'Timed out waiting for Plex. Try again.' });
+    } catch (e) {
+      setState({ ok: false, text: e.message });
+    }
+  };
+  return (
+    <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+      <button className="btn" type="button" onClick={start}>Sign in with Plex</button>
+      {state && <span role="status" className={state.ok == null ? 'muted tiny' : state.ok ? 'c-ready tiny' : 'c-danger tiny'}>{state.text}</span>}
+    </div>
+  );
+}
+
+// Scheduled tasks: when each runs, run it now, change its cron.
+function Schedules() {
+  const q = useApi('/schedules');
+  const { act, busy } = useAct();
+  const [edit, setEdit] = useState({});
+  if (!q.data) return null;
+  const save = (name) => act(() => api(`/schedules/${name}`, { method: 'PUT', body: { cron: edit[name] ?? '' } }), 'Schedule saved')
+    .then(() => setEdit((e) => { const n = { ...e }; delete n[name]; return n; }));
+  return (
+    <div className="stack10" style={{ paddingTop: 8 }}>
+      {q.data.map((t) => (
+        <div key={t.name} className="sched">
+          <div>
+            <b>{t.description}</b>
+            <div className="muted tiny">
+              {t.when}{t.next_run ? ` · next ${t.next_run.replace('T', ' ')}` : ''}
+              {t.last_run ? ` · last ${t.last_run.replace('T', ' ')}` : ''}
+              {t.last_error ? <span className="c-danger"> · failed: {t.last_error}</span> : null}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input className="inp mono" style={{ width: 150 }} aria-label={`${t.name} schedule`} placeholder="off"
+              value={edit[t.name] ?? t.cron} onChange={(e) => setEdit((x) => ({ ...x, [t.name]: e.target.value }))} />
+            {edit[t.name] != null && edit[t.name] !== t.cron && (
+              <button className="btn btn-sm" type="button" disabled={busy} onClick={() => save(t.name)}>Save</button>
+            )}
+            {t.running
+              ? <button className="btn btn-sm" type="button" onClick={() => act(() => api(`/schedules/${t.name}/cancel`, { method: 'POST' }))}>Stop</button>
+              : <button className="btn btn-sm" type="button" disabled={busy} onClick={() => act(() => api(`/schedules/${t.name}/run`, { method: 'POST' }), 'Started')}>Run now</button>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Where to send "job done / failed" messages.
+function NotifyTargets({ value, onChange }) {
+  const list = value || [];
+  const set = (i, k, v) => onChange(list.map((t, j) => (j === i ? { ...t, [k]: v } : t)));
+  return (
+    <div className="stack10" style={{ paddingTop: 8 }}>
+      {list.map((t, i) => (
+        <div key={i} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input className="inp mono" style={{ flex: '1 1 260px' }} aria-label="Notification URL" placeholder="https://ntfy.sh/my-topic"
+            value={t.url} onChange={(e) => set(i, 'url', e.target.value)} />
+          <select className="inp" aria-label="Format" value={t.format} onChange={(e) => set(i, 'format', e.target.value)}>
+            <option value="json">JSON webhook</option><option value="discord">Discord</option><option value="ntfy">ntfy</option>
+          </select>
+          <label className="tiny"><input type="checkbox" checked={t.events.includes('done')}
+            onChange={(e) => set(i, 'events', e.target.checked ? [...t.events, 'done'] : t.events.filter((x) => x !== 'done'))} /> done</label>
+          <label className="tiny"><input type="checkbox" checked={t.events.includes('failed')}
+            onChange={(e) => set(i, 'events', e.target.checked ? [...t.events, 'failed'] : t.events.filter((x) => x !== 'failed'))} /> failed</label>
+          <button className="btn btn-sm btn-ghost" type="button" aria-label="Remove" onClick={() => onChange(list.filter((_, j) => j !== i))}>✕</button>
+        </div>
+      ))}
+      <div><button className="btn btn-sm" type="button" onClick={() => onChange([...list, { url: '', format: 'json', events: ['done', 'failed'] }])}>Add a target</button></div>
+    </div>
+  );
+}
+
+// The webhook URL with the API key in it, and a way to replace a leaked key.
+function WebhookUrl() {
+  const key = useApi('/auth/key');
+  const [shown, setShown] = useState(false);
+  const { act, busy } = useAct();
+  const k = key.data?.api_key;
+  if (!k) return null;
+  const url = `${window.location.origin}/api/webhooks/sonarr?apikey=${shown ? k : '•'.repeat(12)}`;
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <code className="mono tiny" style={{ wordBreak: 'break-all' }}>{url}</code>
+      <button type="button" className="btn btn-sm" onClick={() => setShown((v) => !v)}>{shown ? 'Hide' : 'Show'}</button>
+      <button type="button" className="btn btn-sm" disabled={busy}
+        onClick={() => act(() => api('/auth/key/regenerate', { method: 'POST' }), 'New key made; update Sonarr').then(key.reload)}>
+        New key
+      </button>
+    </div>
+  );
+}
+
 export function Settings() {
-  const { data, error, loading, reload } = useLoad(() => api('/settings'));
-  const fillers = useLoad(() => api('/fillers'));
+  const { data, error, loading, reload } = useApi('/settings');
+  const fillers = useApi('/fillers');
   const [cfg, setCfg] = useState(null);
   const { act, msg, busy, clear } = useAct();
   const [tests, setTests] = useState({});
-  const [active, setActive] = useState('sources');
-  useEffect(() => { if (data) setCfg(data); }, [data]);
+  const [active, setActive] = useUrlState('section', 'sources');
+  // seed the form once; background refetches must not wipe unsaved edits
+  useEffect(() => { if (data && !cfg) setCfg(data); }, [data, cfg]);
+  // a link to /settings?section=plex-out opens at that section
+  const loaded = Boolean(cfg);
+  useEffect(() => {
+    if (loaded && active !== 'sources') document.getElementById(active)?.scrollIntoView({ block: 'start' });
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error && !data) return <div className="page"><ErrorBox error={error} onRetry={reload} /></div>;
   if (loading || !cfg) return <div className="page"><Loading /></div>;
@@ -86,6 +215,15 @@ export function Settings() {
   const setMaps = (next) => setCfg((c) => setPath(c, 'library.path_mappings', next));
 
   const save = () => act(async () => { setCfg(await api('/settings', { method: 'PUT', body: cfg })); }, 'Settings saved');
+  const detect = () => act(async () => {
+    const r = await api('/settings/detect', { method: 'POST' });
+    setCfg(r.settings);
+    return r;
+  }, (r) => {
+    const names = { plex: 'Plex', radarr: 'Radarr', sonarr: 'Sonarr' };
+    if (r.filled.length) return `Connected ${r.filled.map((s) => names[s]).join(', ')} and saved.`;
+    return r.found.length ? `Found ${r.found.map((f) => names[f.service]).join(', ')}; already set up.` : 'No Plex, Radarr or Sonarr found on this computer.';
+  });
   const test = async (service, body) => {
     setTests((t) => ({ ...t, [service]: { text: 'Testing…' } }));
     try {
@@ -120,7 +258,7 @@ export function Settings() {
 
   return (
     <div className="page settings" style={{ maxWidth: 1060, gap: 24 }}>
-      <style>{CSS}</style>
+      
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <span className="muted tiny">Saved to config.yaml. Host and port changes need a restart.</span>
         <button className="btn btn-primary" type="button" onClick={save} disabled={busy}>Save changes</button>
@@ -136,11 +274,17 @@ export function Settings() {
         <div style={{ flex: '999 1 520px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 36 }}>
           <section id="sources" aria-labelledby="src-h">
             <h2 id="src-h" className="sh">Sources</h2>
+            <Row label="Find automatically" hint="Reads Plex, Radarr and Sonarr's own settings on this computer and fills any empty URL or key.">
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="btn" type="button" disabled={busy} onClick={detect}>Find apps on this computer</button>
+              </div>
+            </Row>
             <Row label="Plex" hint="Optional. Shows and movies. Leave sections empty for every show library.">
               <div className="stack10">
                 {input('library.plex.url', { 'aria-label': 'Plex URL', placeholder: 'http://plex:32400' })}
                 {input('library.plex.token', { 'aria-label': 'Plex token', type: 'password', autoComplete: 'off', placeholder: 'Token' })}
                 {testRow('plex', { url: lib.plex.url, token: lib.plex.token })}
+                <PlexSignIn onDone={(r) => setCfg((c) => setPath(setPath(c, 'library.plex.token', '***'), 'library.plex.url', r.url || c.library.plex.url))} />
               </div>
             </Row>
             <Row label="Sonarr" hint="Optional. Series, episodes and file paths, plus webhooks.">
@@ -201,6 +345,20 @@ export function Settings() {
             {text('render.language', 'Audio language', 'Preferred audio track, e.g. jpn or eng. Empty uses the first track.', { placeholder: 'jpn', className: 'inp mono', style: { width: 120 } })}
           </section>
 
+          <section id="plex-out" aria-labelledby="plexout-h">
+            <h2 id="plexout-h" className="sh">Add to Plex</h2>
+            <p className="muted tiny" style={{ margin: '0 0 8px' }}>
+              After every build. Needs Plex under Sources; without it, files still land in the output folder.
+            </p>
+            <Row label="Rescan" hint="Plex picks up the new file right away instead of at its next scheduled scan.">
+              <div style={{ paddingTop: 8 }}>{check('render.plex_refresh', 'Rescan the Plex libraries after a build')}</div>
+            </Row>
+            {text('render.plex_collection', 'Collection', 'Builds are added to this collection. Empty turns it off.', { placeholder: 'FansCut', style: { width: 240 } })}
+            <Row label="Poster" hint="The cut’s own poster when it has one, else a frame from the build.">
+              <div style={{ paddingTop: 8 }}>{check('render.poster', 'Write poster.jpg next to each build')}</div>
+            </Row>
+          </section>
+
           <section id="render" aria-labelledby="ren-h">
             <h2 id="ren-h" className="sh">Rendering</h2>
             <p className="muted tiny" style={{ margin: '0 0 8px' }}>Stream copy is used when files match; these apply to re-encodes.</p>
@@ -250,17 +408,25 @@ export function Settings() {
             {text('ai.vision_model', 'Vision model', 'Looks at frame grids when tagging scenes. Empty uses Model.', { placeholder: 'ollama/qwen3-vl:8b', className: 'inp mono' })}
             {text('ai.base_url', 'Base URL', 'Only for a bare model name (OpenAI-compatible) or a remote Ollama.', { placeholder: 'http://localhost:11434/v1', className: 'inp mono' })}
             {text('ai.api_key', 'API key', 'Prefer FANSCUT_AI_API_KEY over the config file.', { type: 'password', autoComplete: 'off' })}
+            {text('catalogues.tmdb_api_key', 'TMDB key', 'Cast for films outside Plex (scene tagging). Prefer FANSCUT_TMDB_API_KEY.', { type: 'password', autoComplete: 'off' })}
             {text('ai.timeout', 'Timeout', 'Seconds.', { type: 'number', min: 5, className: 'inp mono', style: { width: 90 } })}
           </section>
 
           <section id="auto" aria-labelledby="auto-h">
             <h2 id="auto-h" className="sh">Automation</h2>
-            <Row label="Sonarr webhook" hint="Point a Sonarr Webhook connection at /api/webhooks/sonarr. No auth: keep FansCut on a trusted network.">
+            <Row label="Sonarr webhook" hint="Add a Webhook connection in Sonarr (Settings, Connect) with this URL. The key in it is FansCut's API key.">
               <div className="stack10" style={{ paddingTop: 8 }}>
+                <WebhookUrl />
                 {check('automation.sonarr_webhook', 'Accept Sonarr webhooks (new episode → detect + render)')}
                 {check('automation.auto_detect', 'Run OP/ED detection first')}
                 {check('automation.keep', 'Keep webhook renders')}
               </div>
+            </Row>
+            <Row label="Notifications" hint="Sent when a job finishes. Saved with the rest of the settings.">
+              <NotifyTargets value={cfg.notify?.targets} onChange={(v) => setCfg((c) => setPath(c, 'notify.targets', v))} />
+            </Row>
+            <Row label="Scheduled tasks" hint="Cron: minute hour day month weekday, local time. Empty = off. Saved as you go.">
+              <Schedules />
             </Row>
           </section>
 
@@ -275,6 +441,18 @@ export function Settings() {
                 </div>
               </div>
             </Row>
+          </section>
+
+          <section id="system" aria-labelledby="system-h">
+            <h2 id="system-h" className="sh">Caches & network</h2>
+            <Row label="Caches"><CachePanel /></Row>
+            <Row label="Remote art" hint="Fetch TMDB/TVDB posters through FansCut and keep them, so browsers never contact those sites. Good for offline or private setups.">
+              <div style={{ paddingTop: 8 }}>{check('art.cache_remote', 'Cache TMDB and TVDB art here')}</div>
+            </Row>
+            {text('art.cache_mb', 'Art cache size', 'MB. The oldest images go first past this.', { type: 'number', min: 16, className: 'inp mono', style: { width: 110 } })}
+            {text('network.timeout', 'Server timeout', 'Seconds to wait for Sonarr, Radarr and Plex.', { type: 'number', min: 2, className: 'inp mono', style: { width: 90 } })}
+            {text('network.proxy', 'Outbound proxy', 'For internet calls (catalogues, GitHub, TMDB). Empty = none.', { placeholder: 'http://proxy:3128', className: 'inp mono' })}
+            <Row label="Proxy bypass"><div style={{ paddingTop: 8 }}>{check('network.proxy_bypass_local', 'Reach LAN servers (Plex, Sonarr, Radarr) directly')}</div></Row>
           </section>
         </div>
       </div>

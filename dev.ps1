@@ -1,11 +1,11 @@
 # FansCut local dev helper (Windows / PowerShell)
 #
 #   .\dev.ps1 setup          install Python and UI dependencies
-#   .\dev.ps1 serve          run the app (http://127.0.0.1:6464)
+#   .\dev.ps1 serve          run the app (http://127.0.0.1:6464); restarts when the code changes
 #   .\dev.ps1 ui             UI dev server with live reload (http://127.0.0.1:5464)
 #   .\dev.ps1 test           pytest, in parallel
 #   .\dev.ps1 lint           ruff + mypy
-#   .\dev.ps1 validate       everything CI runs: ruff, mypy, pytest, UI lint, UI tests, UI build
+#   .\dev.ps1 validate       everything CI runs: ruff, mypy, pytest, UI lint, typecheck, UI tests, UI build
 #   .\dev.ps1 check          same as validate
 #   .\dev.ps1 test-web       UI lint and UI tests (Vitest)
 #   .\dev.ps1 cli <args...>  pass through to the fanscut CLI
@@ -49,7 +49,7 @@ switch ($Command) {
         Step "pip install -e .[dev]" { & $Python -m pip install -e ".[dev]" }
         Step "npm ci" { Ui { npm ci } }
     }
-    "serve" { & $Python -m fanscut serve @Rest; exit $LASTEXITCODE }
+    "serve" { & $Python -m fanscut serve --reload @Rest; exit $LASTEXITCODE }
     "ui" {
         if (-not (Test-Path "ui\node_modules")) { Step "npm ci" { Ui { npm ci } } }
         Ui { npm run dev -- @Rest }
@@ -65,6 +65,7 @@ switch ($Command) {
         Step "pytest" { & $Python -m pytest -q -n auto }
         if (-not (Test-Path "ui\node_modules")) { Step "npm ci" { Ui { npm ci } } }
         Step "ui lint" { Ui { npm run lint } }
+        Step "ui typecheck" { Ui { npm run typecheck } }
         Step "ui test" { Ui { npm test } }
         Step "ui build" { Ui { npm run build } }
         Write-Host "`nall good" -ForegroundColor Green
