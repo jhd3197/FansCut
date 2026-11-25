@@ -128,14 +128,13 @@ jobs:
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           make_latest: true
-      # A warning until the GHCR package is made Public (a one-time manual
-      # step in the package settings); then turn this into a hard failure.
-      - name: Check anonymous access to the published image
+      - name: Verify anonymous access to the published image
         env:
           IMAGE: ${{ steps.version.outputs.image }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p "$RUNNER_TEMP/anonymous-docker"
           if ! DOCKER_CONFIG="$RUNNER_TEMP/anonymous-docker" docker manifest inspect "$IMAGE:$VERSION" > /dev/null; then
-            echo "::warning::The image was published but is not publicly readable. Set the fanscut package visibility to Public in GitHub package settings."
+            echo "::error::The image was published but is not publicly readable. Check registry availability and set the fanscut package visibility to Public in GitHub package settings."
+            exit 1
           fi
