@@ -5,6 +5,7 @@ import { api } from '../lib/api.js';
 import { useAct, useCrumbRoot, useLoad, usePoll } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
 import { Crumbs, enc, hm, SRC_COLOURS } from '../components/kit.jsx';
+import { about, gb } from './CutDetail.jsx';
 import { Dialog, ErrorBox, Loading, Notice, Progress } from '../components/ui.jsx';
 import { useApi } from '../lib/store.js';
 
@@ -263,7 +264,9 @@ export function Build() {
   const settings = useApi('/settings');
   const jobs = useApi('/jobs');
   const [variant, setVariant] = useState(search.get('variant') || '');
-  const dry = useLoad(() => api(`/timelines/${enc(id)}/render`, { method: 'POST', read: true, body: { dry_run: true, variant: variant || null } }), [id, variant]);
+  const [quality, setQuality] = useState('best');
+  const dry = useLoad(() => api(`/timelines/${enc(id)}/render`, { method: 'POST', read: true, body: { dry_run: true, variant: variant || null, quality } }), [id, variant, quality]);
+  const est = useApi(`/timelines/${enc(id)}/estimate${variant ? `?variant=${enc(variant)}` : ''}`, { quiet: true });
   const [keep, setKeep] = useState(null);
   const [checked, setChecked] = useState({});
   const [job, setJob] = useState(null);
@@ -314,7 +317,7 @@ export function Build() {
 
   const runSync = () => act(async () => setJob(await api(`/timelines/${enc(id)}/sync`, { method: 'POST' })), 'Matching cut points against your files');
   const start = () => act(async () => {
-    await api(`/timelines/${enc(id)}/render`, { method: 'POST', body: { variant: variant || null, keep: keepValue, collection: plex && collection } });
+    await api(`/timelines/${enc(id)}/render`, { method: 'POST', body: { variant: variant || null, keep: keepValue, collection: plex && collection, quality } });
     nav('/jobs');
   });
   const onCheck = (keys, on) => setChecked((c) => {
@@ -385,6 +388,23 @@ export function Build() {
                   {v.description && <span className="tiny" style={{ color: 'var(--text2)' }}>{v.description}</span>}
                   <span className="tiny muted">{hm(v.runtime / 60)}</span>
                   {v.blocked.map((b) => <span key={b.id} className="tiny c-danger">{b.label}: {b.reason}</span>)}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        )}
+        {est.data?.fast && (
+          <fieldset style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+            <legend style={{ position: 'absolute', left: -9999 }}>Quality</legend>
+            {[['best', est.data.best], ['fast', est.data.fast]].map(([q, o]) => (
+              <label key={q} className="choice" style={{ flex: '1 1 260px' }}>
+                <input type="radio" name="quality" checked={quality === q} onChange={() => setQuality(q)} style={{ margin: '3px 0 0' }} />
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <b style={{ fontWeight: 600 }}>{o.name}</b>
+                  <span className="tiny muted">{about(o.seconds)} · {gb(o.bytes)}</span>
+                  <span className="tiny" style={{ color: 'var(--text2)' }}>
+                    {q === 'best' ? 'Keeps the source picture: resolution, HDR and colour.' : 'Smaller and quicker: 1080p H.264, HDR turned into normal colour for any screen.'}
+                  </span>
                 </span>
               </label>
             ))}

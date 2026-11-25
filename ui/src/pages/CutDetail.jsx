@@ -134,6 +134,12 @@ function Segments({ doc, values, report }) {
   );
 }
 
+// "about 30 GB" / "about 800 MB"
+export function gb(bytes) {
+  if (!bytes) return '';
+  return bytes >= 1e9 ? `about ${Math.round(bytes / 1e9)} GB` : `about ${Math.max(1, Math.round(bytes / 1e8) * 100)} MB`;
+}
+
 // "about 2 h 10 min" for an estimate
 export function about(sec) {
   if (sec < 90) return 'about a minute';
@@ -152,10 +158,13 @@ function Estimate({ id, variant }) {
   const encode = e.reasons.some((r) => r.startsWith('re-encoded'));
   return (
     <section aria-labelledby="c-est" className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: 620 }}>
-      <h2 id="c-est" style={{ fontSize: 14 }}>Build on this PC: {e.label} · {about(e.seconds)}</h2>
+      <h2 id="c-est" style={{ fontSize: 14 }}>Build on this PC: {e.label} · {about(e.seconds)}{e.best?.bytes ? ` · ${gb(e.best.bytes)}` : ''}</h2>
       <span style={{ fontSize: 13, color: 'var(--text2)' }}>Why: {e.reasons.join(', ')}</span>
+      {e.fast && (
+        <span style={{ fontSize: 13 }}>Faster option: {e.fast.name} · {about(e.fast.seconds)} · {gb(e.fast.bytes)}. Pick it on the build page.</span>
+      )}
       {encode && !e.gpu && (
-        <span style={{ fontSize: 13 }}>Faster option: turn on the GPU encoder in <Link to="/settings?section=render">Settings</Link>, usually several times quicker.</span>
+        <span style={{ fontSize: 13 }}>{e.fast ? 'Also' : 'Faster option'}: turn on the GPU encoder in <Link to="/settings?section=render">Settings</Link>, usually several times quicker.</span>
       )}
       <span className="tiny muted">{e.basis === 'measured' ? 'Timed from your last builds on this PC.' : 'From typical speeds; it gets closer after your first build.'}</span>
     </section>

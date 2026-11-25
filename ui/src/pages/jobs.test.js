@@ -45,5 +45,9 @@ describe('build phases', () => {
     expect(about(35 * 60)).toBe('about 35 min');
     expect(about(2 * 3600 + 9 * 60)).toBe('about 2 h 10 min');
     expect(about(2 * 3600)).toBe('about 2 h');
+    const { gb } = await import('./CutDetail.jsx');
+    expect(gb(30.4e9)).toBe('about 30 GB');
+    expect(gb(812e6)).toBe('about 800 MB');
+    expect(gb(0)).toBe('');
   });
 });
