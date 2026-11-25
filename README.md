@@ -86,12 +86,24 @@ from the environment instead; see [Secrets](#secrets).*
 mkdir -p config data output && chown 1000:1000 config data output
 cp config.docker.example.yaml config/config.yaml   # edit it
 # edit docker-compose.yml: point the /media volume at your library
-docker compose up -d --build
+docker compose up -d
 ```
 
-Open <http://localhost:6464>. The container runs as uid 1000, so `config`,
-`data` and `output` need to be writable by it. The library is mounted read-only.
-FansCut never writes next to your originals; cuts go to the output folder.
+Open <http://localhost:6464>. Compose pulls `ghcr.io/jhd3197/fanscut:latest`
+(amd64 and arm64). `:latest` is the newest release from `main`, and `:dev`
+follows the dev branch. Every release also gets an `:X.Y.Z` tag to pin to.
+
+The container runs as uid 1000, so `config`, `data` and `output` need to be
+writable by it. For other ids, set `user:` or PUID/PGID. The library is
+mounted read-only. FansCut never writes next to your originals; cuts go to the
+output folder. For an NVIDIA GPU (NVENC), add the override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
+[docs/docker.md](docs/docker.md) covers PUID/PGID, Unraid and Synology, path
+mapping, getting cuts into Plex, reverse proxies, upgrades and backups.
 
 ### Local dev
 
@@ -369,7 +381,6 @@ Every finding names the file and the fix.
 - Filler labels depend on a third-party dataset and on matching the right
   catalogue entry. Check the match, especially for shows with several seasons
   in one catalogue entry.
-- The Docker image is written but I haven't built it on every platform.
 
 ## Security
 
