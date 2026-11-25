@@ -228,6 +228,26 @@ is dropped. By default the first kept episode keeps its opening.
 Stream copy can only cut on keyframes, so cut points may land a moment off.
 Use "re-encode" mode when you want frame-accurate cuts.
 
+## Timeline recipes (chronological edits)
+
+Beyond per-episode cuts, a **timeline recipe** rebuilds a show in any order:
+any range of any episode, grouped into parts, rendered as a new show Plex can
+serve (`<Series> (<Edit>)/Season 01/…`, with .nfo files and chapters). The
+recipe is media-free JSON — source keys in Plex/TVDB numbering, times in
+seconds, ordering, and **anchors**: lossy audio/video fingerprints of each
+cut point (8 s of binarised audio features and/or 4 fps dHash frames; neither
+can be turned back into content).
+
+The flow: import a timeline on the series page (missing sources are reported
+with the parts that need them), run **Sync** — each anchor is matched against
+your own files, so BluRay vs streaming vs TV offsets, mid-episode ad cuts and
+even PAL speedups are corrected — review the sync report with per-cut
+previews, then render. The editor (Timelines → Open) authors recipes from
+scratch: parts and segments with drag-to-reorder, preview playback, an AI
+outline from pasted chronology notes, and "Export + anchors" to share the
+result. `fanscut recipe validate --file` checks a recipe offline; the
+companion fanscut-recipes repo runs it in CI.
+
 ## Cut recipes
 
 A recipe holds your choices for a series and no video data. Export from the
