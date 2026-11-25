@@ -73,6 +73,8 @@ def _segments(v: Any, what: str) -> list[list[float]] | None:
 
 def validate(doc: Any) -> dict[str, Any]:
     """Return a cleaned copy or raise RecipeError."""
+    if isinstance(doc, dict) and doc.get("kind") == "timeline":
+        raise RecipeError("timeline recipes import via POST /api/series/{key}/timelines")
     if not isinstance(doc, dict) or doc.get("schema") not in READABLE_SCHEMAS:
         raise RecipeError(f"not a schema {' or '.join(map(str, READABLE_SCHEMAS))} recipe")
     series = doc.get("series", {})

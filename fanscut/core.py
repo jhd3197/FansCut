@@ -9,6 +9,7 @@ import contextlib
 import datetime as _dt
 import json
 import tempfile
+import uuid
 from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any
@@ -469,6 +470,71 @@ class Core:
                 self.db.execute(
                     "INSERT OR IGNORE INTO trims (series_key, episode_id, kind, start, end, source)"
                     " VALUES (?,?,?,?,?,'auto')", (key, eid, kind, s, e))
+
+    # -- timelines (chronological recipes) --------------------------------------
+    def _timeline_row(self, r: Any, with_doc: bool = False) -> dict[str, Any]:
+        doc = json.loads(r["doc"])
+        out = {"id": r["id"], "series_key": r["series_key"], "title": r["title"],
+               "parts": len(doc["parts"]), "sources": len(doc["sources"]),
+               "updated_at": r["updated_at"],
+               "synced": self.db.one(
+                   "SELECT timeline_id FROM timeline_syncs WHERE timeline_id = ?",
+                   (r["id"],)) is not None}
+        if with_doc:
+            out["doc"] = doc
+        return out
+
+    def list_timelines(self, key: str) -> list[dict[str, Any]]:
+        self.library.get_series(key)
+        return [self._timeline_row(r) for r in self.db.query(
+            "SELECT * FROM timelines WHERE series_key = ? ORDER BY created_at", (key,))]
+
+    def create_timeline(self, key: str, doc: Any) -> dict[str, Any]:
+        from .timeline import recipe as tl_recipe
+
+        if len(dumps(doc)) > tl_recipe.MAX_BYTES:
+            raise FansCutError("recipe is over the 2 MB limit")
+        clean = tl_recipe.validate(doc)
+        episodes = {e.id for e in self.library.episodes(key) if e.file}
+        tid = uuid.uuid4().hex[:12]
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        self.db.execute(
+            "INSERT INTO timelines (id, series_key, title, doc, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?)", (tid, key, clean["title"], dumps(clean), now, now))
+        return {**self.get_timeline(tid), "missing": tl_recipe.missing_sources(clean, episodes)}
+
+    def get_timeline(self, tid: str, with_doc: bool = True) -> dict[str, Any]:
+        from .timeline import recipe as tl_recipe
+
+        row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        out = self._timeline_row(row, with_doc)
+        if with_doc:
+            episodes = {e.id for e in self.library.episodes(row["series_key"]) if e.file}
+            out["missing"] = tl_recipe.missing_sources(out["doc"], episodes)
+        return out
+
+    def update_timeline(self, tid: str, doc: Any) -> dict[str, Any]:
+        from .timeline import recipe as tl_recipe
+
+        row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        if len(dumps(doc)) > tl_recipe.MAX_BYTES:
+            raise FansCutError("recipe is over the 2 MB limit")
+        clean = tl_recipe.validate(doc)
+        self.db.execute("UPDATE timelines SET title = ?, doc = ?, updated_at = ? WHERE id = ?",
+                        (clean["title"], dumps(clean),
+                         _dt.datetime.now().isoformat(timespec="seconds"), tid))
+        self.db.execute("DELETE FROM timeline_syncs WHERE timeline_id = ?", (tid,))
+        return self.get_timeline(tid)
+
+    def delete_timeline(self, tid: str) -> None:
+        if self.db.one("SELECT id FROM timelines WHERE id = ?", (tid,)) is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        self.db.execute("DELETE FROM timelines WHERE id = ?", (tid,))
+        self.db.execute("DELETE FROM timeline_syncs WHERE timeline_id = ?", (tid,))
 
     # -- AI-assisted recipes ----------------------------------------------------
     def ai_recipe(self, key: str, notes: str, apply: bool = False) -> dict[str, Any]:

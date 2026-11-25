@@ -108,7 +108,29 @@ def _v4(conn: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2, _v3, _v4]
+def _v5(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE timelines (
+            id         TEXT PRIMARY KEY,
+            series_key TEXT NOT NULL,
+            title      TEXT NOT NULL,
+            doc        TEXT NOT NULL,            -- the validated recipe JSON
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE timeline_syncs (
+            timeline_id TEXT PRIMARY KEY,
+            report      TEXT NOT NULL,           -- sync report JSON (offsets, confidence)
+            updated_at  TEXT NOT NULL
+        );
+        CREATE TABLE anchor_cache (
+            key   TEXT PRIMARY KEY,              -- file identity + position + kind
+            value TEXT NOT NULL                  -- "a1:<base64>" or "v1:<base64>"
+        );
+    """)
+
+
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2, _v3, _v4, _v5]
 
 
 class Database:
