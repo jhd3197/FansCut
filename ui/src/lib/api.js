@@ -35,3 +35,6 @@ export async function api(path, { method = 'GET', body } = {}) {
 
 // Series keys look like "folder:Harbor Lights"; they sit in a path segment.
 export const seriesPath = (key) => `/series/${encodeURIComponent(key)}`;
+
+// A library item's poster or backdrop (Plex, Radarr/Sonarr or files beside it).
+export const artUrl = (key, kind = 'poster', w = 500) => `/api/art/${kind}/${encodeURIComponent(key)}?w=${w}`;

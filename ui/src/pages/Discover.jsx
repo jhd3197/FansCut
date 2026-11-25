@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAct, useLoad } from '../lib/hooks.js';
 import { Dialog, Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
-import { CutTile, KV, Search, Section, Seg, enc, hm } from '../components/kit.jsx';
+import { Backdrop, CutTile, KV, Search, Seg, Shelf, enc, hm } from '../components/kit.jsx';
 
 // -- shared with the Collection and Movie pages --------------------------------------------
 
@@ -70,10 +70,21 @@ export function suggestionStatus(s) {
   return s.missing?.[0]?.reason ? `Not available · ${s.missing[0].reason}` : 'Not available';
 }
 
+// On real artwork: a short badge, and how several films' posters are combined.
+const ART = {
+  collection_merge: ['split', 'merge', (s) => `MERGE · ${films(s)}`],
+  watch_order: ['stack', 'order', () => 'WATCH ORDER'],
+  canon_cut: ['single', 'canon', () => 'CANON CUT'],
+  recipe: ['split', 'cut', () => 'COMMUNITY CUT'],
+};
+
 export function SuggestionTile({ s, onOpen }) {
+  const [layout, badge, label] = ART[s.kind] || ['single', 'cut', () => suggestionTag(s)];
   return (
-    <CutTile title={s.title} sub={s.tagline} tag={suggestionTag(s)} kind={POSTER_KIND[s.kind] || 'supercut'}
-      meta={suggestionMeta(s)} status={s.status} note={suggestionStatus(s)} onClick={() => onOpen(s)} />
+    <CutTile title={s.name || s.title} sub={s.tagline} tag={s.art?.length ? label(s) : suggestionTag(s)}
+      kind={POSTER_KIND[s.kind] || 'supercut'} art={s.art} layout={layout} badge={badge}
+      meta={[KIND_LABEL[s.kind], suggestionMeta(s)].filter(Boolean).join(' · ')}
+      status={s.status} note={suggestionStatus(s)} onClick={() => onOpen(s)} />
   );
 }
 
@@ -182,9 +193,10 @@ function AddByUrl({ onClose }) {
 }
 
 async function loadAll() {
-  const [sugg, cat] = await Promise.all([
+  const [sugg, cat, colls] = await Promise.all([
     api('/suggestions'),
     api('/catalogue').catch(() => null), // optional: the catalogue may not exist yet
+    api('/library/collections').catch(() => null),
   ]);
   const seen = new Set();
   const out = [];
@@ -194,11 +206,12 @@ async function loadAll() {
   for (const c of cat?.cuts || []) {
     if (c?.id && !seen.has(c.id)) { seen.add(c.id); out.push({ ...c, from_catalogue: true }); }
   }
-  return out;
+  return { items: out, collections: colls?.collections || [] };
 }
 
 export function Discover() {
-  const { data, error, loading, reload } = useLoad(loadAll);
+  const { data: loaded, error, loading, reload } = useLoad(loadAll);
+  const data = loaded?.items;
   const [filter, setFilter] = useState('all');
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(null);
@@ -217,7 +230,7 @@ export function Discover() {
   }
 
   return (
-    <div className="page" style={{ gap: 30 }}>
+    <div className="page page-wide" style={{ gap: 30 }}>
       <div className="toolbar">
         <Seg label="Show" value={filter} onChange={setFilter}
           options={[['all', 'All'], ['ready', 'Ready'], ['missing', 'Missing something']]} />
@@ -242,12 +255,21 @@ export function Discover() {
         <Empty>Nothing matches. {needle ? 'Try another search' : 'Try another filter'}.</Empty>
       )}
 
+      {!needle && filter === 'all' && loaded?.collections?.length > 0 && (
+        <Shelf id="shelf-coll" title="Your collections" count={loaded.collections.length} wide>
+          {loaded.collections.map((c) => (
+            <Link key={c.name} className="tile tile-wide" to={`/collections/${enc(c.name)}`}>
+              <Backdrop k={c.art?.[0]} name={c.name} />
+              <span className="tiny muted">{c.films} films{c.cuts ? ` · ${c.cuts} cuts` : ''}</span>
+            </Link>
+          ))}
+        </Shelf>
+      )}
+
       {shelves.map((name, i) => (
-        <Section key={name} id={`shelf-${i}`} title={name} count={byName.get(name).length}>
-          <div className="shelf">
-            {byName.get(name).map((s) => <SuggestionTile key={s.id} s={s} onOpen={setOpen} />)}
-          </div>
-        </Section>
+        <Shelf key={name} id={`shelf-${i}`} title={name} count={byName.get(name).length}>
+          {byName.get(name).map((s) => <SuggestionTile key={s.id} s={s} onOpen={setOpen} />)}
+        </Shelf>
       ))}
 
       {data && data.length > 0 && (

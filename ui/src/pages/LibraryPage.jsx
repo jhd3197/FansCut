@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAct, useLoad } from '../lib/hooks.js';
 import { Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
-import { MediaTile, Search, Section, enc, palette } from '../components/kit.jsx';
+import { Backdrop, MediaTile, Search, Section, enc } from '../components/kit.jsx';
 
 async function loadLibrary() {
   const [series, movies, collections] = await Promise.all([
@@ -17,13 +17,10 @@ function plural(n, word) {
 }
 
 function CollectionTile({ c }) {
-  const [bg, , acc] = palette(c.name);
   return (
-    <Link className="tile" to={`/collections/${enc(c.name)}`} style={{ padding: 6 }}>
-      <div style={{ aspectRatio: '16 / 9', borderRadius: 6, background: bg, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', padding: 14 }}>
-        <span style={{ font: '700 20px/1.05 var(--display)', color: acc }}>{c.name}</span>
-      </div>
-      <span className="tiny muted" style={{ padding: '0 2px' }}>{plural(c.films, 'film')} · {plural(c.cuts, 'cut')}</span>
+    <Link className="tile tile-wide" to={`/collections/${enc(c.name)}`}>
+      <Backdrop k={c.art?.[0]} name={c.name} />
+      <span className="tiny muted">{plural(c.films, 'film')} · {plural(c.cuts, 'cut')}</span>
     </Link>
   );
 }
@@ -45,11 +42,12 @@ export function LibraryPage() {
   const series = (data?.series.series || []).filter((s) => has(s.title, s.year));
   const movies = (data?.movies.movies || []).filter((m) => has(m.title, m.year, ...(m.collections || [])));
   const errors = Object.entries({ ...(data?.series.errors || {}), ...(data?.movies.errors || {}) });
-  const noSources = data && (data.series.sources || []).length === 0;
+  // series sources only list Sonarr/Plex/folder shows; a movies-only library is still set up
+  const noSources = data && !(data.series.sources || []).length && !(data.movies.movies || []).length && !errors.length;
   const nothing = data && !collections.length && !series.length && !movies.length;
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <div className="toolbar toolbar-end">
         <div className="row wrap">
           <Search value={q} onChange={setQ} label="Search library" />
@@ -83,7 +81,7 @@ export function LibraryPage() {
         <Section id="shows-h" title="Shows">
           <div className="grid">
             {series.map((s) => (
-              <MediaTile key={s.key} to={`/series/${enc(s.key)}`} tag={`TV · ${plural(s.episode_count, 'episode')}`}
+              <MediaTile key={s.key} art={s.key} to={`/series/${enc(s.key)}`} tag={`TV · ${plural(s.episode_count, 'episode')}`}
                 title={s.title} year={s.year}
                 meta={[s.is_anime ? 'Anime' : null, s.source].filter(Boolean).join(' · ')}
                 note={s.is_anime && !s.matched ? 'Not matched to a catalogue yet' : null} noteClass="c-warn" />
@@ -96,7 +94,7 @@ export function LibraryPage() {
         <Section id="movies-h" title="Movies">
           <div className="grid">
             {movies.map((m) => (
-              <MediaTile key={m.key} to={`/movies/${enc(m.key)}`} tag={movieTag(m)} title={m.title} year={m.year}
+              <MediaTile key={m.key} art={m.key} to={`/movies/${enc(m.key)}`} tag={movieTag(m)} title={m.title} year={m.year}
                 meta={m.minutes ? `${m.minutes} min` : m.on_disk ? 'Length unknown' : 'No file'}
                 note={m.problem} noteClass={m.problem_severity === 'error' ? 'c-danger' : 'c-warn'} />
             ))}
