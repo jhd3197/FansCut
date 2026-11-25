@@ -240,8 +240,10 @@ class Library:
     def _radarr_movie(self, m: dict[str, Any]) -> Movie:
         f = m.get("movieFile") or {}
         runtime = _hms(((f.get("mediaInfo") or {}).get("runTime")) or "")
+        coll = m.get("collection") or {}
         return Movie(key=f"radarr:{m['id']}", source="radarr", title=m.get("title", ""),
                      year=m.get("year") or None, tmdb_id=m.get("tmdbId") or None,
+                     tmdb_collection=coll.get("tmdbId") or None,
                      file=self._map(f["path"]) if f.get("path") else None, duration=runtime,
                      poster=_remote_image(m.get("images"), "poster"),
                      backdrop=_remote_image(m.get("images"), "fanart"))
@@ -254,7 +256,7 @@ class Library:
         ms = media.get("duration") or m.get("duration")
         tmdb = int(ids["tmdb"]) if ids.get("tmdb", "").isdigit() else None
         return Movie(key=f"plexmovie:{m['ratingKey']}", source="plex", title=m.get("title", ""),
-                     year=m.get("year"), tmdb_id=tmdb,
+                     year=m.get("year"), tmdb_id=tmdb, plex_key=str(m["ratingKey"]),
                      file=self._map(part["file"]) if part.get("file") else None,
                      duration=ms / 1000 if ms else None,
                      collections=[c.get("tag", "") for c in m.get("Collection", [])
@@ -423,6 +425,8 @@ def _merge_movies(items: list[Movie]) -> list[Movie]:
         into.collections = list(dict.fromkeys([*into.collections, *other.collections]))
         into.poster = into.poster or other.poster
         into.backdrop = into.backdrop or other.backdrop
+        into.plex_key = into.plex_key or other.plex_key
+        into.tmdb_collection = into.tmdb_collection or other.tmdb_collection
 
     for m in items:
         if m.file:

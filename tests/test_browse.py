@@ -133,3 +133,58 @@ def test_series_season_and_episode_counts_per_source():
     plex = Library._plex_series({"ratingKey": "3", "title": "AoT", "childCount": 4,
                                  "leafCount": 87, "Collection": [{"tag": "Titans"}]})
     assert (plex.season_count, plex.episode_total, plex.collections) == (4, 87, ["Titans"])
+
+
+def test_collection_groups_one_copy_per_film_and_tmdb_ids():
+    """Juan's LOTR: Fellowship twice (a real file and Plex's muxing.tmp.mkv)."""
+    from fanscut.browse import collection_groups, find_group
+    from fanscut.models import Movie
+
+    def film(key, title, year, tmdb, file, **kw):
+        return Movie(key=key, source=key.split(":")[0].replace("plexmovie", "plex"),
+                     title=title, year=year, tmdb_id=tmdb, file=file,
+                     collections=["The Lord of the Rings"], **kw)
+
+    fotr = film("radarr:530", "Fellowship", 2001, 120, "/m/FOTR.Extended.2160p.mkv",
+                tmdb_collection=119)
+    tmp = film("plexmovie:30868", "Fellowship", 2001, 120, "/m/muxing.tmp.mkv", plex_key="30868")
+    ttt = film("radarr:529", "Two Towers", 2002, 121, "/m/TTT.mkv", tmdb_collection=119,
+               plex_key="31000")
+    (g,) = collection_groups([tmp, fotr, ttt])
+    assert g["id"] == "tmdb-119" and g["name"] == "The Lord of the Rings"
+    assert [m.key for m in g["movies"]] == ["radarr:530", "radarr:529"]  # the temp copy lost
+    assert g["movies"][0].plex_key == "30868"  # borrowed from the other copy: playlists work
+    assert find_group([tmp, fotr, ttt], "The Lord of the Rings")["id"] == "tmdb-119"
+
+
+def test_radarr_movie_keeps_tmdb_collection():
+    from fanscut.library.service import Library
+
+    lib = Library.__new__(Library)
+    lib._map = lambda p: p
+    m = lib._radarr_movie({"id": 530, "title": "FOTR", "tmdbId": 120,
+                           "collection": {"title": "The Lord of the Rings Collection",
+                                          "tmdbId": 119}})
+    assert m.tmdb_collection == 119
+
+
+def test_mixed_lists_are_not_franchise_groups():
+    """"IMDb Top 250" spans franchises: no merge or watch order for it."""
+    from fanscut.browse import collection_groups
+    from fanscut.models import Movie
+
+    def film(i, cid, coll):
+        return Movie(key=f"radarr:{i}", source="radarr", title=f"F{i}", year=2000 + i,
+                     tmdb_id=i, file=f"/m/{i}.mkv", tmdb_collection=cid, collections=[coll])
+
+    mixed = [film(1, 119, "IMDb Top 250"), film(2, 230, "IMDb Top 250")]
+    auto = [film(3, None, "Popular on My Server"), film(4, None, "Popular on My Server")]
+    one = [film(5, 10, "Alien"), film(6, 10, "Alien")]
+    assert [g["name"] for g in collection_groups(mixed + auto + one)] == ["Alien"]
+
+
+def test_folder_scan_sorts_temp_files_last():
+    from fanscut.library.scan import _TEMP
+
+    assert _TEMP.search("Film.tmp.mkv") and _TEMP.search("Film.partial.mkv")
+    assert _TEMP.search("muxing.mkv") and not _TEMP.search("Film.tmpl.mkv")

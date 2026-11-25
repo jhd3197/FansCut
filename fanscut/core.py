@@ -1326,6 +1326,8 @@ class Core:
                         "title": e["name"], "category": e["category"], "tagline": e["tagline"],
                         "status": status, "missing": missing, "repo": e["repo"],
                         "poster": e["poster"], "installed": installed.get(e["slug"]),
+                        "tmdb_ids": [x["tmdb"] for x in e["sources"] if x.get("tmdb")],
+                        "tvdb_ids": [x["tvdb"] for x in e["sources"] if x.get("tvdb")],
                         "detail": {"sources": len(e["sources"]), "variants": e["variants"]}})
         return {"index": self.cfg.community.index_url, "cuts": out}
 
@@ -1570,17 +1572,13 @@ class Core:
             out.append(suggest.from_recipe(f.name, doc, resolve, art, keys))
 
         # (b) Plex collections the user partly or fully owns
-        colls: dict[str, list[Any]] = {}
-        from .browse import _collections_of
+        from .browse import collection_groups
 
-        for m in movies:
-            for c in _collections_of(m):  # Plex tags plus known sets (The Hobbit, …)
-                colls.setdefault(c, []).append(m)
-        for name, ms in sorted(colls.items()):
-            if len(ms) >= 2:
-                ms = sorted(ms, key=lambda m: m.year or 0)
-                out += suggest.from_collection(
-                    name, ms, [m.title for m in ms if m.file and self._lang_ok(m.file)])
+        # Plex tags plus known sets (The Hobbit, …); one copy per film
+        for g in collection_groups(movies):
+            ms = g["movies"]
+            out += suggest.from_collection(
+                g["name"], ms, [m.title for m in ms if m.file and self._lang_ok(m.file)], g["id"])
 
         # (c) canon cuts for matched shows with known filler
         for row in self.db.query("SELECT * FROM matches WHERE season = -1"):
@@ -1633,37 +1631,39 @@ class Core:
             return {"action": "render", "timeline": tid,
                     "jobs": [sync["id"], render["id"]]}
         if kind == "merge":
-            movies = self._collection_movies(ref)
+            name, movies = self._collection_movies(ref)
             if len(movies) < 2:
                 raise FansCutError(f"collection {ref!r} has fewer than two owned movies")
-            doc = self._merge_doc(ref, movies)
+            doc = self._merge_doc(name, movies)
             tid = self.create_timeline(f"movie:{movies[0].tmdb_id}", doc)["id"]
             sync = self.submit_timeline_sync(tid)
             render = self.submit_timeline_render(tid, require_sync=False)  # sync runs first
             return {"action": "render", "timeline": tid,
                     "jobs": [sync["id"], render["id"]]}
         if kind == "order":
-            movies = self._collection_movies(ref)
-            keys = [m.key.split(":", 1)[1] for m in movies
-                    if m.source == "plex" and m.key.startswith("plexmovie:")]
+            name, movies = self._collection_movies(ref)
+            keys = [m.plex_key for m in movies if m.plex_key]
             if not keys:
                 raise FansCutError("watch-order playlists need the movies in Plex")
             plex = self.library.plex()
             if not plex:
                 raise FansCutError("Plex is not configured")
-            pid = plex.create_playlist(f"{ref} — watch order", keys)
+            pid = plex.create_playlist(f"{name} — watch order", keys)
             return {"action": "playlist", "playlist_id": pid}
         if kind == "canon":
             job = self.submit_render(ref, None, {"preset": "canon_only"}, "auto")
             return {"action": "render", "jobs": [job["id"]]}
         raise NotFoundError(f"unknown suggestion {sid!r}")
 
-    def _collection_movies(self, name: str) -> list[Any]:
-        movies, _ = self.library.list_movies()
-        from .browse import _collections_of
+    def _collection_movies(self, ref: str) -> tuple[str, list[Any]]:
+        """(name, one copy per film) for a collection id ("tmdb-119") or name."""
+        from .browse import find_group
 
-        return sorted([m for m in movies if name in _collections_of(m)],
-                      key=lambda m: m.year or 0)
+        movies, _ = self.library.list_movies()
+        g = find_group(movies, ref)
+        if g is None:
+            raise NotFoundError(f"collection {ref!r} not found")
+        return g["name"], g["movies"]
 
     def _merge_doc(self, name: str, movies: list[Any]) -> dict[str, Any]:
         sources, segments = {}, []

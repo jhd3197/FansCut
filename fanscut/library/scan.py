@@ -71,7 +71,7 @@ def scan_series_dir(d: Path) -> list[Episode]:
     return [eps[k] for k in sorted(eps)]
 
 
-_TEMP = re.compile(r"(^muxing|\.tmp|\.part|\.partial)", re.IGNORECASE)
+_TEMP = re.compile(r"(^muxing|\.tmp\b|\.part\b|\.partial\b)", re.IGNORECASE)
 _TMDB_TAG = re.compile(r"\{tmdb[=-](\d+)\}", re.IGNORECASE)
 
 

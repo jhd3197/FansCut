@@ -53,6 +53,8 @@ class Movie:
     file: str | None = None  # local path after path mapping; None = not on disk
     duration: float | None = None  # seconds
     collections: list[str] = field(default_factory=list)  # Plex collection tags
+    plex_key: str | None = None  # Plex ratingKey, kept when Radarr's entry absorbs Plex's
+    tmdb_collection: int | None = None  # TMDB collection id (Radarr), e.g. 119 for LOTR
     # where its art lives: an https URL (TMDB, via Radarr) or a Plex path
     poster: str | None = None
     backdrop: str | None = None

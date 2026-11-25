@@ -58,15 +58,19 @@ def from_recipe(name: str, doc: dict[str, Any], resolve: Resolver,
                        "credits": doc.get("credits", {})}}
 
 
-def from_collection(name: str, movies: list[Any], lang_missing: list[str]) -> list[dict[str, Any]]:
-    """Merge + watch-order templates for a Plex collection of 2+ owned movies."""
+def from_collection(name: str, movies: list[Any], lang_missing: list[str],
+                    gid: str = "") -> list[dict[str, Any]]:
+    """Merge + watch-order templates for a collection of 2+ owned movies.
+
+    `gid` is the collection's id ("tmdb-119" when TMDB's is known, else its name)."""
+    gid = gid or name
     years = sorted(m.year or 0 for m in movies)
     out = []
     missing = [{"src": t, "reason": "no preferred audio language"} for t in lang_missing]
     out.append({
-        "id": f"merge:{name}", "kind": "collection_merge", "category": "Merges",
+        "id": f"merge:{gid}", "kind": "collection_merge", "category": "Merges",
         "name": name, "art": [art_ref(m) for m in movies],
-        "keys": [m.key for m in movies],
+        "keys": [m.key for m in movies], "tmdb_ids": [m.tmdb_id for m in movies],
         "tagline": f"{name}, as one film",
         "title": f"{name} — merged movie",
         "status": "ready" if not missing else "partly", "missing": missing,
@@ -74,9 +78,9 @@ def from_collection(name: str, movies: list[Any], lang_missing: list[str]) -> li
                    "template": "one film from every entry, in release order"},
     })
     out.append({
-        "id": f"order:{name}", "kind": "watch_order", "category": "Watch in story order",
+        "id": f"order:{gid}", "kind": "watch_order", "category": "Watch in story order",
         "name": name, "art": [art_ref(m) for m in movies],
-        "keys": [m.key for m in movies],
+        "keys": [m.key for m in movies], "tmdb_ids": [m.tmdb_id for m in movies],
         "tagline": "in release order",
         "title": f"{name} — watch order playlist",
         "status": "ready", "missing": [],

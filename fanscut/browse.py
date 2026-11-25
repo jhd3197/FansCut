@@ -8,6 +8,7 @@ probes (detail pages do, and the probe is cached).
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +32,72 @@ def _collections_of(m: Movie) -> list[str]:
     if k and k["set"] not in out:
         out.append(k["set"])
     return out
+
+
+def _copy_rank(m: Movie) -> tuple[bool, bool, bool, bool]:
+    """Lower is better: on disk, not a temp file (muxing.tmp.mkv), Extended, from Radarr."""
+    name = Path(m.file).name if m.file else ""
+    return (not m.file, bool(check.TEMP_NAME.search(name)),
+            "extended" not in (_edition(m) or "").lower(), m.source != "radarr")
+
+
+# Plex lists that aren't franchises ("IMDb Top 250", "Popular on My Server")
+NOT_A_FRANCHISE = re.compile(
+    r"\b(top \d+|popular|most (watched|played)|recently|trending|on deck|watchlist"
+    r"|favou?rites?|best of|award|oscars?|my server)\b", re.IGNORECASE)
+
+
+def collection_groups(movies: list[Movie]) -> list[dict[str, Any]]:
+    """Every collection with 2+ films, one copy per film, oldest first.
+
+    `id` is "tmdb-<n>" when Radarr knows the TMDB collection, else the collection's
+    name. Groups holding the same films (a Plex tag and the built-in set) are one.
+    A copy's `plex_key` falls back to another copy's, so playlists still work.
+    Suggestions stay inside one franchise: a list whose films belong to two or more
+    TMDB collections, or a Plex auto-list ("IMDb Top 250"), is not a group."""
+    named: dict[str, list[Movie]] = {}
+    for m in movies:
+        for c in _collections_of(m):
+            named.setdefault(c, []).append(m)
+    plex_of: dict[object, str] = {}
+    for m in movies:
+        if m.plex_key:
+            plex_of.setdefault(_version_key(m), m.plex_key)
+    out: list[dict[str, Any]] = []
+    seen_sets: dict[frozenset[object], dict[str, Any]] = {}
+    used_ids: set[str] = set()
+    for name in sorted(named):
+        best: dict[object, Movie] = {}
+        for m in named[name]:
+            k = _version_key(m)
+            if k not in best or _copy_rank(m) < _copy_rank(best[k]):
+                best[k] = m
+        films = sorted(best.values(), key=lambda m: (m.year or 0, m.title))
+        if len(films) < 2:
+            continue
+        members = frozenset(best)
+        if members in seen_sets:  # same films under another name: an alias for old links
+            seen_sets[members]["aliases"].append(name)
+            continue
+        cids = {m.tmdb_collection for m in films if m.tmdb_collection}
+        if len(cids) > 1 or NOT_A_FRANCHISE.search(name):
+            continue
+        gid = f"tmdb-{cids.pop()}" if len(cids) == 1 else name
+        if gid in used_ids:
+            gid = name
+        used_ids.add(gid)
+        for m in films:
+            m.plex_key = m.plex_key or plex_of.get(_version_key(m))
+        out.append({"id": gid, "name": name, "movies": films, "aliases": []})
+        seen_sets[members] = out[-1]
+    return out
+
+
+def find_group(movies: list[Movie], ref: str) -> dict[str, Any] | None:
+    """A collection by its id or, for old links, its name."""
+    groups = collection_groups(movies)
+    return (next((g for g in groups if g["id"] == ref), None)
+            or next((g for g in groups if ref == g["name"] or ref in g["aliases"]), None))
 
 
 def _franchise(name: str) -> str:
@@ -179,8 +246,10 @@ def collection(core: Core, name: str) -> dict[str, Any]:
         raise NotFoundError(f"collection {name!r} not found")
     tmdbs = {m.tmdb_id for m in members if m.tmdb_id}
     total = sum(m.duration or 0 for m in members)
+    # suggestions built from these films (a group may carry another name for the same set)
+    keys = {m.key for m in members}
     sugg = [s for s in core.suggestions()["suggestions"]
-            if s["id"].partition(":")[2] == name or name.lower() in s["title"].lower()]
+            if s["kind"] in ("collection_merge", "watch_order") and set(s.get("keys", [])) & keys]
     shows = _show_members(core, [name]).get(name, [])
     keys = {s.key for s in shows}
     cuts = [c for c in all_cuts(core)["cuts"]
