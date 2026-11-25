@@ -45,6 +45,25 @@ function subsLine(tracks) {
   return tracks.map((t) => `${lang(t.language)}${t.forced ? ' (forced)' : ''}`).join(' · ');
 }
 
+function Cast({ fkey }) {
+  const { data, error } = useApi(`/scenes/cast?key=${encodeURIComponent(fkey)}`, { quiet: true });
+  const cast = data?.cast || [];
+  if (error || !cast.length) return null;
+  return (
+    <Section id="m-cast" title="Cast" count={cast.length}>
+      <div className="cast-shelf">
+        {cast.slice(0, 40).map((c) => (
+          <div key={`${c.name}-${c.character}`} className="cast-card">
+            {c.photo ? <img src={c.photo} alt="" loading="lazy" /> : <span className="cast-noface">{c.name.slice(0, 1)}</span>}
+            <span className="cast-name">{c.name}</span>
+            {c.character && <span className="cast-role">{c.character}</span>}
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function Health({ findings }) {
   const seen = new Set();
   const bad = findings.filter((f) => (f.severity === 'error' || f.severity === 'warn')
@@ -129,6 +148,8 @@ export function MoviePage() {
           </div>
         </div>
       </div>
+
+      <Cast fkey={m.key} />
 
       {shelf > 0 && (
         <Section id="m-cuts" title="Cuts and playlists with this film" count={shelf}>
