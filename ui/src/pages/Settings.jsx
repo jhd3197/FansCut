@@ -14,6 +14,12 @@ const SECTIONS = [
   ['ai', 'AI'], ['auto', 'Automation'], ['data', 'Filler data'],
 ];
 
+const CODECS = [
+  ['auto', 'Automatic (HEVC 10-bit for HDR, H.264 otherwise)'],
+  ['hevc', 'HEVC 10-bit (keeps HDR)'],
+  ['h264', 'H.264 (plays everywhere, no HDR)'],
+];
+
 const CSS = `
 .settings .sub a { display:block; padding:6px 10px; border-radius:5px; color:var(--muted); font-size:13px; }
 .settings .sub a:hover, .settings .sub a[aria-current=true] { color:var(--text); background:var(--panel2); }
@@ -199,14 +205,28 @@ export function Settings() {
             <h2 id="ren-h" className="sh">Rendering</h2>
             <p className="muted tiny" style={{ margin: '0 0 8px' }}>Stream copy is used when files match; these apply to re-encodes.</p>
             {select('ffmpeg.container', 'Container', ['mkv', 'mp4'])}
-            <Row label="Video encoder">
-              <div style={{ paddingTop: 8 }}>{check('ffmpeg.nvenc', 'Use NVENC (h264_nvenc)')}</div>
+            <Row label="Video encoder" htmlFor={idOf('ffmpeg.video_codec')}
+              hint="Automatic picks HEVC 10-bit for HDR sources, so HDR stays HDR, and H.264 otherwise.">
+              <div className="stack10">
+                <select id={idOf('ffmpeg.video_codec')} className="inp" style={{ maxWidth: 320 }}
+                  value={get('ffmpeg.video_codec') ?? 'auto'} onChange={set('ffmpeg.video_codec')}>
+                  {CODECS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                </select>
+                {check('ffmpeg.nvenc', `Encode on an NVIDIA GPU (${get('ffmpeg.video_codec') === 'h264' ? 'h264_nvenc' : get('ffmpeg.video_codec') === 'hevc' ? 'hevc_nvenc' : 'h264_nvenc / hevc_nvenc'})`)}
+              </div>
             </Row>
             {text('ffmpeg.crf', 'Quality (CRF)', 'Lower is better and bigger. 18–23 is typical.', { type: 'number', min: 0, max: 51, className: 'inp mono', style: { width: 90 } })}
-            {select('ffmpeg.preset', 'x264 preset', ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'])}
+            {select('ffmpeg.preset', 'Encoder preset', ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'])}
             {text('ffmpeg.audio_bitrate', 'Audio bitrate', null, { className: 'inp mono', style: { width: 120 } })}
             {text('ffmpeg.binary', 'ffmpeg binary', null, { className: 'inp mono' })}
             {text('ffmpeg.probe_binary', 'ffprobe binary', null, { className: 'inp mono' })}
+            <Row label="EffectCraft" hint="Renders segments with effects and grades. Empty keeps everything in ffmpeg."
+              htmlFor={idOf('render.effectcraft_cli')}>
+              <div className="stack10">
+                {input('render.effectcraft_cli', { className: 'inp mono', placeholder: 'path to effectcraft-cli' })}
+                {check('render.effectcraft_grade', 'Send segment colour grades through EffectCraft')}
+              </div>
+            </Row>
           </section>
 
           <section id="cut" aria-labelledby="cut-h">
