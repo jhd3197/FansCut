@@ -68,8 +68,10 @@ def collections(core: Core) -> dict[str, Any]:
     for name, members in sorted(groups.items()):
         tmdbs = {m.tmdb_id for m in members if m.tmdb_id}
         n_cuts = sum(1 for c in cuts if tmdbs & set(c.get("tmdb_ids", [])))
+        by_year = sorted(members, key=lambda m: m.year or 0)
         out.append({"name": name, "films": len(members), "cuts": n_cuts,
-                    "years": sorted({m.year for m in members if m.year})})
+                    "years": sorted({m.year for m in members if m.year}),
+                    "art": [m.key for m in by_year]})  # /api/art/<kind>/<key>, first film first
     return {"collections": out}
 
 
