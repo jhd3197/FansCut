@@ -1050,8 +1050,14 @@ class Core:
         return out
 
     def library_check(self, q: str = "", deep: bool = False) -> dict[str, Any]:
+        from .library.check import READ_ONLY_HINT, folder_writable
+
         result: dict[str, Any] = self.checker.run(q=q, deep=deep,
                                                   timelines=self._all_timeline_sources())
+        for r in result.get("renames", []):
+            r["writable"] = folder_writable(r["file"])
+        if any(not r["writable"] for r in result.get("renames", [])):
+            result["rename_blocked"] = READ_ONLY_HINT
         if not q:  # a whole-library run is what the nav badge and library notes show
             result["checked_at"] = _dt.datetime.now().isoformat(timespec="seconds")
             self.cfg.data_dir.mkdir(parents=True, exist_ok=True)

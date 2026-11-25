@@ -1,0 +1,43 @@
+name: Backend CI
+
+# Lint, types and the pytest suite for fanscut/. release.yml gates every push
+# to dev and main on this workflow (`workflow_call`), so a pull request from
+# dev into main would only test the same commit again: its jobs are skipped
+# (see `if:`). Other pull requests run it when they touch the backend.
+on:
+  pull_request:
+    paths:
+      - 'fanscut/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'requirements.txt'
+      - '.github/scripts/**'
+      - '.github/workflows/backend-ci.yml'
+  workflow_call:
+
+# A newer push to the same pull request supersedes the run in progress. Runs
+# called from release.yml get their own group and are never cancelled.
+concurrency:
+  group: backend-ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ruff, mypy, pytest
+    if: github.event_name != 'pull_request' || github.head_ref != 'dev'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: mypy fanscut/
+      - run: pytest -q -n auto

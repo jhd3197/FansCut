@@ -8,8 +8,13 @@ RUN npm run build
 
 FROM python:3.11-slim
 
+LABEL org.opencontainers.image.title=fanscut \
+      org.opencontainers.image.description="Fan cuts of the movies and shows you own, built locally" \
+      org.opencontainers.image.source=https://github.com/jhd3197/FansCut \
+      org.opencontainers.image.licenses=MIT
+
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

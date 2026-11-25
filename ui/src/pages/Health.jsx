@@ -187,7 +187,8 @@ export function Health() {
                       {f.check === 'incomplete' && deepNote(f)}
                     </div>
                     <div className="row">
-                      {rn && <button className="btn" type="button" disabled={busy} onClick={() => setConfirm(rn)}>Rename</button>}
+                      {rn && <button className="btn" type="button" disabled={busy || rn.writable === false}
+                        title={rn.writable === false ? data?.rename_blocked : undefined} onClick={() => setConfirm(rn)}>Rename</button>}
                       {f.check === 'incomplete' && (
                         <button className="btn" type="button" disabled={deepFor[f.title]?.busy} onClick={() => readToEnd(f)}>Read to the end</button>
                       )}
@@ -203,6 +204,9 @@ export function Health() {
           <div style={{ padding: '14px 18px', borderTop: '1px solid var(--line)' }}>
             <h3 style={{ marginBottom: 4 }}>Proposed renames</h3>
             <p className="muted tiny" style={{ margin: '0 0 8px' }}>Nothing is renamed until you confirm each one.</p>
+            {data?.rename_blocked && (
+              <p className="tiny" style={{ margin: '0 0 8px' }}><span className="c-warn">Can't rename</span> {data.rename_blocked}.</p>
+            )}
             <table className="table">
               <tbody>
                 {renames.map((r) => (
@@ -211,7 +215,8 @@ export function Health() {
                     <td aria-hidden="true">→</td>
                     <td className="mono tiny" style={{ overflowWrap: 'anywhere' }}>{baseName(r.to)}
                       {r.reason && <div className="muted" style={{ fontFamily: 'var(--font)' }}>{r.reason}</div>}</td>
-                    <td><button className="btn btn-sm" type="button" disabled={busy} onClick={() => setConfirm(r)}>Rename</button></td>
+                    <td><button className="btn btn-sm" type="button" disabled={busy || r.writable === false}
+                      title={r.writable === false ? data?.rename_blocked : undefined} onClick={() => setConfirm(r)}>Rename</button></td>
                   </tr>
                 ))}
               </tbody>

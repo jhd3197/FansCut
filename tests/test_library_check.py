@@ -180,8 +180,30 @@ def test_check_endpoint_and_confirmed_rename(client, tmp_path: Path):
     # only the check's own proposals are accepted
     bad = client.post("/api/library/rename", json={"file": str(f), "to": str(d / "x.mkv")})
     assert bad.status_code == 400 and f.exists()
-    ok = client.post("/api/library/rename", json=ren)
+    assert ren["writable"] is True and "rename_blocked" not in r
+    ok = client.post("/api/library/rename", json={"file": ren["file"], "to": ren["to"]})
     assert ok.status_code == 200 and Path(ren["to"]).exists() and not f.exists()
+
+
+def test_rename_refused_on_a_read_only_library(client, tmp_path: Path, monkeypatch):
+    root = tmp_path / "movies"
+    d = root / "The Hobbit - The Desolation of Smaug (2013)"
+    d.mkdir(parents=True)
+    f = d / "Hobbit.Smaug.2013.2160p.mkv"
+    f.write_bytes(b"x")
+    core: Core = client.app_ref.state.core
+    core.cfg.library.movies.path = str(root)
+    core.library.refresh()
+    core.prober = lambda _p: info(186.6)
+    core.library.prober = core.prober
+    # what a Docker :ro mount looks like to the app
+    monkeypatch.setattr(check, "folder_writable", lambda _file: False)
+
+    r = client.get("/api/library/check").json()
+    ren = r["renames"][0]
+    assert ren["writable"] is False and "read-only" in r["rename_blocked"]
+    res = client.post("/api/library/rename", json={"file": ren["file"], "to": ren["to"]})
+    assert res.status_code == 400 and "read-only" in res.text and f.exists()
 
 
 def test_botfa_bars_inside_the_frame_named():
