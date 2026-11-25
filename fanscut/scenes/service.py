@@ -78,7 +78,7 @@ class SceneService:
         doc = self.store.index(key)
         if doc and not with_lines:
             doc = {k: v for k, v in doc.items() if k != "lines"}
-        from ..browse import _collections_of
+        from ..browse import NOT_A_FRANCHISE, _collections_of
 
         return {
             "film": {
@@ -87,7 +87,7 @@ class SceneService:
                 "year": m.year,
                 "tmdb_id": m.tmdb_id,
                 "duration": m.duration,
-                "collections": _collections_of(m),
+                "collections": [c for c in _collections_of(m) if not NOT_A_FRANCHISE.search(c)],
                 "on_disk": bool(m.file),
             },
             "index": doc,
