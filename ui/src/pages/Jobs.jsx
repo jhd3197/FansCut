@@ -67,8 +67,41 @@ export function jobLink(job) {
   return null;
 }
 
+// Seconds left, from the first progress this page saw ({t, p}) to now; null
+// until there's enough to go on (10 s and 2 points of progress).
+export function etaSeconds(first, t, p) {
+  if (!first || p >= 1) return null;
+  const dt = (t - first.t) / 1000;
+  const dp = p - first.p;
+  if (dt < 10 || dp < 0.02) return null;
+  return (dt / dp) * (1 - p);
+}
+
+// "about 1 h 10 m left" / "about 4 m left" / "under a minute left"
+export function fmtLeft(secs) {
+  if (secs == null) return null;
+  if (secs < 60) return 'under a minute left';
+  const m = Math.round(secs / 60);
+  return m < 60 ? `about ${m} m left` : `about ${Math.floor(m / 60)} h ${m % 60} m left`;
+}
+
+// First progress seen per running job, kept across re-renders and page visits.
+const firstSeen = new Map();
+
+function timeLeft(job, now = Date.now()) {
+  if (job.status !== 'running') return null;
+  const p = Math.min(Math.max(job.progress || 0, 0), 1);
+  const first = firstSeen.get(job.id);
+  if (!first || p < first.p) {  // new to this page, or restarted: measure from here
+    firstSeen.set(job.id, { t: now, p });
+    return null;
+  }
+  return fmtLeft(etaSeconds(first, now, p));
+}
+
 function Running({ job, queued, onCancel, busy }) {
   const pct = Math.round(Math.min(Math.max(job.progress || 0, 0), 1) * 100);
+  const left = timeLeft(job);
   const steps = stages(job);
   return (
     <section aria-label="Running" className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -80,7 +113,7 @@ function Running({ job, queued, onCancel, busy }) {
           </span>
         </div>
         <div className="row">
-          <span className="mono" style={{ fontSize: 14 }}>{pct}%</span>
+          <span className="mono" style={{ fontSize: 14 }}>{pct}%{left && <span className="muted" style={{ fontFamily: 'var(--font)', fontSize: 13 }}> · {left}</span>}</span>
           <button className="btn" type="button" disabled={busy} onClick={() => onCancel(job)}>Cancel</button>
         </div>
       </div>

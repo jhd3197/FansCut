@@ -49,7 +49,8 @@ function System() {
             ver.data?.version && ['FansCut', ver.data.version],
             ...d.checks.map((c) => [c.name, (
               <span key={c.name}>
-                <span className={c.ok ? 'c-ready' : 'c-danger'}>{c.ok ? 'OK' : 'Failed'}</span>
+                {c.off ? <span className="muted">Off</span>
+                  : <span className={c.ok ? 'c-ready' : 'c-danger'}>{c.ok ? 'OK' : 'Failed'}</span>}
                 {c.detail && <span className="mono tiny muted"> · {c.detail}</span>}
               </span>
             )]),

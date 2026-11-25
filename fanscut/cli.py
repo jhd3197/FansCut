@@ -32,7 +32,8 @@ def _serve(args: argparse.Namespace, cfg: config.Config) -> int:
 def _doctor(_args: argparse.Namespace, cfg: config.Config) -> int:
     rep = doctor.run(cfg)
     for c in rep["checks"]:
-        print(f"{'ok  ' if c['ok'] else 'FAIL'} {c['name']}: {c['detail']}")
+        mark = "off " if c.get("off") else "ok  " if c["ok"] else "FAIL"
+        print(f"{mark} {c['name']}: {c['detail']}")
     return 0 if rep["ok"] else 1
 
 
