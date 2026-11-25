@@ -6,8 +6,38 @@ import { TrimFields } from './TrimFields.jsx';
 import { SegmentsFields } from './SegmentsFields.jsx';
 import { EpisodeTrack } from './Timeline.jsx';
 import { setPath } from '../pages/Settings.jsx';
+import { posterFace } from './kit.jsx';
+import { sourceSummary } from '../lib/labels.js';
 
 afterEach(cleanup);
+
+describe('posterFace', () => {
+  it('sets action, sci-fi and anime in the condensed face', () => {
+    expect(posterFace({ genres: ['Action', 'Drama'] })).toBe('condensed');
+    expect(posterFace({ tag: 'ANIME · CANON' })).toBe('condensed');
+    expect(posterFace({ genres: ['Science Fiction'] })).toBe('condensed');
+  });
+
+  it('keeps everything else in the serif', () => {
+    expect(posterFace({ genres: ['Fantasy'], tag: 'MERGE' })).toBe('serif');
+    expect(posterFace()).toBe('serif');
+  });
+});
+
+describe('sourceSummary', () => {
+  it('names the sources that are on and the library root', () => {
+    const cfg = { library: { plex: { url: 'http://plex.lan:32400' }, sonarr: { url: '' },
+      radarr: { url: '' }, folder: { path: '/media' }, movies: { path: '' } } };
+    expect(sourceSummary(cfg)).toEqual({ label: 'Plex · Folder', root: '/media' });
+  });
+
+  it('falls back to the Plex host, and says when nothing is set up', () => {
+    expect(sourceSummary({ library: { plex: { url: 'http://plex.lan:32400' } } }))
+      .toEqual({ label: 'Plex', root: 'plex.lan:32400' });
+    expect(sourceSummary({ library: {} })).toEqual({ label: 'No source set up', root: '' });
+    expect(sourceSummary(null)).toBeNull();
+  });
+});
 
 describe('LabelBadge', () => {
   it('shows the label with its source in the tooltip', () => {

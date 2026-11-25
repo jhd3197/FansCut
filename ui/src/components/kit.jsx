@@ -15,6 +15,9 @@ const PALETTES = [
   ['#14182A', '#1E2440', '#7FA8F0', '#E6ECFA'],
 ];
 
+// One colour per source film or show in a cut, in order of first use.
+export const SRC_COLOURS = ['#7FA8F0', '#B9A3F2', '#6CC5CC', '#F2A93B', '#E98CC0', '#3FA37A'];
+
 export function hash(text) {
   let h = 2166136261;
   for (const c of String(text)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
@@ -69,8 +72,16 @@ function Motif({ kind, c }) {
   }
 }
 
-export function Poster({ title, sub, tag, kind = 'supercut', src, wide }) {
+// Poster title face: condensed Oswald for action, sci-fi and anime; Fraunces
+// (the default serif) for fantasy, period and everything else.
+const CONDENSED = /\b(action|adventure|sci-?fi|science fiction|anime|animation|thriller|war|western)\b/i;
+export function posterFace({ genres = [], tag = '' } = {}) {
+  return [...(genres || []), tag].some((g) => CONDENSED.test(g || '')) ? 'condensed' : 'serif';
+}
+
+export function Poster({ title, sub, tag, kind = 'supercut', src, wide, face, genres }) {
   const c = palette(title);
+  const f = face || posterFace({ genres, tag });
   return (
     <div className={`pst${wide ? ' pst-wide' : ''}`} style={{ background: c[0] }}>
       {src ? <img src={src} alt="" /> : (
@@ -81,7 +92,7 @@ export function Poster({ title, sub, tag, kind = 'supercut', src, wide }) {
       )}
       {tag && <span className="ptag" style={{ color: `${c[2]}cc` }}>{tag}</span>}
       <div className="ttl">
-        <span className="ttl-main" style={{ color: c[3], fontSize: wide ? 20 : undefined }}>{title}</span>
+        <span className={`ttl-main${f === 'condensed' ? ' ttl-condensed' : ''}`} style={{ color: c[3], fontSize: wide ? 20 : undefined }}>{title}</span>
         {sub && <span className="ttl-sub" style={{ color: c[3] }}>{sub}</span>}
       </div>
     </div>
@@ -108,11 +119,11 @@ export function statusText(status) {
   return (STATUS[status] || ['muted', status])[1];
 }
 
-export function CutTile({ to, title, sub, tag, kind, meta, status, note, onClick }) {
+export function CutTile({ to, title, sub, tag, kind, face, genres, meta, status, note, onClick }) {
   const [cls, label] = STATUS[status] || ['muted', status || ''];
   const inner = (
     <>
-      <Poster title={title} sub={sub} tag={tag} kind={kind} />
+      <Poster title={title} sub={sub} tag={tag} kind={kind} face={face} genres={genres} />
       <div className="cap">
         <b>{title}</b>
         {meta && <span className="meta">{meta}</span>}

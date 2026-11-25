@@ -1,4 +1,5 @@
 Inter (c) The Inter Project Authors, Fraunces (c) The Fraunces Project Authors,
-JetBrains Mono (c) The JetBrains Mono Project Authors. Latin subsets as served
+JetBrains Mono (c) The JetBrains Mono Project Authors, Oswald (c) 2016 The Oswald
+Project Authors (https://github.com/googlefonts/OswaldFont). Latin subsets as served
 by Google Fonts. All licensed under the SIL Open Font License, Version 1.1:
 https://openfontlicense.org/open-font-license-official-text/
