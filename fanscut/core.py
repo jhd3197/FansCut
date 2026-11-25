@@ -653,7 +653,7 @@ class Core:
                 amap[f] = idx
         return amap, warnings
 
-    def timeline_dry_run(self, tid: str, mode: str = "auto") -> dict[str, Any]:
+    def timeline_dry_run(self, tid: str, mode: plan.Mode = "auto") -> dict[str, Any]:
         from .timeline import render as tl_render
 
         doc, key, report = self._timeline_ctx(tid)
@@ -717,8 +717,9 @@ class Core:
                                                            self.cfg.ffmpeg.container)
                 workdir = Path(tmp) / f"part{pi + 1}"
                 workdir.mkdir()
+                mode: plan.Mode = payload.get("mode", "auto") or "auto"
                 rp = plan.build_plan(cut, self.cfg.ffmpeg, out, workdir, self.prober,
-                                     mode=payload.get("mode", "auto"), audio_map=amap)
+                                     mode=mode, audio_map=amap)
                 h = render_hash(f"timeline:{tid}:{pi + 1}", cut, rp.mode, self.cfg.ffmpeg,
                                 rp.chapters)
                 if not payload.get("refresh") and (hit := self.renders.hit(h)):
