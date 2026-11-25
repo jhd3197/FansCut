@@ -11,12 +11,13 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
-from . import __version__, config
+from . import __version__, config, security
 from .config import Config
 from .core import Core
 from .db import Database
 from .errors import ClientError, FansCutError, NotFoundError
 from .routes import (
+    auth,
     browse,
     cut,
     fillers,
@@ -56,6 +57,17 @@ def _autodetect(cfg: Config, path: Path) -> None:
         log.warning("could not save detected settings to %s: %s", path, exc.strerror)
 
 
+def _ensure_api_key(cfg: Config, path: Path) -> None:
+    """Generate the API key on first start and save it, so webhooks have one to check."""
+    if cfg.server.api_key:
+        return
+    cfg.server.api_key = security.new_key()
+    try:
+        config.save(cfg, path)
+    except OSError as exc:
+        log.warning("could not save the new API key to %s: %s", path, exc.strerror)
+
+
 def _mount_ui(app: FastAPI, ui: Path) -> None:
     """Serve the built UI; unknown non-API paths get index.html so client-side routes reload."""
     root = ui.resolve()
@@ -80,6 +92,9 @@ def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
     if cfg is None:  # a real start (tests pass their own config and skip this)
         cfg = config.load(path)
         _autodetect(cfg, path)
+        _ensure_api_key(cfg, path)
+    elif not cfg.server.api_key:
+        cfg.server.api_key = security.new_key()
     core = Core(cfg, Database(cfg.db_path))
 
     @asynccontextmanager
@@ -95,6 +110,7 @@ def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
                   description="Self-hosted fan cuts: skip filler, trim recaps and openings.")
     app.state.core = core
     app.state.config_path = path
+    app.add_middleware(security.GuardMiddleware, get_cfg=lambda: core.cfg)
 
     @app.exception_handler(NotFoundError)
     async def _not_found(_r: Request, exc: NotFoundError) -> JSONResponse:
@@ -112,7 +128,7 @@ def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
     async def _value(_r: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
-    for r in (system.router, library.router, cut.router, jobs.router, fillers.router,
+    for r in (auth.router, system.router, library.router, cut.router, jobs.router, fillers.router,
               renders.router, webhooks.router, timeline.router, suggestions.router,
               browse.router):
         app.include_router(r)

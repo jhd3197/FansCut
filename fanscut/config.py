@@ -34,9 +34,21 @@ ENV_FIELDS = {
 }
 
 
+def Secret(default: str = "") -> Any:  # noqa: N802 - reads like a type in the models
+    """A secret field: masked by the settings API and kept when "***" comes back."""
+    return Field(default=default, json_schema_extra={"secret": True})
+
+
 class ServerCfg(BaseModel):
     host: str = "127.0.0.1"
     port: int = 6464
+    # "none": anyone who can reach the server may use it (keep it on a trusted
+    # network). "api_key": every /api call needs the API key (or viewer_key, read-only).
+    auth: Literal["none", "api_key"] = "none"
+    api_key: str = Secret()  # generated on first start; webhooks always need it
+    viewer_key: str = Secret()  # optional second key that may only read
+    allowed_hosts: list[str] = Field(default_factory=list)  # extra Host names to serve
+    trusted_proxies: list[str] = Field(default_factory=list)  # IPs whose X-Forwarded-* count
 
 
 class PathsCfg(BaseModel):
@@ -46,17 +58,17 @@ class PathsCfg(BaseModel):
 
 class SonarrCfg(BaseModel):
     url: str = ""
-    api_key: str = ""
+    api_key: str = Secret()
 
 
 class RadarrCfg(BaseModel):
     url: str = ""
-    api_key: str = ""
+    api_key: str = Secret()
 
 
 class PlexCfg(BaseModel):
     url: str = ""
-    token: str = ""
+    token: str = Secret()
     sections: list[str] = Field(default_factory=list)  # empty = every show section
     movie_sections: list[str] = Field(default_factory=list)  # empty = every movie section
 
@@ -141,13 +153,13 @@ class AutomationCfg(BaseModel):
 
 class CommunityCfg(BaseModel):
     index_url: str = "https://raw.githubusercontent.com/jhd3197/fanscut-recipes/main/index.json"
-    github_token: str = ""  # secret, for private cut repos; prefer FANSCUT_GITHUB_TOKEN
+    github_token: str = Secret()  # secret, for private cut repos; prefer FANSCUT_GITHUB_TOKEN
     offline: bool = False
 
 
 class AICfg(BaseModel):
     base_url: str = ""  # OpenAI-compatible endpoint, e.g. http://localhost:11434/v1 (Ollama)
-    api_key: str = ""  # secret; prefer FANSCUT_AI_API_KEY over the config file
+    api_key: str = Secret()  # secret; prefer FANSCUT_AI_API_KEY over the config file
     model: str = ""
     timeout: int = 120
 
@@ -271,18 +283,34 @@ def save(cfg: Config, path: Path | str) -> None:
         p.chmod(0o600)  # may hold secrets; best effort, fails quietly on Windows
 
 
+def _secret_paths(model: type[BaseModel], prefix: str = "") -> list[str]:
+    out: list[str] = []
+    for name, f in model.model_fields.items():
+        extra = f.json_schema_extra
+        if isinstance(extra, dict) and extra.get("secret"):
+            out.append(prefix + name)
+        ann = f.annotation
+        if isinstance(ann, type) and issubclass(ann, BaseModel):
+            out += _secret_paths(ann, f"{prefix}{name}.")
+    return out
+
+
+# Every field declared with Secret(), as dotted paths. New secrets are masked by default.
+SECRET_PATHS = tuple(_secret_paths(Config))
+
+# Fields the settings API will not change: they name programs FansCut runs, or
+# hold the keys that guard the API. Set them in config.yaml or the environment.
+READ_ONLY_HTTP = ("ffmpeg.binary", "ffmpeg.probe_binary", "render.effectcraft_cli",
+                  "server.api_key", "server.viewer_key", "server.auth",
+                  "server.allowed_hosts", "server.trusted_proxies")
+
+
 def masked(cfg: Config) -> dict[str, Any]:
     d = cfg.model_dump()
-    if d["library"]["sonarr"]["api_key"]:
-        d["library"]["sonarr"]["api_key"] = MASK
-    if d["library"]["radarr"]["api_key"]:
-        d["library"]["radarr"]["api_key"] = MASK
-    if d["library"]["plex"]["token"]:
-        d["library"]["plex"]["token"] = MASK
-    if d["ai"]["api_key"]:
-        d["ai"]["api_key"] = MASK
-    if d["community"]["github_token"]:
-        d["community"]["github_token"] = MASK
+    for path in SECRET_PATHS:
+        parent, leaf = _dig(d, path)
+        if parent.get(leaf):
+            parent[leaf] = MASK
     return d
 
 
@@ -290,16 +318,29 @@ def env_locked() -> list[str]:
     return sorted(env_overrides())
 
 
-def merge_update(current: Config, incoming: dict[str, Any]) -> Config:
-    """Apply a settings payload; a masked secret keeps the stored value."""
+def merge_update(current: Config, incoming: dict[str, Any], *, from_http: bool = False
+                 ) -> Config:
+    """Apply a settings payload; a masked secret keeps the stored value.
+
+    Unknown keys are refused rather than silently dropped. With from_http, a
+    change to a READ_ONLY_HTTP field is refused too (sending the current value
+    back is fine: the settings page posts the whole object)."""
     merged = current.model_dump()
 
-    def walk(dst: dict[str, Any], src: dict[str, Any]) -> None:
+    def walk(dst: dict[str, Any], src: dict[str, Any], prefix: str) -> None:
         for k, v in src.items():
+            path = prefix + k
+            if k not in dst:
+                if prefix == "" and k == "env_locked":  # echoed back by the settings page
+                    continue
+                raise ConfigError(f"unknown setting {path!r}")
             if isinstance(v, dict) and isinstance(dst.get(k), dict):
-                walk(dst[k], v)
+                walk(dst[k], v, path + ".")
             elif v != MASK:
+                if from_http and path in READ_ONLY_HTTP and v != dst[k]:
+                    raise ConfigError(f"{path} can only be changed in config.yaml or the "
+                                      "environment")
                 dst[k] = v
 
-    walk(merged, incoming)
+    walk(merged, incoming, "")
     return parse(merged)

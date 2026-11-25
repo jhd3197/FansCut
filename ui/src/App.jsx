@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react';
 import { Link, Navigate, NavLink, Route, Routes, useParams } from 'react-router';
-import { api } from './lib/api.js';
+import { api, AUTH_EVENT } from './lib/api.js';
 import { useLoad, usePoll } from './lib/hooks.js';
 import { sourceSummary } from './lib/labels.js';
 import logoWhite from './brand/logo-white.svg';
@@ -83,7 +84,41 @@ function OldTimeline() {
   return <Navigate to={`/cuts/${encodeURIComponent(tid)}/edit`} replace />;
 }
 
+// server.auth = "api_key": ask for the key once; the server keeps it in a cookie.
+function KeyGate() {
+  const [key, setKey] = useState('');
+  const [err, setErr] = useState(null);
+  const submit = async (e) => {
+    e.preventDefault();
+    try {
+      await api('/auth/login', { method: 'POST', body: { key } });
+      window.location.reload();
+    } catch (x) {
+      setErr(x.message);
+    }
+  };
+  return (
+    <main className="main" style={{ display: 'grid', placeItems: 'center', minHeight: '100vh' }}>
+      <form onSubmit={submit} className="card" style={{ padding: 24, width: 'min(420px, 92vw)' }}>
+        <h1 className="sh" style={{ marginTop: 0 }}>API key needed</h1>
+        <p className="muted tiny">This FansCut asks for its API key. It is in config.yaml under server.api_key.</p>
+        <input className="inp mono" type="password" autoComplete="current-password" aria-label="API key"
+          value={key} onChange={(e) => setKey(e.target.value)} autoFocus style={{ width: '100%' }} />
+        {err && <p role="alert" className="tiny" style={{ color: 'var(--danger, #b42318)' }}>{err}</p>}
+        <button className="btn btn-primary" type="submit" style={{ marginTop: 12 }} disabled={!key}>Unlock</button>
+      </form>
+    </main>
+  );
+}
+
 export function App() {
+  const [locked, setLocked] = useState(false);
+  useEffect(() => {
+    const on = () => setLocked(true);
+    window.addEventListener(AUTH_EVENT, on);
+    return () => window.removeEventListener(AUTH_EVENT, on);
+  }, []);
+  if (locked) return <KeyGate />;
   return (
     <div className="shell">
       <Nav />

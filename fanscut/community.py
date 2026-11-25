@@ -21,11 +21,12 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import requests
 
 from .errors import FansCutError
+from .net import read_capped as _read_capped
 
 REPO_RE = re.compile(r"^https://github\.com/([A-Za-z0-9-]{1,39})/([A-Za-z0-9._-]{1,100}?)"
                      r"(?:\.git)?/?$")
@@ -33,6 +34,8 @@ MAX_INDEX = 2_000_000
 MAX_RECIPE = 2_000_000
 MAX_POSTER = 10_000_000
 MAX_CUTS = 2_000
+# Hosts that may see the GitHub token. Anything else (a cut's poster URL) gets no auth.
+TOKEN_HOSTS = {"api.github.com", "raw.githubusercontent.com"}
 KINDS = {"merge", "supercut", "order", "canon", "character", "chronological", "cut"}
 
 
@@ -128,19 +131,24 @@ class GitHub:
     def _get(self, url: str, accept: str = "application/vnd.github+json",
              limit: int = MAX_RECIPE) -> requests.Response:
         headers = {"Accept": accept, "User-Agent": "FansCut"}
-        if self.token:
+        # The token only ever goes to GitHub itself: poster URLs come from third-party
+        # repos and must not receive it.
+        if self.token and urlsplit(url).hostname in TOKEN_HOSTS:
             headers["Authorization"] = f"Bearer {self.token}"
         try:
-            r = self.s.get(url, headers=headers, timeout=self.timeout)
+            r = self.s.get(url, headers=headers, timeout=self.timeout, stream=True)
         except requests.RequestException as exc:
             raise CommunityError(f"GitHub unreachable: {exc.__class__.__name__}") from exc
-        if r.status_code == 404:
-            raise CommunityError("not found on GitHub (private repo? set a GitHub token "
-                                 "in Settings)")
-        if r.status_code >= 400:
-            raise CommunityError(f"GitHub returned HTTP {r.status_code}")
-        if len(r.content) > limit:
-            raise CommunityError("file too large")
+        with r:
+            if r.status_code == 404:
+                raise CommunityError("not found on GitHub (private repo? set a GitHub token "
+                                     "in Settings)")
+            if r.status_code >= 400:
+                raise CommunityError(f"GitHub returned HTTP {r.status_code}")
+            body = _read_capped(r, limit)  # stop reading at the cap, not after it
+            if body is None:
+                raise CommunityError("file too large")
+            r._content = body
         return r
 
     def head(self, repo: Repo, ref: str | None = None) -> tuple[str, str]:

@@ -31,6 +31,26 @@ function Row({ label, hint, htmlFor, children }) {
   );
 }
 
+// The webhook URL with the API key in it, and a way to replace a leaked key.
+function WebhookUrl() {
+  const key = useLoad(() => api('/auth/key'));
+  const [shown, setShown] = useState(false);
+  const { act, busy } = useAct();
+  const k = key.data?.api_key;
+  if (!k) return null;
+  const url = `${window.location.origin}/api/webhooks/sonarr?apikey=${shown ? k : '•'.repeat(12)}`;
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <code className="mono tiny" style={{ wordBreak: 'break-all' }}>{url}</code>
+      <button type="button" className="btn btn-sm" onClick={() => setShown((v) => !v)}>{shown ? 'Hide' : 'Show'}</button>
+      <button type="button" className="btn btn-sm" disabled={busy}
+        onClick={() => act(() => api('/auth/key/regenerate', { method: 'POST' }), 'New key made; update Sonarr').then(key.reload)}>
+        New key
+      </button>
+    </div>
+  );
+}
+
 export function Settings() {
   const { data, error, loading, reload } = useLoad(() => api('/settings'));
   const fillers = useLoad(() => api('/fillers'));
@@ -253,8 +273,9 @@ export function Settings() {
 
           <section id="auto" aria-labelledby="auto-h">
             <h2 id="auto-h" className="sh">Automation</h2>
-            <Row label="Sonarr webhook" hint="Point a Sonarr Webhook connection at /api/webhooks/sonarr. No auth: keep FansCut on a trusted network.">
+            <Row label="Sonarr webhook" hint="Add a Webhook connection in Sonarr (Settings, Connect) with this URL. The key in it is FansCut's API key.">
               <div className="stack10" style={{ paddingTop: 8 }}>
+                <WebhookUrl />
                 {check('automation.sonarr_webhook', 'Accept Sonarr webhooks (new episode → detect + render)')}
                 {check('automation.auto_detect', 'Run OP/ED detection first')}
                 {check('automation.keep', 'Keep webhook renders')}

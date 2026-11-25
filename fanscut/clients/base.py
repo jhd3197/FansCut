@@ -67,3 +67,21 @@ class BaseClient:
                     delay = max(delay, float(exc.retry_after))
                 time.sleep(min(delay, self.max_wait))
         raise AssertionError("unreachable")  # pragma: no cover
+
+
+class ArrClient(BaseClient):
+    """What Sonarr and Radarr share: the v3 API key header, status, tags and profiles."""
+
+    def __init__(self, base_url: str, api_key: str, timeout: float = 30):
+        super().__init__(base_url, timeout, {"X-Api-Key": api_key})
+
+    def system_status(self) -> dict[str, Any]:
+        return self._get("/api/v3/system/status")
+
+    def tags(self) -> list[dict[str, Any]]:
+        return [{"id": t.get("id"), "label": t.get("label", "")}
+                for t in self._get("/api/v3/tag") or []]
+
+    def quality_profiles(self) -> list[dict[str, Any]]:
+        return [{"id": q.get("id"), "name": q.get("name", "")}
+                for q in self._get("/api/v3/qualityprofile") or []]

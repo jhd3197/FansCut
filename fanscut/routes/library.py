@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,7 @@ from ..core import UNSET, WHOLE
 from ..errors import NotFoundError
 from ..models import Series
 from ..planner import PRESETS
+from ..security import rate_limit
 from . import CoreDep
 
 router = APIRouter(prefix="/api", tags=["library"])
@@ -32,7 +33,7 @@ def list_series(core: CoreDep, q: str = "", source: str = "") -> dict[str, Any]:
     return {"sources": core.library.sources(), "errors": errors, "series": out}
 
 
-@router.get("/library/check")
+@router.get("/library/check", dependencies=[Depends(rate_limit("check", 6, 60))])
 def library_check(core: CoreDep, q: str = "", deep: bool = False) -> dict[str, Any]:
     """Editions, languages, incomplete files, missing pieces, mismatches, renames."""
     return core.library_check(q=q, deep=deep)
@@ -179,7 +180,8 @@ def detect_trims(core: CoreDep, key: str, body: DetectBody) -> dict[str, Any]:
 
 
 # -- preview clips and scene search -----------------------------------------------
-@router.get("/series/{key}/episodes/{episode_id}/preview")
+@router.get("/series/{key}/episodes/{episode_id}/preview",
+            dependencies=[Depends(rate_limit("preview", 60, 60))])
 def preview(core: CoreDep, key: str, episode_id: str, t: float = Query(ge=0)) -> FileResponse:
     """10 s around t, for reviewing a cut point in the browser."""
     return FileResponse(core.preview_clip(key, episode_id, t), media_type="video/mp4")

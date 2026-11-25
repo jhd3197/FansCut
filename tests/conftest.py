@@ -98,5 +98,14 @@ def make_video(path: Path, seconds: float = 6, size: str = "160x120", wav: Path 
 
 
 @pytest.fixture(autouse=True)
+def test_host(monkeypatch):
+    """Starlette's TestClient sends Host: testserver; let the Host guard accept it."""
+    from fanscut import security
+
+    monkeypatch.setattr(security, "ALWAYS_ALLOWED", {"testserver"})
+    security.reset_rate_limits()
+
+
+@pytest.fixture(autouse=True)
 def no_retry_sleep(monkeypatch):
     monkeypatch.setattr("fanscut.clients.base.time.sleep", lambda _s: None)

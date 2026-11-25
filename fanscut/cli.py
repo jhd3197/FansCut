@@ -27,6 +27,8 @@ def _serve(args: argparse.Namespace, cfg: config.Config) -> int:
     from .server import create_app
 
     host, port = args.host or cfg.server.host, args.port or cfg.server.port
+    # X-Forwarded-For/-Proto are believed only from these (a reverse proxy in front)
+    proxies = ",".join(cfg.server.trusted_proxies) or "127.0.0.1"
     if args.reload:
         # Restart on every code change under fanscut/. The reloaded process
         # builds its own app from FANSCUT_CONFIG and inherits this environment
@@ -34,10 +36,11 @@ def _serve(args: argparse.Namespace, cfg: config.Config) -> int:
         os.environ["FANSCUT_CONFIG"] = str(Path(args.config or config.default_path()).resolve())
         uvicorn.run("fanscut.server:create_app", factory=True, reload=True,
                     reload_dirs=[str(Path(__file__).parent)], host=host, port=port,
-                    log_level="info", timeout_graceful_shutdown=5)
+                    log_level="info", timeout_graceful_shutdown=5,
+                    proxy_headers=True, forwarded_allow_ips=proxies)
         return 0
     uvicorn.run(create_app(cfg, args.config), host=host, port=port, log_level="info",
-                timeout_graceful_shutdown=5)
+                timeout_graceful_shutdown=5, proxy_headers=True, forwarded_allow_ips=proxies)
     return 0
 
 

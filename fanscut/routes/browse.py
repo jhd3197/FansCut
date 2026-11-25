@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from .. import browse
+from ..security import rate_limit
 from . import CoreDep
 
 router = APIRouter(prefix="/api", tags=["browse"])
@@ -56,7 +57,7 @@ def catalogue(core: CoreDep) -> dict[str, Any]:
     return core.catalogue()
 
 
-@router.post("/cuts/install")
+@router.post("/cuts/install", dependencies=[Depends(rate_limit("install", 10, 60))])
 def install_cut(core: CoreDep, body: InstallBody) -> dict[str, Any]:
     """Install (or update) a cut from its GitHub repo; records the commit SHA."""
     return core.install_cut(body.url, body.ref)

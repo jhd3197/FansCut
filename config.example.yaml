@@ -5,6 +5,11 @@
 server:
   host: 127.0.0.1        # use 0.0.0.0 inside a container
   port: 6464
+  auth: none             # api_key = every API call (and the UI) needs the key
+  api_key: ""            # generated on first start; webhooks always need it
+  viewer_key: ""         # optional read-only key
+  allowed_hosts: []      # extra Host names to answer to (e.g. fanscut.lan); "*" = any
+  trusted_proxies: []    # reverse proxy IPs whose X-Forwarded-For is believed
 
 paths:
   data_dir: ./data       # SQLite db, filler snapshot, scratch space

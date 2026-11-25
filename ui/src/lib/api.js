@@ -1,12 +1,16 @@
 // Thin fetch wrapper: JSON in, JSON out, errors carry the server's `detail`.
 
 export class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, code) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
 }
+
+// Fired when the server wants the API key (server.auth = "api_key"); App shows the key gate.
+export const AUTH_EVENT = 'fanscut:auth';
 
 // FastAPI sends detail as a string, or as a list of {loc, msg} for 422s.
 export function detailOf(body, fallback) {
@@ -29,7 +33,11 @@ export async function api(path, { method = 'GET', body } = {}) {
     throw new ApiError('cannot reach the FansCut server', 0);
   }
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(detailOf(data, `${res.status} ${res.statusText}`), res.status);
+  if (!res.ok) {
+    const code = data && data.code;
+    if (res.status === 401 && code === 'auth') window.dispatchEvent(new Event(AUTH_EVENT));
+    throw new ApiError(detailOf(data, `${res.status} ${res.statusText}`), res.status, code);
+  }
   return data;
 }
 

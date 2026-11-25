@@ -299,7 +299,9 @@ Schema 1 files (no `segments`) still import.
 ## Automation and the render cache
 
 Set `automation.sonarr_webhook: true` and add a Webhook connection in Sonarr
-pointing at `http://<fanscut>:6464/api/webhooks/sonarr`. A Download or Upgrade
+pointing at `http://<fanscut>:6464/api/webhooks/sonarr?apikey=<key>`. The key
+is generated on first start (`server.api_key`); Settings, Automation shows the
+full URL and can make a new key. A Download or Upgrade
 event then queues OP/ED detection for the touched seasons and a render, with
 no button pressing. It never re-renders the same cut twice: outputs are named
 after a hash of everything that shapes them, and an unchanged cut is served
@@ -374,8 +376,9 @@ Every finding names the file and the fix.
 - Stream copy needs all files to match (codec, size, frame rate, audio format);
   otherwise FansCut re-encodes, which is slower. Cuts happen between
   episodes, so mixed sources mean a re-encode.
-- No auth, by design. Don't expose it to the internet; put it behind your own
-  reverse proxy if you need remote access.
+- No accounts. Set `server.auth: api_key` to make every API call (and the UI)
+  ask for the API key; `server.viewer_key` adds a read-only key. Don't expose
+  it to the internet without a reverse proxy in front.
 - One worker, one job at a time.
 - Plex support is lighter-tested than Sonarr and folder mode.
 - Filler labels depend on a third-party dataset and on matching the right
@@ -384,7 +387,14 @@ Every finding names the file and the fix.
 
 ## Security
 
-FansCut has no login, so keep it on a trusted network. How to report a problem
+FansCut has no accounts. By default it binds to `127.0.0.1`, only answers to
+loopback host names (add others to `server.allowed_hosts`), refuses
+state-changing requests a browser marks as cross-site, and never lets the
+settings API change which programs it runs (`ffmpeg.binary`,
+`render.effectcraft_cli`). Webhooks need the API key. On a shared network, set
+`server.auth: api_key`. Behind a reverse proxy, list it in
+`server.trusted_proxies` so client addresses are read from `X-Forwarded-For`.
+How to report a problem
 is in [SECURITY.md](SECURITY.md).
 
 ## Contributing

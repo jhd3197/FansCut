@@ -45,7 +45,8 @@ gitleaks on each commit.
   real ffmpeg generate tiny lavfi videos and skip when ffmpeg is missing.
 - The repo does not run `ruff format`; run `ruff check` (safe fixes only).
 - Plain imperative commit messages ("Add cut planner"), small logical commits.
-- No auth, accounts or cloud services: FansCut is single-user and self-hosted.
+- No accounts or cloud services: FansCut is single-user and self-hosted. The
+  only auth is the optional API key (`fanscut/security.py`).
 
 ## Layout
 
