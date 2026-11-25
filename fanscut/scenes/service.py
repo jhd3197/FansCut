@@ -454,9 +454,22 @@ class SceneService:
 
     # -- collections ----------------------------------------------------------------
     def collection(
-        self, name: str, tag: str | None = None, status: str | None = None
+        self,
+        name: str,
+        tag: str | None = None,
+        status: str | None = None,
+        keys: list[str] | None = None,
     ) -> dict[str, Any]:
-        films = self.films(name)
+        """Tagged scenes across a collection, or across the films in *keys* (a franchise
+        whose films don't all carry the Plex collection tag)."""
+        if keys:
+            want = set(keys)
+            films = [f for f in self.films() if f["key"] in want]
+            missing = want - {f["key"] for f in films}
+            if missing:
+                raise NotFoundError(f"films not found: {', '.join(sorted(missing))}")
+        else:
+            films = self.films(name)
         if not films:
             raise NotFoundError(f"no films in collection {name!r}")
         tags = self.store.tags([f["key"] for f in films], tag, status)
@@ -477,10 +490,13 @@ class SceneService:
             ],
         }
 
-    def to_timeline(self, name: str, tag: str, title: str = "") -> dict[str, Any]:
-        """Accepted scenes with *tag* across a collection -> a timeline cut, in film order."""
+    def to_timeline(
+        self, name: str, tag: str, title: str = "", keys: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Accepted scenes with *tag* across a collection (or the films in *keys*) -> a
+        timeline cut, in film order."""
         t = st.norm_tag(tag)
-        col = self.collection(name, t, "accepted")
+        col = self.collection(name, t, "accepted", keys)
         sources: dict[str, Any] = {}
         segments = []
         for f in col["films"]:

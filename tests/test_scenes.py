@@ -336,5 +336,10 @@ def test_scene_api_end_to_end(sc, monkeypatch):
     assert [(s["src"], s["start"]) for s in seg] == [("M671", 0.0)]
     assert seg[0]["end"] == pytest.approx(10.0, abs=0.1)
     assert sc.post("/api/scenes/to-timeline", json={"collection": "Snow Saga", "tag": "feast"}).status_code == 400
+    by_keys = sc.post("/api/scenes/to-timeline",
+                      json={"collection": "Any name", "tag": "christmas", "films": [key]})
+    assert by_keys.status_code == 201, by_keys.text
+    assert sc.post("/api/scenes/to-timeline", json={"collection": "x", "tag": "christmas",
+                                                    "films": ["nope:1"]}).status_code == 404
 
     assert sc.delete(f"/api/scenes/tags/{t['id']}").status_code == 204

@@ -169,12 +169,13 @@ def collection(
 
 
 class TimelineBody(BaseModel):
-    collection: str
+    collection: str  # names the cut; picks the films unless `films` is given
     tag: str
     title: str = ""
+    films: list[str] | None = None  # film keys, for a franchise Plex doesn't group
 
 
 @router.post("/to-timeline", status_code=201)
 def to_timeline(core: CoreDep, body: TimelineBody) -> dict[str, Any]:
     """Accepted scenes with a tag across a collection, as a timeline cut."""
-    return core.scenes.to_timeline(body.collection, body.tag, body.title)
+    return core.scenes.to_timeline(body.collection, body.tag, body.title, body.films)

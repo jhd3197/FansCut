@@ -384,18 +384,22 @@ def collection_tags(name: str, tag: str = "") -> str:
     return _cut("\n".join(out))
 
 
-def make_timeline(collection: str, tag: str, title: str = "") -> str:
+def make_timeline(
+    collection: str, tag: str, title: str = "", films: list[str] | None = None
+) -> str:
     """Turn the accepted scenes with a tag across a collection into a FansCut timeline cut.
 
     Args:
-        collection: Collection name.
+        collection: Collection name (also names the cut).
         tag: The tag, e.g. "christmas".
         title: Title of the cut (default "<collection>: <tag>").
+        films: Film keys to use instead of the collection's films, for a franchise
+            whose films aren't all in one Plex collection.
     """
     t = _call(
         "POST",
         "/api/scenes/to-timeline",
-        json={"collection": collection, "tag": tag, "title": title},
+        json={"collection": collection, "tag": tag, "title": title, "films": films},
     )
     return f'Created timeline {t["id"]} "{t["title"]}". Open it in FansCut to sync and render.'
 
