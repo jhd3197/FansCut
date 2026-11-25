@@ -17,6 +17,7 @@ from typing import Any
 from ..models import Segment
 from ..planner import CutOptions, CutPlan
 from ..render.plan import safe_name
+from .effects import FX_KEYS
 
 
 def show_name(series_title: str, timeline_title: str) -> str:
@@ -68,9 +69,18 @@ def part_segments(doc: dict[str, Any], pi: int,
             end = min(end, duration)
         if end <= start:
             raise ValueError(f"{seg['src']} segment {si}: corrected range is empty")
+        fx = {k: seg[k] for k in FX_KEYS if k in seg}
+        audio_file = None
+        if (fx.get("audio") or {}).get("src"):
+            bridge = files.get(fx["audio"]["src"])
+            if not bridge or not bridge[0]:
+                raise ValueError(f"{seg['src']} segment {si}: music bridge source "
+                                 f"{fx['audio']['src']} has no file in this library")
+            audio_file = bridge[0]
         segments.append(Segment(seg["src"], path, round(start, 3), round(end, 3),
                                 seg.get("desc") or seg["src"],
-                                xfade_ms=float(seg.get("xfade_ms") or 0)))
+                                xfade_ms=float(seg.get("xfade_ms") or 0), fx=fx,
+                                audio_file=audio_file))
     return segments, warnings
 
 

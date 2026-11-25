@@ -47,3 +47,85 @@ export function episodeTrack(episode, segments) {
   });
   return { kept, trims };
 }
+
+// -- timeline editor (recipe docs) ---------------------------------------------
+
+// Move one item of a list to a new index (clamped), returning a new list.
+export function moveItem(list, from, to) {
+  const next = [...list];
+  const [x] = next.splice(from, 1);
+  next.splice(Math.max(0, Math.min(to, next.length)), 0, x);
+  return next;
+}
+
+// Every segment of a recipe in play order, with its place on the cut's own clock.
+export function flatSegments(doc) {
+  const out = [];
+  let at = 0;
+  (doc?.parts || []).forEach((part, pi) => {
+    (part.segments || []).forEach((seg, si) => {
+      const dur = Math.max(0, (seg.end ?? 0) - (seg.start ?? 0));
+      out.push({ pi, si, seg, at, dur, n: out.length + 1 });
+      at += dur;
+    });
+  });
+  return { segs: out, total: at };
+}
+
+// Where the picture switches from one source to another.
+export function sourceJoins(segs) {
+  const out = [];
+  for (let i = 1; i < segs.length; i += 1) {
+    if (segs[i].seg.src !== segs[i - 1].seg.src) {
+      out.push({ at: segs[i].at, from: segs[i - 1].seg.src, to: segs[i].seg.src, i });
+    }
+  }
+  return out;
+}
+
+// Round tick marks for a ruler covering `total` seconds (about `want` of them).
+export function rulerTicks(total, want = 6) {
+  if (!total || total <= 0) return [];
+  const steps = [10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200];
+  const step = steps.find((s) => total / s <= want) || steps[steps.length - 1];
+  const out = [];
+  for (let t = 0; t < total; t += step) out.push(t);
+  return out;
+}
+
+// "Synced N / M": cut points found in the user's files over all cut points.
+export function syncCounts(report) {
+  if (!report?.synced) return null;
+  let matched = 0;
+  let total = 0;
+  for (const s of Object.values(report.sources || {})) {
+    matched += s.matched_boundaries || 0;
+    total += s.total_boundaries ?? (s.boundaries || []).length;
+  }
+  return { matched, total };
+}
+
+// What the sync found for one segment: its status and the start/end boundaries.
+export function segmentSync(report, src, pi, si) {
+  const s = report?.sources?.[src];
+  if (!s) return null;
+  const pick = (side) => (s.boundaries || []).find(
+    (b) => b.part === pi + 1 && b.segment === si + 1 && b.side === side) || null;
+  return { status: s.segments?.[`${pi + 1}:${si + 1}`] || null, matched: s.matched,
+    reason: s.reason, start: pick('start'), end: pick('end') };
+}
+
+// Client-side checks before saving: bad ranges, unknown sources, empty parts.
+export function recipeIssues(doc) {
+  const out = [];
+  (doc?.parts || []).forEach((part, pi) => {
+    if (!part.segments?.length) out.push({ pi, si: null, text: `${part.title || `Part ${pi + 1}`} has no segments (dropped on save)` });
+    (part.segments || []).forEach((seg, si) => {
+      const source = doc.sources?.[seg.src];
+      if (!source) out.push({ pi, si, text: `${seg.src} is not one of the recipe's sources` });
+      const err = checkRange(seg.start, seg.end, source?.duration);
+      if (err) out.push({ pi, si, text: `${seg.src}: ${err.replace('episode', 'source')}` });
+    });
+  });
+  return out;
+}

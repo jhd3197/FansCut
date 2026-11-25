@@ -41,6 +41,8 @@ def from_recipe(name: str, doc: dict[str, Any], resolve: Resolver) -> dict[str, 
             missing.append({"src": src, "reason": err})
     n_seg = sum(len(p["segments"]) for p in doc.get("parts", []))
     return {"id": f"recipe:{name}", "kind": "recipe", "title": doc.get("title", name),
+            "category": doc.get("category") or "Community cuts",
+            "tagline": doc.get("tagline", ""),
             "status": _status(len(doc.get("sources", {})), missing), "missing": missing,
             "detail": {"parts": len(doc.get("parts", [])), "segments": n_seg,
                        "credits": doc.get("credits", {})}}
@@ -52,14 +54,16 @@ def from_collection(name: str, movies: list[Any], lang_missing: list[str]) -> li
     out = []
     missing = [{"src": t, "reason": "no preferred audio language"} for t in lang_missing]
     out.append({
-        "id": f"merge:{name}", "kind": "collection_merge",
+        "id": f"merge:{name}", "kind": "collection_merge", "category": "Merges",
+        "tagline": f"{name}, as one film",
         "title": f"{name} — merged movie",
         "status": "ready" if not missing else "partly", "missing": missing,
         "detail": {"movies": [m.title for m in movies], "years": years,
                    "template": "one film from every entry, in release order"},
     })
     out.append({
-        "id": f"order:{name}", "kind": "watch_order",
+        "id": f"order:{name}", "kind": "watch_order", "category": "Watch in story order",
+        "tagline": "in release order",
         "title": f"{name} — watch order playlist",
         "status": "ready", "missing": [],
         "detail": {"movies": [m.title for m in movies],
@@ -76,7 +80,8 @@ def canon_cut(series_title: str, key: str, n_filler: int, n_episodes: int,
     missing = [{"src": e, "reason": "no file"} for e in files_missing]
     missing += [{"src": e, "reason": "no preferred audio language"} for e in lang_missing]
     n = max(n_episodes, 1)
-    return {"id": f"canon:{key}", "kind": "canon_cut",
+    return {"id": f"canon:{key}", "kind": "canon_cut", "category": "Anime",
+            "tagline": "no filler",
             "title": f"{series_title} — canon cut",
             "status": _status(n, missing) if missing else "ready",
             "missing": missing,

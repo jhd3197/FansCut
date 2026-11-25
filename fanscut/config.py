@@ -30,6 +30,7 @@ ENV_FIELDS = {
     "FANSCUT_PLEX_URL": "library.plex.url",
     "FANSCUT_PLEX_TOKEN": "library.plex.token",
     "FANSCUT_AI_API_KEY": "ai.api_key",
+    "FANSCUT_GITHUB_TOKEN": "community.github_token",
 }
 
 
@@ -134,6 +135,12 @@ class AutomationCfg(BaseModel):
     keep: bool = True  # keep flag for webhook-triggered renders
 
 
+class CommunityCfg(BaseModel):
+    index_url: str = "https://raw.githubusercontent.com/jhd3197/fanscut-recipes/main/index.json"
+    github_token: str = ""  # secret, for private cut repos; prefer FANSCUT_GITHUB_TOKEN
+    offline: bool = False
+
+
 class AICfg(BaseModel):
     base_url: str = ""  # OpenAI-compatible endpoint, e.g. http://localhost:11434/v1 (Ollama)
     api_key: str = ""  # secret; prefer FANSCUT_AI_API_KEY over the config file
@@ -153,6 +160,7 @@ class Config(BaseModel):
     render: RenderCfg = Field(default_factory=RenderCfg)
     automation: AutomationCfg = Field(default_factory=AutomationCfg)
     ai: AICfg = Field(default_factory=AICfg)
+    community: CommunityCfg = Field(default_factory=CommunityCfg)
 
     @property
     def data_dir(self) -> Path:
@@ -269,6 +277,8 @@ def masked(cfg: Config) -> dict[str, Any]:
         d["library"]["plex"]["token"] = MASK
     if d["ai"]["api_key"]:
         d["ai"]["api_key"] = MASK
+    if d["community"]["github_token"]:
+        d["community"]["github_token"] = MASK
     return d
 
 
