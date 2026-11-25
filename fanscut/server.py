@@ -16,7 +16,7 @@ from .config import Config
 from .core import Core
 from .db import Database
 from .errors import ClientError, FansCutError, NotFoundError
-from .routes import cut, fillers, jobs, library, system
+from .routes import cut, fillers, jobs, library, renders, system
 
 log = logging.getLogger("fanscut.server")
 
@@ -51,6 +51,7 @@ def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if start_worker:
             core.worker.start()
+        core.sweep_renders()
         yield
         core.worker.stop()
         core.db.close()
@@ -76,7 +77,8 @@ def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
     async def _value(_r: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
-    for r in (system.router, library.router, cut.router, jobs.router, fillers.router):
+    for r in (system.router, library.router, cut.router, jobs.router, fillers.router,
+              renders.router):
         app.include_router(r)
 
     ui = ui_dir()

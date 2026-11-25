@@ -20,6 +20,10 @@ class CutBody(BaseModel):
 class RenderBody(CutBody):
     dry_run: bool = False
     mode: Literal["auto", "copy", "encode"] = "auto"
+    keep: bool | None = Field(default=None,
+                              description="keep forever (default: render.keep config); "
+                                          "false = auto-delete after render.ephemeral_days")
+    refresh: bool = Field(default=False, description="re-render even if the cache has this cut")
 
 
 @router.post("/series/{key}/cut")
@@ -35,7 +39,7 @@ def render(core: CoreDep, key: str, body: RenderBody | None = None) -> dict[str,
     body = body or RenderBody()
     if body.dry_run:
         return core.dry_run(key, body.seasons, body.options, body.mode)
-    return core.submit_render(key, body.seasons, body.options, body.mode)
+    return core.submit_render(key, body.seasons, body.options, body.mode, body.keep, body.refresh)
 
 
 @router.get("/series/{key}/recipe")

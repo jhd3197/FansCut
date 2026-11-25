@@ -5,6 +5,8 @@ Routes stay thin and call into this; so do the job handlers.
 
 from __future__ import annotations
 
+import contextlib
+import datetime as _dt
 import json
 import tempfile
 from dataclasses import asdict, fields
@@ -27,6 +29,7 @@ from .library.service import Library
 from .models import LABELS, TRIM_KINDS, Episode
 from .planner import PRESETS, CutOptions, CutPlan, PlanEpisode, plan_cut
 from .render import ffmpeg, plan, run
+from .render.cache import RenderStore, render_hash
 
 UNSET: Any = object()  # "leave this field alone", distinct from None (= clear it)
 WHOLE = -1  # matches.season value for "the whole series"
@@ -50,6 +53,7 @@ class Core:
         self.db = db
         self.session = session
         self.jobs = JobStore(db)
+        self.renders = RenderStore(db)
         self.worker = Worker(self.jobs, {"render": self._job_render, "detect": self._job_detect})
         self.apply_config(cfg)
 
@@ -279,32 +283,85 @@ class Core:
         series = self.library.get_series(key)
         suffix = f" - S{'+'.join(f'{s:02d}' for s in seasons)}" if seasons else ""
         stem = plan.safe_name(f"{series.title}{suffix} - fan cut")
-        out = plan.unique_path(self.cfg.output_dir, stem, self.cfg.ffmpeg.container)
         titles = {e.id: f"{e.id} {e.title}".strip() for e in episodes}
-        return plan.build_plan(cut, self.cfg.ffmpeg, out, workdir, self.prober, titles, mode)
+        provisional = self.cfg.output_dir / f"{stem}.{self.cfg.ffmpeg.container}"
+        rp = plan.build_plan(cut, self.cfg.ffmpeg, provisional, workdir, self.prober, titles, mode)
+        # The output is named after a hash of everything that shapes its bytes, so
+        # re-rendering an unchanged cut finds the file already there (cache hit).
+        h = render_hash(key, cut, rp.mode, self.cfg.ffmpeg, rp.chapters)
+        out = self.cfg.output_dir / f"{stem}.{h[:10]}.{self.cfg.ffmpeg.container}"
+        tmp = out.with_name(f"{out.stem}.part{out.suffix}")
+        rp.output, rp.output_tmp, rp.cache_key = str(out), str(tmp), h
+        rp.command[-1] = str(tmp)
+        return rp
 
     def dry_run(self, key: str, seasons: list[int] | None, options: dict[str, Any] | None,
                 mode: plan.Mode) -> dict[str, Any]:
         rp = self.render_plan(key, seasons, options, mode, Path("<workdir>"))
         cut, _ = self.build_cut(key, seasons, options)
-        return {"cut": cut.to_dict(), "render": rp.to_dict()}
+        return {"cut": cut.to_dict(), "render": rp.to_dict(),
+                "cached": self.renders.hit(rp.cache_key) is not None}
 
     def submit_render(self, key: str, seasons: list[int] | None, options: dict[str, Any] | None,
-                      mode: str) -> dict[str, Any]:
+                      mode: str, keep: bool | None = None, refresh: bool = False) -> dict[str, Any]:
         series = self.library.get_series(key)
         self.build_cut(key, seasons, options)  # fail fast on a bad request
         return self.worker.submit("render", f"Render {series.title}",
                                   {"series_key": key, "seasons": seasons, "options": options,
-                                   "mode": mode})
+                                   "mode": mode, "keep": keep, "refresh": refresh,
+                                   "title": series.title})
 
     def _job_render(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
         self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        keep = payload.get("keep")
+        if keep is None:
+            keep = self.cfg.render.keep
         with tempfile.TemporaryDirectory(prefix="render-", dir=self.cfg.data_dir) as tmp:
             rp = self.render_plan(payload["series_key"], payload.get("seasons"),
                                   payload.get("options"), payload.get("mode", "auto"), Path(tmp))
+            if not payload.get("refresh"):
+                hit = self.renders.hit(rp.cache_key)
+                if hit:
+                    return {"output": hit["path"], "mode": rp.mode, "cached": True,
+                            "cache_key": rp.cache_key, "keep": hit["keep"],
+                            "message": f"cached: {hit['path']}"}
             ctx.progress(0, f"rendering ({rp.mode}): {rp.reason}")
             out = run.execute(rp, Path(tmp), ctx.progress, ctx.cancel)
-        return {"output": out, "mode": rp.mode, "message": f"wrote {out}"}
+        row = self.renders.add(rp.cache_key, payload["series_key"], payload.get("title", ""),
+                               out, rp.mode, bool(keep), job_id=ctx.job_id)
+        swept = self.sweep_renders()
+        return {"output": out, "mode": rp.mode, "cached": False, "cache_key": rp.cache_key,
+                "keep": row["keep"], "swept": swept["removed"], "message": f"wrote {out}"}
+
+    # -- rendered output (cache, keep/evict) ------------------------------------
+    def list_renders(self, series_key: str | None = None) -> list[dict[str, Any]]:
+        return self.renders.list(series_key)
+
+    def set_render_keep(self, h: str, keep: bool) -> dict[str, Any]:
+        row = self.renders.set_keep(h, keep)
+        if row is None:
+            raise NotFoundError(f"render {h} not found")
+        return row
+
+    def delete_render(self, h: str) -> None:
+        row = self.renders.remove(h)
+        if row is None:
+            raise NotFoundError(f"render {h} not found")
+        with contextlib.suppress(OSError):
+            Path(row["path"]).unlink()
+
+    def sweep_renders(self) -> dict[str, Any]:
+        """Delete non-kept renders older than render.ephemeral_days (0 = never)."""
+        removed = []
+        days = self.cfg.render.ephemeral_days
+        if days > 0:
+            cutoff = (_dt.datetime.now() - _dt.timedelta(days=days)).isoformat(timespec="seconds")
+            for r in self.renders.due(cutoff):
+                with contextlib.suppress(OSError):
+                    Path(r["path"]).unlink()
+                self.renders.remove(r["hash"])
+                removed.append(r["path"])
+        return {"removed": removed}
 
     # -- OP/ED detection ------------------------------------------------------
     def submit_detect(self, key: str, season: int) -> dict[str, Any]:

@@ -269,7 +269,8 @@ def test_dry_run_returns_the_ffmpeg_plan(matched, fake_probe):
     r = out["render"]
     assert r["mode"] == "copy" and r["command"][0] == "ffmpeg"
     assert r["files"]["concat.txt"].count("file ") == 3
-    assert r["output"].endswith("Harbor Lights - fan cut.mkv")
+    assert "Harbor Lights - fan cut." in r["output"] and r["output"].endswith(".mkv")
+    assert r["cache_key"] and out["cached"] is False
     assert out["cut"]["totals"]["kept"] == 3
     assert [c["episode_id"] for c in r["chapters"]] == ["S01E01", "S01E04", "S01E06"]
     forced = matched.post(f"{E}/render", json={"dry_run": True, "mode": "encode"}).json()

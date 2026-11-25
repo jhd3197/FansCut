@@ -107,6 +107,11 @@ class CutCfg(BaseModel):
     transition: Literal["none", "fade"] = "none"
 
 
+class RenderCfg(BaseModel):
+    keep: bool = True  # default for new renders; False = evict automatically
+    ephemeral_days: int = 7  # sweep deletes non-kept renders older than this; 0 = never
+
+
 class Config(BaseModel):
     server: ServerCfg = Field(default_factory=ServerCfg)
     paths: PathsCfg = Field(default_factory=PathsCfg)
@@ -116,6 +121,7 @@ class Config(BaseModel):
     fingerprint: FingerprintCfg = Field(default_factory=FingerprintCfg)
     ffmpeg: FFmpegCfg = Field(default_factory=FFmpegCfg)
     cut: CutCfg = Field(default_factory=CutCfg)
+    render: RenderCfg = Field(default_factory=RenderCfg)
 
     @property
     def data_dir(self) -> Path:
