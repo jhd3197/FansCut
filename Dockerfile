@@ -31,10 +31,13 @@ RUN python -c "import fanscut.server" && ffmpeg -version >/dev/null && ffprobe -
 
 # Non-root (uid/gid 1000). Bind-mounted /config, /data and /output must be
 # writable by uid 1000 on the host, e.g.: mkdir -p config data output && chown 1000:1000 config data output
+# Other ids: compose `user: "99:100"`, or PUID/PGID (docs/docker.md).
 RUN groupadd --gid 1000 fanscut \
     && useradd --uid 1000 --gid fanscut --no-create-home --shell /usr/sbin/nologin fanscut \
     && mkdir -p /config /data /output /media \
     && chown fanscut:fanscut /config /data /output
+# PUID/PGID/UMASK support; see docker-entrypoint.sh and docs/docker.md.
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 USER fanscut
 # Relative paths in a missing config.yaml (./data, ./output) then land somewhere writable.
 WORKDIR /data
@@ -48,4 +51,5 @@ EXPOSE 6464
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6464/healthz', timeout=8)" || exit 1
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "-m", "fanscut", "serve", "--host", "0.0.0.0", "--port", "6464"]

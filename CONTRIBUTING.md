@@ -16,6 +16,23 @@ catches what ruff does not.
 Set up with `./dev.sh setup`, or by hand: `pip install -e ".[dev]"`. A venv
 outside the repo works too: `FANSCUT_VENV=/path/to/venv ./dev.sh validate`.
 
+Optional: `pip install pre-commit && pre-commit install` runs ruff, mypy and
+gitleaks on each commit.
+
+## Branches and releases
+
+- Work lands on `dev`. Feature pull requests target `dev`, never `main`.
+- `main` only takes pull requests from this repo's `dev`. The Main Promotion
+  check fails any other source. Merge with a regular merge commit, not a
+  squash.
+- Every push to `dev` publishes `ghcr.io/jhd3197/fanscut:dev`. Every merge into
+  `main` publishes `:latest` and creates the `vX.Y.Z` GitHub release, with
+  notes generated from the merged pull requests. Both happen only after the
+  backend, frontend, Docker and secret-scan checks pass (`release.yml`).
+- Don't tag or bump the version by hand. The next version comes from the
+  newest `vX.Y.Z` tag (patch + 1). `fanscut/__init__.py` only holds the seed
+  for the first release.
+
 ## Conventions
 
 - Tests, fixtures, comments, docs examples and commit messages use invented

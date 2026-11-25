@@ -1,3 +1,4 @@
+# main only accepts promotion PRs from dev, so every update targets dev.
 version: 2
 updates:
   - package-ecosystem: pip
@@ -10,11 +11,18 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    # One PR for the routine bumps instead of one per package.
+    groups:
+      ui-minor-and-patch:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: "/"
     target-branch: dev
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: docker
     directory: "/"
     target-branch: dev
