@@ -211,7 +211,7 @@ export function Discover() {
       {!needle && filter === 'all' && loaded?.collections?.length > 0 && (
         <Shelf id="shelf-coll" title="Your collections" count={loaded.collections.length} wide>
           {loaded.collections.map((c) => (
-            <Link key={c.name} className="tile tile-wide" to={`/collections/${enc(c.name)}`}>
+            <Link key={c.id || c.name} className="tile tile-wide" to={`/collections/${enc(c.id || c.name)}`}>
               <Backdrop k={c.backdrops?.[0]} name={c.name} />
               <span className="tiny muted">{c.films} films{c.cuts ? ` · ${c.cuts} cuts` : ''}</span>
             </Link>

@@ -172,7 +172,7 @@ export function MoviePage() {
 
       {m.collection_films.map((c, i) => (
         <Section key={c.name} id={`m-coll-${i}`} title={`In the collection: ${c.name}`} count={c.films.length}
-          end={<Link to={`/collections/${encodeURIComponent(c.name)}`} className="tiny">Open collection</Link>}>
+          end={<Link to={`/collections/${encodeURIComponent(c.id || c.name)}`} className="tiny">Open collection</Link>}>
           <div className="shelf">
             {c.films.map((f, j) => <FilmTile key={f.key} m={f} tag={`${c.name} · ${j + 1}`} />)}
           </div>

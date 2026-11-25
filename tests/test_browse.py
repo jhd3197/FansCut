@@ -206,3 +206,25 @@ def test_harry_potter_groups_all_eight_films_even_when_plex_tags_three():
                     collections=c) for t, n, y, c in films]
     hp = next(g for g in collection_groups(movies) if g["name"] == "Harry Potter")
     assert [m.tmdb_id for m in hp["movies"]] == [t for t, *_ in films]
+
+
+def test_collections_have_ids_and_old_name_links_still_resolve():
+    from fanscut.browse import collection_groups, collection_ids, resolve_collection
+    from fanscut.models import Movie
+
+    def mk(tmdb, title, year, tags, coll=None):
+        return Movie(key=f"plexmovie:{tmdb}", source="plex", title=title, year=year,
+                     tmdb_id=tmdb, file=f"/m/{tmdb}.mkv", collections=tags, tmdb_collection=coll)
+
+    movies = [mk(673, "Harry Potter and the Prisoner of Azkaban", 2004, ["Harry Potter"]),
+              mk(674, "Harry Potter and the Goblet of Fire", 2005, ["Popular on My Server"]),
+              mk(10, "Heat", 1995, ["Popular on My Server", "Michael Mann"]),
+              mk(11, "Collateral", 2004, ["Michael Mann"])]
+    ids = collection_ids(movies)
+    assert ids["Harry Potter"] == "tmdb-1241"  # the built-in set's TMDB collection
+    assert ids["Michael Mann"].startswith("c-") and " " not in ids["Michael Mann"]
+    assert len(set(ids.values())) == len(ids)
+    assert resolve_collection(movies, "tmdb-1241") == "Harry Potter"
+    assert resolve_collection(movies, "Harry Potter") == "Harry Potter"  # old links
+    hp = next(g for g in collection_groups(movies) if g["name"] == "Harry Potter")
+    assert hp["id"] == "tmdb-1241"

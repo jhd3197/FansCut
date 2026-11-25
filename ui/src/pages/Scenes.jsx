@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAct, useLoad, usePoll } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
@@ -197,21 +197,36 @@ function XRay({ fkey, t, cast }) {
 
 export function ScenesPage() {
   const { key } = useParams();
-  const [t, setT] = useState(0);
-  const [sel, setSel] = useState(null); // selected tag id
+  // The tab, the selected scene and the playhead live in the URL (?tab=&scene=&t=), so a
+  // reload or a shared link opens the same place. One write per change: separate writes in
+  // the same tick would overwrite each other.
+  const [params, setParams] = useSearchParams();
+  const t = Number(params.get('t')) || 0;
+  const sel = params.get('scene') || null; // selected tag id
+  const tab = params.get('tab') || 'proposed';
+  const patch = useCallback((o) => setParams((p) => {
+    const n = new URLSearchParams(p);
+    for (const [k, v] of Object.entries(o)) {
+      if (v == null || v === '' || (k === 'tab' && v === 'proposed') || (k === 't' && !v)) n.delete(k);
+      else n.set(k, k === 't' ? String(Math.round(v * 10) / 10) : v);
+    }
+    return n;
+  }, { replace: true }), [setParams]);
+  const setT = useCallback((v) => patch({ t: v }), [patch]);
+  const setSel = useCallback((v) => patch({ scene: v }), [patch]);
+  const setTab = useCallback((v) => patch({ tab: v }), [patch]);
   const [range, setRange] = useState(null); // [start, end] being viewed
-  const [tab, setTab] = useState('proposed');
-  // open on the first proposal, else the first tag, instead of the black frame at 0:00
+  // with nothing in the URL, open on the first proposal, else the first tag, instead of
+  // the black frame at 0:00
   const opened = useRef(null);
   const { data, error, loading, reload } = useLoad(() => api(`/scenes/film?${q({ key })}`).then((d) => {
     if (opened.current !== key) {
       opened.current = key;
+      const now = new URLSearchParams(window.location.search);
       const all = d.tags || [];
       const first = all.find((x) => x.status === 'proposed') || all.find((x) => x.status === 'accepted');
-      if (first) {
-        setSel(first.id);
-        setT(first.start);
-        if (first.status !== 'proposed') setTab('tags');
+      if (first && !now.get('scene') && !now.get('t')) {
+        patch({ scene: first.id, t: first.start, tab: first.status === 'proposed' ? null : 'tags' });
       }
     }
     return d;
@@ -226,19 +241,23 @@ export function ScenesPage() {
   const tags = useMemo(() => data?.tags || [], [data]);
   const proposals = tags.filter((x) => x.status === 'proposed');
   const current = tags.find((x) => x.id === sel) || null;
-  const view = useMemo(() => (current ? [current.start, current.end] : range), [current, range]);
-
   const scenes = doc?.scenes;
   const sceneAt = useCallback((time) => (scenes || []).find((s) => s.start <= time && time < s.end), [scenes]);
+  // after a reload only ?t= is known: view the scene around it
+  const view = useMemo(() => {
+    if (current) return [current.start, current.end];
+    if (range) return range;
+    const s = t ? sceneAt(t) : null;
+    return s ? [s.start, s.end] : null;
+  }, [current, range, t, sceneAt]);
   const seek = useCallback((time) => {
-    setT(time);
-    setSel(null);
+    patch({ t: time, scene: null });
     setPlay(false);
     const s = sceneAt(time);
     setRange(s ? [s.start, s.end] : [Math.max(0, time - 30), time + 30]);
-  }, [sceneAt]);
+  }, [sceneAt, patch]);
 
-  const pick = useCallback((x) => { setSel(x.id); setT(x.start); setRange(null); setPlay(false); }, []);
+  const pick = useCallback((x) => { patch({ scene: x.id, t: x.start }); setRange(null); setPlay(false); }, [patch]);
 
   const setTag = useCallback((x, changes) => act(async () => {
     await api(`/scenes/tags/${x.id}`, { method: 'PATCH', body: changes });
@@ -316,7 +335,7 @@ export function ScenesPage() {
           </span>
         </div>
         <div className="row wrap">
-          {col && <Link className="btn" to={`/collections/${enc(col)}/scenes`}>{col}: all scenes</Link>}
+          {col && <Link className="btn" to={`/collections/${enc(col.id)}/scenes`}>{col.name}: all scenes</Link>}
           <button type="button" className="btn" disabled={busy || !f.on_disk} onClick={() => startIndex(false)}>
             {doc ? 'Index again' : 'Index scenes'}
           </button>

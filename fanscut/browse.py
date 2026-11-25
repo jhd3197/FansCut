@@ -7,6 +7,7 @@ probes (detail pages do, and the probe is cached).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -41,6 +42,47 @@ def _copy_rank(m: Movie) -> tuple[bool, bool, bool, bool]:
             "extended" not in (_edition(m) or "").lower(), m.source != "radarr")
 
 
+def _tmdb_collections(name: str, members: list[Movie]) -> set[int]:
+    """TMDB collection ids behind a collection: Radarr's, or the built-in set's."""
+    out = {m.tmdb_collection for m in members if m.tmdb_collection}
+    for m in members:
+        k = known.movie(m.tmdb_id, m.title, m.year)
+        if k and k["set"] == name and k.get("collection"):
+            out.add(k["collection"])
+    return out
+
+
+def _name_id(name: str) -> str:
+    """A short id for a collection TMDB doesn't know: stable, and no words in URLs."""
+    return "c-" + hashlib.sha1(known.norm(name).encode()).hexdigest()[:8]
+
+
+def collection_ids(movies: list[Movie]) -> dict[str, str]:
+    """Every collection name -> its URL id: "tmdb-<n>" when one TMDB collection is
+    behind it (and no other name took it first), else "c-<hash of the name>"."""
+    named: dict[str, list[Movie]] = {}
+    for m in movies:
+        for c in _collections_of(m):
+            named.setdefault(c, []).append(m)
+    out: dict[str, str] = {}
+    used: set[str] = set()
+    # a franchise name owns its TMDB id before an auto-list or a longer alias does
+    for name in sorted(named, key=lambda n: (bool(NOT_A_FRANCHISE.search(n)), len(n), n)):
+        cids = _tmdb_collections(name, named[name])
+        gid = f"tmdb-{next(iter(cids))}" if len(cids) == 1 else _name_id(name)
+        if gid in used:
+            gid = _name_id(name)
+        used.add(gid)
+        out[name] = gid
+    return out
+
+
+def resolve_collection(movies: list[Movie], ref: str) -> str:
+    """A collection's name from its id, or from its name (old links)."""
+    ids = collection_ids(movies)
+    return next((n for n, i in ids.items() if i == ref), ref)
+
+
 # Plex lists that aren't franchises ("IMDb Top 250", "Popular on My Server")
 NOT_A_FRANCHISE = re.compile(
     r"\b(top \d+|popular|most (watched|played)|recently|trending|on deck|watchlist"
@@ -65,7 +107,7 @@ def collection_groups(movies: list[Movie]) -> list[dict[str, Any]]:
             plex_of.setdefault(_version_key(m), m.plex_key)
     out: list[dict[str, Any]] = []
     seen_sets: dict[frozenset[object], dict[str, Any]] = {}
-    used_ids: set[str] = set()
+    ids = collection_ids(movies)
     for name in sorted(named):
         best: dict[object, Movie] = {}
         for m in named[name]:
@@ -82,10 +124,7 @@ def collection_groups(movies: list[Movie]) -> list[dict[str, Any]]:
         cids = {m.tmdb_collection for m in films if m.tmdb_collection}
         if len(cids) > 1 or NOT_A_FRANCHISE.search(name):
             continue
-        gid = f"tmdb-{cids.pop()}" if len(cids) == 1 else name
-        if gid in used_ids:
-            gid = name
-        used_ids.add(gid)
+        gid = ids[name]
         for m in films:
             m.plex_key = m.plex_key or plex_of.get(_version_key(m))
         out.append({"id": gid, "name": name, "movies": films, "aliases": []})
@@ -96,8 +135,9 @@ def collection_groups(movies: list[Movie]) -> list[dict[str, Any]]:
 def find_group(movies: list[Movie], ref: str) -> dict[str, Any] | None:
     """A collection by its id or, for old links, its name."""
     groups = collection_groups(movies)
+    name = resolve_collection(movies, ref)
     return (next((g for g in groups if g["id"] == ref), None)
-            or next((g for g in groups if ref == g["name"] or ref in g["aliases"]), None))
+            or next((g for g in groups if name == g["name"] or name in g["aliases"]), None))
 
 
 def _franchise(name: str) -> str:
@@ -221,6 +261,7 @@ def collections(core: Core) -> dict[str, Any]:
             groups.setdefault(c, []).append(m)
     cuts = all_cuts(core)["cuts"]
     shows = _show_members(core, list(groups))
+    ids = collection_ids(ms)
     out = []
     for name, members in sorted(groups.items()):
         tmdbs = {m.tmdb_id for m in members if m.tmdb_id}
@@ -228,7 +269,7 @@ def collections(core: Core) -> dict[str, Any]:
         n_cuts = sum(1 for c in cuts if tmdbs & set(c.get("tmdb_ids", []))
                      or c["series_key"] in keys)
         by_year = sorted(members, key=lambda m: m.year or 0)
-        out.append({"name": name, "films": len(members), "cuts": n_cuts,
+        out.append({"id": ids[name], "name": name, "films": len(members), "cuts": n_cuts,
                     "shows": [s.key for s in shows.get(name, [])],
                     "years": sorted({m.year for m in members if m.year}),
                     # poster and backdrop refs, first film first (an https URL or a key)
@@ -237,8 +278,10 @@ def collections(core: Core) -> dict[str, Any]:
     return {"collections": out}
 
 
-def collection(core: Core, name: str) -> dict[str, Any]:
+def collection(core: Core, ref: str) -> dict[str, Any]:
+    """A collection by its id ("tmdb-1241", "c-…") or, for old links, its name."""
     ms, _ = core.library.list_movies()
+    name = resolve_collection(ms, ref)
     health = _health_by_file(core)
     members = sorted([m for m in ms if name in _collections_of(m)],
                      key=lambda m: (m.year or 0, m.title))
@@ -255,7 +298,8 @@ def collection(core: Core, name: str) -> dict[str, Any]:
     cuts = [c for c in all_cuts(core)["cuts"]
             if tmdbs & set(c.get("tmdb_ids", [])) or c["series_key"] in keys]
     probes = _probes(core, members)
-    return {"name": name, "films": [movie_row(m, health, probes) for m in members],
+    return {"id": collection_ids(ms)[name], "name": name,
+            "films": [movie_row(m, health, probes) for m in members],
             "shows": [show_row(s) for s in shows],
             "minutes": round(total / 60), "suggestions": sugg, "cuts": cuts}
 
@@ -274,8 +318,11 @@ def movie(core: Core, key: str) -> dict[str, Any]:
     near = [x for x in ms if set(_collections_of(x)) & set(row["collections"])]
     probes = _probes(core, near)
     show_sets = _show_members(core, row["collections"])
-    for c in row["collections"]:
-        siblings.append({"name": c, "shows": [show_row(s) for s in show_sets.get(c, [])],
+    ids = collection_ids(ms)
+    # franchises only: "Popular on My Server" is not a shelf worth showing on a film
+    for c in [c for c in row["collections"] if not NOT_A_FRANCHISE.search(c)]:
+        siblings.append({"id": ids.get(c, _name_id(c)), "name": c,
+                         "shows": [show_row(s) for s in show_sets.get(c, [])],
                          "films": [movie_row(x, health, probes) for x in sorted(
             (x for x in ms if c in _collections_of(x)), key=lambda x: (x.year or 0, x.title))]})
     cuts = [c for c in all_cuts(core)["cuts"] if m.tmdb_id and m.tmdb_id in c["tmdb_ids"]]

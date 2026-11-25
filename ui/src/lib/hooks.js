@@ -1,6 +1,6 @@
 // @ts-check
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocation, useSearchParams } from 'react-router';
+import { useLocation, useNavigate, useSearchParams } from 'react-router';
 import { toast } from './toast.js';
 
 // Load on mount (and when `deps` change); `reload()` refetches without blanking the page.
@@ -108,6 +108,16 @@ export function useAct({ inline = false } = {}) {
     }
   }, [inline]);
   return { act, msg, busy, clear: () => setMsg(null) };
+}
+
+// Swap an old or name-based URL for the canonical id URL, keeping ?query and #hash,
+// without adding a history entry.
+export function useCanonical(path) {
+  const navigate = useNavigate();
+  const { search, hash } = useLocation();
+  useEffect(() => {
+    if (path) navigate(`${path}${search}${hash}`, { replace: true });
+  }, [path, search, hash, navigate]);
 }
 
 // State kept in the URL's query string (?key=value), so Back, reload and shared
