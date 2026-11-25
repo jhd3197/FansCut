@@ -131,3 +131,39 @@ def snap(doc: dict[str, Any], t: float, max_move: float = 3.0) -> float:
             if abs(edge - t) <= dist:
                 best, dist = edge, abs(edge - t)
     return round(best, 3)
+
+
+QUIET_REACH = 20.0  # how far an edge may move to avoid cutting someone off
+SNAP = 3.0  # an edge this close to a cut moves onto it
+
+
+def _cuts(doc: dict[str, Any]) -> list[float]:
+    return sorted({edge for shot in doc.get("shots") or [] for edge in shot})
+
+
+def _quiet_edge(doc: dict[str, Any], t: float, reach: float, later: bool) -> float:
+    lines = lines_of(doc)
+    cuts = _cuts(doc)
+    # A cut within snapping distance comes first, nearest first; then cuts further
+    # out in the safe direction (later for an end, earlier for a start).
+    near = sorted((c for c in cuts if abs(c - t) <= SNAP), key=lambda c: abs(c - t))
+    far = [c for c in cuts if (t + SNAP < c <= t + reach if later else t - reach <= c < t - SNAP)]
+    for c in near + (far if later else far[::-1]):
+        if not _talking(lines, c, 0.3):
+            return round(c, 3)
+    return snap(doc, t)
+
+
+def quiet_end(doc: dict[str, Any], t: float, reach: float = QUIET_REACH) -> float:
+    """A camera cut near *t*, or up to *reach* later, that nobody talks across.
+
+    An end chosen by looking at frames can fall mid-sentence; a supercut that
+    stops there sounds broken. Falls back to the nearest cut when every cut in
+    reach has someone talking.
+    """
+    return _quiet_edge(doc, t, reach, later=True)
+
+
+def quiet_start(doc: dict[str, Any], t: float, reach: float = QUIET_REACH) -> float:
+    """A camera cut near *t*, or up to *reach* earlier, that nobody talks across."""
+    return _quiet_edge(doc, t, reach, later=False)

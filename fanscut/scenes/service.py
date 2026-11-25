@@ -424,7 +424,8 @@ class SceneService:
                     continue
                 people = list(dict.fromkeys([*check.people, *people]))
                 conf = (conf + check.confidence) / 2
-            a, b = idx.snap(doc, c["start"]), idx.snap(doc, c["end"])
+            # edges on a camera cut nobody talks across, so no line is cut off
+            a, b = idx.quiet_start(doc, c["start"]), idx.quiet_end(doc, c["end"])
             if b - a < 3 or self.store.overlapping(key, a, b, tag):
                 continue
             made.append(

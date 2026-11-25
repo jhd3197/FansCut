@@ -102,6 +102,17 @@ def test_snap_moves_to_the_nearest_cut_within_reach():
     assert idx.snap(doc, 20.0) == 20.0
 
 
+def test_edges_wait_for_the_dialogue():
+    doc = {"shots": [[0, 10], [10, 20], [20, 30], [30, 60]],
+           "lines": [{"start": 18.0, "end": 22.0, "text": "a line across the 20 s cut"},
+                     {"start": 9.0, "end": 11.0, "text": "a line across the 10 s cut"}]}
+    assert idx.quiet_end(doc, 19.0) == 30  # 20 s has someone talking; 30 s is quiet
+    assert idx.quiet_end(doc, 19.0, reach=5) == 20  # nothing quiet in reach: nearest cut
+    assert idx.quiet_start(doc, 19.0) == 0  # 20 and 10 are talked across
+    assert idx.quiet_end(doc, 29.0) == 30  # a quiet cut in snapping distance wins
+    assert idx.quiet_start(doc, 35.0) == 30
+
+
 # -- tags --------------------------------------------------------------------------
 def test_tag_cleaning():
     assert st.clean_tags(["Christmas", "Great Hall", "christmas"]) == ["christmas", "great-hall"]
