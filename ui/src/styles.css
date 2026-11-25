@@ -352,3 +352,6 @@ legend { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
 /* Full-screen editor: no sidebar, thin margins */
 .shell-full { min-height: 100vh; }
 .main-full { padding: 12px 14px 24px; }
+.menu-item { display: flex; justify-content: space-between; gap: 16px; }
+.menu-item:disabled { opacity: .45; cursor: default; }
+.menu-keys { font: 11px var(--mono); color: var(--muted); }
