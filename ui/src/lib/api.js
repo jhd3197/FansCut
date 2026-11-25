@@ -38,6 +38,9 @@ export const seriesPath = (key) => `/series/${encodeURIComponent(key)}`;
 
 // An item's art. `ref` is what the API gives: a direct https URL (TMDB, from
 // Radarr/Sonarr) or a library key, which FansCut serves from Plex or files.
+// Bump when the server starts choosing different art (v2: Plex skips overlaid uploads),
+// so browsers drop images they cached for a day under the old URLs.
+const ART_VERSION = 2;
 const TMDB = /^https:\/\/image\.tmdb\.org\/t\/p\/[^/]+\//;
 const TMDB_SIZES = { poster: [185, 342, 500, 780], backdrop: [300, 780, 1280] };
 
@@ -47,7 +50,7 @@ export function artUrl(ref, kind = 'poster', w = 500) {
     return ref.replace(TMDB, `https://image.tmdb.org/t/p/${size === 'original' ? size : `w${size}`}/`);
   }
   if (/^https?:\/\//.test(ref)) return ref;
-  return `/api/art/${kind}/${encodeURIComponent(ref)}?w=${w}`;
+  return `/api/art/${kind}/${encodeURIComponent(ref)}?w=${w}&v=${ART_VERSION}`;
 }
 
 // srcset across a few widths, so 4K screens get sharp art and phones small files.

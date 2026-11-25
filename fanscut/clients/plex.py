@@ -24,6 +24,20 @@ class PlexClient(BaseClient):
     def identity(self) -> dict[str, Any]:
         return self._get("/")["MediaContainer"]
 
+    def clean_art_path(self, rating_key: str, kind: str = "poster") -> str | None:
+        """The item's own agent art (TMDB/TVDB), skipping uploads: tools like Kometa
+        upload a copy with ratings and badges drawn on, and select it. None = no list."""
+        try:
+            which = "posters" if kind == "poster" else "arts"
+            data = self._get(f"/library/metadata/{rating_key}/{which}")
+        except ClientError:
+            return None
+        for p in (data.get("MediaContainer") or {}).get("Metadata", []):
+            key = str(p.get("key", ""))
+            if key and p.get("provider") not in ("upload", "local") and "upload" not in key:
+                return key
+        return None
+
     def artwork(self, rating_key: str, kind: str = "poster", width: int = 500,
                 path: str | None = None) -> bytes | None:
         """An item's poster (thumb) or backdrop (art), resized by Plex's photo transcoder.

@@ -98,3 +98,12 @@ def test_radarr_remote_urls_go_to_the_browser_directly():
     # a Plex path (or nothing) stays a key, served through /api/art
     assert art_ref(Movie("plexmovie:9", "plex", "X", poster="/library/metadata/9/thumb/1")) == \
         "plexmovie:9"
+
+@responses.activate
+def test_plex_skips_overlaid_uploads_for_the_clean_agent_poster():
+    from fanscut.clients.plex import PlexClient
+
+    responses.get(f"{PLEX}/library/metadata/9/posters", json={"MediaContainer": {"Metadata": [
+        {"key": "upload://posters/kometa-overlay", "provider": "upload", "selected": True},
+        {"key": "https://image.tmdb.org/t/p/original/clean.jpg", "provider": "tmdb"}]}})
+    assert PlexClient(PLEX, "t").clean_art_path("9") == "https://image.tmdb.org/t/p/original/clean.jpg"

@@ -74,7 +74,8 @@ class ArtStore:
 
     # -- cache ------------------------------------------------------------------
     def _path(self, key: str, kind: str, width: int) -> Path:
-        digest = hashlib.sha1(f"{key}|{kind}|{width}".encode()).hexdigest()
+        # v2: Plex art skips uploaded (overlaid) posters; older cache entries are not reused
+        digest = hashlib.sha1(f"v2|{key}|{kind}|{width}".encode()).hexdigest()
         return self.cache_dir / digest
 
     def get(self, key: str, kind: str = "poster", width: int = 500) -> bytes | None:
@@ -131,8 +132,12 @@ class ArtStore:
         src, ident = item.key.split(":", 1)
         if src in ("plexmovie", "plex"):
             plex = self.library.plex()
-            path = getattr(item, "poster" if kind == "poster" else "backdrop", None)
-            return plex.artwork(ident, kind, width, path) if plex else None
+            if plex is None:
+                return None
+            # the clean agent art first; the selected one may carry Kometa overlays
+            path = plex.clean_art_path(ident, kind) or getattr(
+                item, "poster" if kind == "poster" else "backdrop", None)
+            return plex.artwork(ident, kind, width, path)
         if src == "radarr":
             radarr = self.library.radarr()
             return radarr.cover(ident, kind) if radarr else None

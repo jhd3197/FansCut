@@ -50,7 +50,7 @@ describe('artUrl', () => {
   });
 
   it('sends library keys through FansCut', () => {
-    expect(artUrl('plexmovie:55', 'poster', 300)).toBe('/api/art/poster/plexmovie%3A55?w=300');
-    expect(artSrcSet('plexmovie:55')).toContain('?w=800 800w');
+    expect(artUrl('plexmovie:55', 'poster', 300)).toBe('/api/art/poster/plexmovie%3A55?w=300&v=2');
+    expect(artSrcSet('plexmovie:55')).toContain('?w=800&v=2 800w');
   });
 });
