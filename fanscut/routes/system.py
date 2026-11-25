@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from .. import __version__, config, doctor
 from ..clients.plex import PlexClient
+from ..clients.radarr import RadarrClient
 from ..clients.sonarr import SonarrClient
 from ..errors import ClientError, FansCutError
 from . import CoreDep
@@ -62,6 +63,10 @@ def test_connection(core: CoreDep, service: str, body: TestBody | None = None) -
             st = SonarrClient(use(body.url, lib.sonarr.url),
                               use(body.api_key, lib.sonarr.api_key)).system_status()
             return {"ok": True, "message": f"Sonarr {st.get('version', '')}".strip()}
+        if service == "radarr":
+            st = RadarrClient(use(body.url, lib.radarr.url),
+                              use(body.api_key, lib.radarr.api_key)).system_status()
+            return {"ok": True, "message": f"Radarr {st.get('version', '')}".strip()}
         if service == "plex":
             ident = PlexClient(use(body.url, lib.plex.url),
                                use(body.token, lib.plex.token)).identity()

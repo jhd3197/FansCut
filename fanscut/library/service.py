@@ -13,10 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from ..clients.plex import PlexClient
+from ..clients.radarr import RadarrClient
 from ..clients.sonarr import SonarrClient
 from ..config import Config
 from ..errors import ClientError, NotFoundError
-from ..models import Episode, Series
+from ..models import Episode, Movie, Series
 from . import scan
 from .paths import map_path
 
@@ -54,6 +55,10 @@ class Library:
     def sonarr(self) -> SonarrClient | None:
         c = self.cfg.library.sonarr
         return SonarrClient(c.url, c.api_key) if c.url else None
+
+    def radarr(self) -> RadarrClient | None:
+        c = self.cfg.library.radarr
+        return RadarrClient(c.url, c.api_key) if c.url else None
 
     def plex(self) -> PlexClient | None:
         c = self.cfg.library.plex
@@ -126,6 +131,73 @@ class Library:
             if s.key == key:
                 return s
         raise NotFoundError(f"series {key} not found")
+
+    # -- movies ----------------------------------------------------------------
+    def list_movies(self) -> tuple[list[Movie], dict[str, str]]:
+        """All movies plus {source: error}; sources: radarr, plex movie sections, folder."""
+        out: list[Movie] = []
+        errors: dict[str, str] = {}
+        for src in self._movie_sources():
+            try:
+                out.extend(self._cached(f"movies:{src}", partial(self._movies_of, src)))
+            except ClientError as exc:
+                errors[src] = str(exc)
+        return sorted(out, key=lambda m: m.title.lower()), errors
+
+    def _movie_sources(self) -> list[str]:
+        lib = self.cfg.library
+        return [n for n, on in (("radarr", lib.radarr.url), ("plex", lib.plex.url),
+                                ("folder", lib.movies.path)) if on]
+
+    def _movies_of(self, src: str) -> list[Movie]:
+        if src == "folder":
+            return scan.list_movies_folder(Path(self.cfg.library.movies.path))
+        if src == "radarr":
+            radarr = self.radarr()
+            assert radarr is not None
+            return [self._radarr_movie(m) for m in radarr.list_movies()]
+        plex = self.plex()
+        assert plex is not None
+        want = set(self.cfg.library.plex.movie_sections)
+        found: list[Movie] = []
+        for sec in plex.sections():
+            listed = not want or sec["key"] in want or sec["title"] in want
+            if sec["type"] == "movie" and listed:
+                found.extend(self._plex_movie(m) for m in plex.movies(sec["key"]))
+        return found
+
+    def _radarr_movie(self, m: dict[str, Any]) -> Movie:
+        f = m.get("movieFile") or {}
+        runtime = _hms(((f.get("mediaInfo") or {}).get("runTime")) or "")
+        return Movie(key=f"radarr:{m['id']}", source="radarr", title=m.get("title", ""),
+                     year=m.get("year") or None, tmdb_id=m.get("tmdbId") or None,
+                     file=self._map(f["path"]) if f.get("path") else None, duration=runtime)
+
+    def _plex_movie(self, m: dict[str, Any]) -> Movie:
+        ids = {g["id"].split("://")[0]: g["id"].split("://")[1] for g in m.get("Guid", [])
+               if "://" in g.get("id", "")}
+        media = (m.get("Media") or [{}])[0]
+        part = (media.get("Part") or [{}])[0]
+        ms = media.get("duration") or m.get("duration")
+        tmdb = int(ids["tmdb"]) if ids.get("tmdb", "").isdigit() else None
+        return Movie(key=f"plexmovie:{m['ratingKey']}", source="plex", title=m.get("title", ""),
+                     year=m.get("year"), tmdb_id=tmdb,
+                     file=self._map(part["file"]) if part.get("file") else None,
+                     duration=ms / 1000 if ms else None)
+
+    def find_movie(self, tmdb_id: int | None, title: str = "", edition: str = "") -> Movie | None:
+        """Resolve a movie source: by TMDB id, then title; edition prefers a matching name."""
+        movies, _ = self.list_movies()
+        cands = [m for m in movies if tmdb_id and m.tmdb_id == tmdb_id]
+        if not cands and title:
+            cands = [m for m in movies if m.title.lower() == title.lower()]
+        if edition and len(cands) > 1:
+            pref = [m for m in cands
+                    if edition.lower() in m.title.lower()
+                    or (m.file and edition.lower() in Path(m.file).stem.lower())]
+            if pref:
+                cands = pref
+        return cands[0] if cands else None
 
     # -- episodes -------------------------------------------------------------
     def episodes(self, key: str) -> list[Episode]:

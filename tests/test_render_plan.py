@@ -90,9 +90,24 @@ def test_encode_filter_script_trims_each_segment_and_concats():
     f = plan.files["filter.txt"]
     assert f.count("atrim=start=") == 3
     assert "[1:v:0]trim=start=5.000:end=95.000" in f  # file b is the second input
-    assert "concat=n=3:v=1:a=1[v][a]" in f
+    assert "concat=n=3:v=1:a=0[v]" in f  # video concats in one go
+    assert "[a0][a1]concat=n=2:v=0:a=1[ac1]" in f  # audio chains pairwise
     assert "scale=1280:720" in f and "fade" not in f
     assert plan.command.count("-i") == 3  # two media files + the chapter metadata
+
+
+def test_xfade_extends_previous_audio_and_crossfades():
+    segs = [Segment("S01E01", "/m/a.mkv", 0, 40), Segment("S01E01", "/m/a.mkv", 50, 90)]
+    segs[1].xfade_ms = 400
+    plan = build(segs, mode="encode")
+    f = plan.files["filter.txt"]
+    assert "atrim=start=0.000:end=40.400" in f  # outgoing audio runs 0.4 s past its video cut
+    assert "acrossfade=d=0.400" in f
+    with pytest.raises(ValueError, match="crossfade"):
+        build(segs, mode="copy")
+    # without the probe durations there's no room info, so no extension
+    plan2 = build(segs, probe=lambda _f: info(), mode="encode")
+    assert "atrim=start=0.000:end=40.400" in plan2.files["filter.txt"]
 
 
 def test_fade_transition_forces_encode_and_fades_only_at_episode_edges():

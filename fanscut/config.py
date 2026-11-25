@@ -25,6 +25,8 @@ MASK = "***"
 ENV_FIELDS = {
     "FANSCUT_SONARR_URL": "library.sonarr.url",
     "FANSCUT_SONARR_API_KEY": "library.sonarr.api_key",
+    "FANSCUT_RADARR_URL": "library.radarr.url",
+    "FANSCUT_RADARR_API_KEY": "library.radarr.api_key",
     "FANSCUT_PLEX_URL": "library.plex.url",
     "FANSCUT_PLEX_TOKEN": "library.plex.token",
     "FANSCUT_AI_API_KEY": "ai.api_key",
@@ -46,14 +48,24 @@ class SonarrCfg(BaseModel):
     api_key: str = ""
 
 
+class RadarrCfg(BaseModel):
+    url: str = ""
+    api_key: str = ""
+
+
 class PlexCfg(BaseModel):
     url: str = ""
     token: str = ""
     sections: list[str] = Field(default_factory=list)  # empty = every show section
+    movie_sections: list[str] = Field(default_factory=list)  # empty = every movie section
 
 
 class FolderCfg(BaseModel):
     path: str = ""
+
+
+class MoviesFolderCfg(BaseModel):
+    path: str = ""  # one subfolder per movie; "{tmdb-123}" in the name sets the id
 
 
 class PathMapping(BaseModel):
@@ -63,8 +75,10 @@ class PathMapping(BaseModel):
 
 class LibraryCfg(BaseModel):
     sonarr: SonarrCfg = Field(default_factory=SonarrCfg)
+    radarr: RadarrCfg = Field(default_factory=RadarrCfg)
     plex: PlexCfg = Field(default_factory=PlexCfg)
     folder: FolderCfg = Field(default_factory=FolderCfg)
+    movies: MoviesFolderCfg = Field(default_factory=MoviesFolderCfg)
     path_mappings: list[PathMapping] = Field(default_factory=list)
 
 
@@ -249,6 +263,8 @@ def masked(cfg: Config) -> dict[str, Any]:
     d = cfg.model_dump()
     if d["library"]["sonarr"]["api_key"]:
         d["library"]["sonarr"]["api_key"] = MASK
+    if d["library"]["radarr"]["api_key"]:
+        d["library"]["radarr"]["api_key"] = MASK
     if d["library"]["plex"]["token"]:
         d["library"]["plex"]["token"] = MASK
     if d["ai"]["api_key"]:

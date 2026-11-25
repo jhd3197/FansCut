@@ -42,11 +42,14 @@ function SyncReport({ report, onPreview }) {
         <tbody>
           {sources.map(([src, s]) => (
             <tr key={src}>
-              <td className="mono">{src}</td>
+              <td className="mono">{src}{s.edition ? <span className="chip">{s.edition}</span> : null}</td>
               <td>{s.matched
                 ? <span className="tag tag-ok">yes</span> : <span className="tag tag-bad">no</span>}</td>
               <td className="muted">{s.strategy || s.reason || '–'}</td>
               <td className="muted tiny">
+                {Object.entries(s.segments || {}).filter(([, st]) => st === 'missing').map(([ps]) => (
+                  <div key={ps}><span className="tag tag-bad">not in your edition</span> part {ps.replace(':', ', segment #')}</div>
+                ))}
                 {(s.boundaries || []).map((b, i) => (
                   <div key={i} className={b.outlier ? 'tag tag-bad' : ''}>
                     p{b.part}#{b.segment} {b.side} {fmtTime(b.t)} → {fmtTime(b.corrected)}{' '}
@@ -199,6 +202,12 @@ export function TimelineEdit() {
                   </td>
                   <td><TimeInput value={s.start} label={`Segment ${si + 1} start`} onCommit={(v) => setSeg(pi, si, 'start', v)} /></td>
                   <td><TimeInput value={s.end} label={`Segment ${si + 1} end`} onCommit={(v) => setSeg(pi, si, 'end', v)} /></td>
+                  <td>
+                    <input className="input input-time" type="number" min="0" max="10000" step="50"
+                      value={s.xfade_ms || ''} placeholder="xfade ms" aria-label={`Segment ${si + 1} crossfade ms`}
+                      title="Audio crossfade from the previous segment, in milliseconds"
+                      onChange={(e) => setSeg(pi, si, 'xfade_ms', e.target.value ? Number(e.target.value) : null)} />
+                  </td>
                   <td className="muted tiny">{s.desc || ''}</td>
                   <td className="row">
                     <button className="btn btn-ghost btn-sm" onClick={() => setPreview({ src: s.src, t: s.start })}>▶</button>

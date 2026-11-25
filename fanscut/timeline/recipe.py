@@ -32,7 +32,9 @@ MAX_SEGMENTS = 5_000
 MAX_SOURCES = 2_000
 MAX_TITLE = 200
 MAX_NOTE = 500
+MAX_XFADE_MS = 10_000
 SRC_RE = re.compile(r"^S\d{2}E\d{2,3}$")
+MOVIE_RE = re.compile(r"^M\d{1,10}$")  # M + TMDB id
 ANCHOR_RE = re.compile(r"^[av]1:[A-Za-z0-9+/]+={0,2}$")
 TOLERANCE = 5.0  # a cut may point up to this far past the stated duration
 
@@ -113,14 +115,31 @@ def validate(doc: Any) -> dict[str, Any]:
         raise TimelineError(f"over {MAX_SOURCES} sources")
     sources = {}
     for src, s in raw_sources.items():
-        if not isinstance(src, str) or not SRC_RE.match(src):
-            raise TimelineError(f"bad source key {src!r} (want SxxEyy)")
+        if not isinstance(src, str) or not (SRC_RE.match(src) or MOVIE_RE.match(src)):
+            raise TimelineError(f"bad source key {src!r} (want SxxEyy or M<tmdb id>)")
         if not isinstance(s, dict):
             raise TimelineError(f"sources.{src}: expected an object")
+        kind = s.get("kind", "episode")
+        if kind == "movie":
+            if not MOVIE_RE.match(src):
+                raise TimelineError(f"sources.{src}: movie sources key on the TMDB id (M27205)")
+            tmdb = s.get("tmdb")
+            if isinstance(tmdb, bool) or not isinstance(tmdb, int) or tmdb <= 0:
+                raise TimelineError(f"sources.{src}.tmdb: expected a positive integer")
+            if src != f"M{tmdb}":
+                raise TimelineError(f"sources.{src}: key and tmdb disagree")
+        elif kind != "episode":
+            raise TimelineError(f"sources.{src}.kind: want episode | movie")
         dur = _num(s.get("duration"), f"sources.{src}.duration")
         if dur <= 0:
             raise TimelineError(f"sources.{src}.duration: must be positive")
         entry: dict[str, Any] = {"duration": dur}
+        if kind == "movie":
+            entry["kind"] = "movie"
+            entry["tmdb"] = s["tmdb"]
+            if s.get("edition") is not None:
+                entry["edition"] = _text(s["edition"], f"sources.{src}.edition", 50,
+                                         required=False)
         if s.get("note") is not None:
             entry["note"] = _text(s["note"], f"sources.{src}.note", MAX_NOTE, required=False)
         sources[src] = entry
@@ -156,6 +175,11 @@ def validate(doc: Any) -> dict[str, Any]:
             if end > sources[src]["duration"] + TOLERANCE:
                 raise TimelineError(f"{what}: end past the source duration")
             clean_seg: dict[str, Any] = {"src": src, "start": start, "end": end}
+            if seg.get("xfade_ms") is not None:
+                xf = _num(seg["xfade_ms"], f"{what}.xfade_ms")
+                if not 0 < xf <= MAX_XFADE_MS:
+                    raise TimelineError(f"{what}.xfade_ms: 0–{MAX_XFADE_MS}")
+                clean_seg["xfade_ms"] = xf
             if seg.get("anchors") is not None:
                 clean_seg["anchors"] = _anchors(seg["anchors"], f"{what}.anchors")
             if seg.get("desc") is not None:

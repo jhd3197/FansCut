@@ -15,12 +15,18 @@ library:
   sonarr:
     url: ""              # e.g. http://sonarr:8989
     api_key: ""
+  radarr:
+    url: ""              # e.g. http://radarr:7878 (movies as timeline sources)
+    api_key: ""
   plex:
     url: ""              # e.g. http://plex:32400
     token: ""
     sections: []         # section keys or titles; empty = every show library
+    movie_sections: []   # empty = every movie library
   folder:
     path: ""             # plain mode: one subfolder per series, no Sonarr needed
+  movies:
+    path: ""             # one subfolder per movie; "{tmdb-555}" in the name sets the id
   # Sonarr/Plex report paths as they see them. If FansCut sees the same files
   # somewhere else, map the prefix (longest match wins).
   path_mappings: []
@@ -56,6 +62,7 @@ ffmpeg:
 render:                  # output cache: an unchanged cut replays the existing file
   keep: true             # default keep flag for new renders
   ephemeral_days: 7      # auto-delete non-kept renders older than this; 0 = never
+  language: ""           # preferred audio language tag (jpn, eng…); "" = first track
 
 automation:              # POST /api/webhooks/sonarr from a Sonarr Webhook connection
   sonarr_webhook: false  # true = a Download/Upgrade event queues detect + render

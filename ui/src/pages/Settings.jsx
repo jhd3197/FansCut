@@ -87,8 +87,16 @@ export function Settings() {
           <button className="btn btn-sm" onClick={() => test('plex', { url: cfg.library.plex.url, token: cfg.library.plex.token })}>Test connection</button>{result('plex')}
         </div>
       </Section>
-      <Section title="Media folder" hint="Plain mode: one subfolder per series, no Sonarr needed.">
-        <div className="form-grid">{text('library.folder.path', 'Folder', { placeholder: '/media' })}</div>
+      <Section title="Radarr" hint="Optional. Movies as timeline sources.">
+        <div className="form-grid">{text('library.radarr.url', 'URL', { placeholder: 'http://radarr:7878' })}
+          {text('library.radarr.api_key', 'API key', { type: 'password', autoComplete: 'off' })}</div>
+        <div className="row" style={{ marginTop: 10 }}>
+          <button className="btn btn-sm" onClick={() => test('radarr', { url: cfg.library.radarr.url, api_key: cfg.library.radarr.api_key })}>Test connection</button>{result('radarr')}
+        </div>
+      </Section>
+      <Section title="Media folder" hint="Plain mode: one subfolder per series, no Sonarr needed. The movies folder is one subfolder per movie; '{tmdb-123}' in the name sets the id.">
+        <div className="form-grid">{text('library.folder.path', 'Series folder', { placeholder: '/media' })}
+          {text('library.movies.path', 'Movies folder', { placeholder: '/movies' })}</div>
         <div className="row" style={{ marginTop: 10 }}>
           <button className="btn btn-sm" onClick={() => test('folder', { path: cfg.library.folder.path })}>Check folder</button>{result('folder')}
         </div>
@@ -110,6 +118,7 @@ export function Settings() {
         <div className="form-grid">{text('paths.output_dir', 'Output folder')}
           <label className="field">Data folder<input className="input" value={cfg.paths.data_dir} disabled /></label>
           {text('render.ephemeral_days', 'Auto-delete after (days)', { type: 'number', min: 0 })}
+          {text('render.language', 'Audio language', { placeholder: 'jpn' })}
           <label className="check" style={{ alignSelf: 'end', paddingBottom: 8 }}>
             <input type="checkbox" checked={cfg.render.keep} onChange={set('render.keep')} /> keep renders by default
           </label>

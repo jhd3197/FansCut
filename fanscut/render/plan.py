@@ -71,7 +71,8 @@ def _meta_escape(text: str) -> str:
 def _join_adjacent(segs: list[Segment]) -> list[Segment]:
     out: list[Segment] = []
     for s in segs:
-        if out and out[-1].file == s.file and abs(out[-1].end - s.start) < 0.001:
+        if (out and out[-1].file == s.file and abs(out[-1].end - s.start) < 0.001
+                and s.xfade_ms == 0):
             out[-1] = Segment(out[-1].episode_id, s.file, out[-1].start, s.end, out[-1].reason)
         else:
             out.append(s)
@@ -122,18 +123,28 @@ def _encoder_args(ff: FFmpegCfg) -> list[str]:
 
 
 def _filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str, Any],
-                   audio: bool, fade: bool, audio_map: dict[str, int] | None = None) -> str:
+                   audio: bool, fade: bool, audio_map: dict[str, int] | None = None,
+                   infos: dict[str, Any] | None = None) -> str:
     w, h = first.get("width") or 1920, first.get("height") or 1080
     fps = round(first.get("fps") or 24, 3) or 24
-    lines, labels = [], []
+    lines, vlabels, alabels = [], [], []
+    # A crossfade lets the outgoing audio run d seconds past its video cut (the
+    # content exists in the source file), so audio and video stay in sync.
+    ext = [0.0] * len(segs)
+    for k in range(1, len(segs)):
+        if segs[k].xfade_ms > 0 and infos:
+            prev = segs[k - 1]
+            room = (infos[prev.file].get("duration") or prev.end) - prev.end
+            ext[k - 1] = min(segs[k].xfade_ms / 1000, max(room, 0.0))
     for k, s in enumerate(segs):
         n = inputs[s.file]
         a_idx = (audio_map or {}).get(s.file, 0)
         vf = (f"[{n}:v:0]trim=start={s.start:.3f}:end={s.end:.3f},setpts=PTS-STARTPTS,"
               f"fps={fps},scale={w}:{h}:force_original_aspect_ratio=decrease,"
               f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p")
-        af = (f"[{n}:a:{a_idx}]atrim=start={s.start:.3f}:end={s.end:.3f},asetpts=PTS-STARTPTS,"
-              "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo")
+        af = (f"[{n}:a:{a_idx}]atrim=start={s.start:.3f}:end={s.end + ext[k]:.3f},"
+              "asetpts=PTS-STARTPTS,aresample=48000,"
+              "aformat=sample_fmts=fltp:channel_layouts=stereo")
         if fade:
             d = round(min(FADE, s.duration / 2), 3)
             starts = k > 0 and segs[k - 1].episode_id != s.episode_id
@@ -145,12 +156,26 @@ def _filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str,
                 vf += f",fade=t=out:st={s.duration - d:.3f}:d={d}"
                 af += f",afade=t=out:st={s.duration - d:.3f}:d={d}"
         lines.append(f"{vf}[v{k}];")
-        labels.append(f"[v{k}]")
+        vlabels.append(f"[v{k}]")
         if audio:
             lines.append(f"{af}[a{k}];")
-            labels.append(f"[a{k}]")
-    lines.append(f"{''.join(labels)}concat=n={len(segs)}:v=1:a={1 if audio else 0}"
-                 f"[v]{'[a]' if audio else ''}")
+            alabels.append((f"[a{k}]", s.xfade_ms))
+    lines.append(f"{''.join(vlabels)}concat=n={len(segs)}:v=1:a=0[v];")
+    if not audio:
+        return "\n".join(lines)[:-1] + "\n"
+    # audio chain: pairwise concat for hard cuts, acrossfade where asked
+    cur = alabels[0][0]
+    for k, (label, xfade) in enumerate(alabels[1:], start=1):
+        nxt = f"[ac{k}]"
+        if xfade > 0:
+            lines.append(f"{cur}{label}acrossfade=d={xfade / 1000:.3f}{nxt};")
+        else:
+            lines.append(f"{cur}{label}concat=n=2:v=0:a=1{nxt};")
+        cur = nxt
+    if len(alabels) == 1:
+        lines.append(f"{alabels[0][0]}anull[a]")
+    else:
+        lines.append(f"{cur}anull[a]")
     return "\n".join(lines) + "\n"
 
 
@@ -174,15 +199,18 @@ def build_plan(
     fade = cut.options.transition == "fade"
     # the concat demuxer cannot pick a different audio track per file
     track_pick = any(i > 0 for i in (audio_map or {}).values())
+    xfade = any(s.xfade_ms > 0 for s in segs)  # audio crossfades need the filter graph
 
     why = compatible(list(infos.values()))
-    if mode == "copy" and (why or fade or track_pick):
+    if mode == "copy" and (why or fade or track_pick or xfade):
         blockers = [why, "fade needs re-encoding" if fade else None,
-                    "audio track selection needs re-encoding" if track_pick else None]
+                    "audio track selection needs re-encoding" if track_pick else None,
+                    "audio crossfades need re-encoding" if xfade else None]
         raise ValueError(f"cannot stream copy: {next(b for b in blockers if b)}")
     if mode == "auto":
         why = why or ("fade transitions need re-encoding" if fade else None)
         why = why or ("audio track selection needs re-encoding" if track_pick else None)
+        why = why or ("audio crossfades need re-encoding" if xfade else None)
         mode = "encode" if why else "copy"
     elif mode == "encode":
         why = "re-encode requested"
@@ -206,7 +234,7 @@ def build_plan(
                "-map_metadata", "1", "-map_chapters", "1", "-c", "copy", *tail, str(tmp)]
     else:
         inputs = {f: n for n, f in enumerate(infos)}
-        files["filter.txt"] = _filter_script(segs, inputs, first, audio, fade, audio_map)
+        files["filter.txt"] = _filter_script(segs, inputs, first, audio, fade, audio_map, infos)
         cmd = [*base]
         for f in inputs:
             cmd += ["-i", f]

@@ -37,12 +37,24 @@ class Episode:
 
 
 @dataclass
+class Movie:
+    key: str  # "<source>:<id>", e.g. radarr:12, plexmovie:3456, foldermovie:Inception (2010)
+    source: str
+    title: str
+    year: int | None = None
+    tmdb_id: int | None = None
+    file: str | None = None  # local path after path mapping; None = not on disk
+    duration: float | None = None  # seconds
+
+
+@dataclass
 class Segment:
     episode_id: str
     file: str
     start: float
     end: float
     reason: str = ""
+    xfade_ms: float = 0.0  # audio crossfade from the previous segment into this one
 
     @property
     def duration(self) -> float:

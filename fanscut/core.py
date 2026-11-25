@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as _dt
+import itertools
 import json
 import tempfile
 import uuid
@@ -498,13 +499,14 @@ class Core:
         if len(dumps(doc)) > tl_recipe.MAX_BYTES:
             raise FansCutError("recipe is over the 2 MB limit")
         clean = tl_recipe.validate(doc)
-        episodes = {e.id for e in self.library.episodes(key) if e.file}
+        files = self._source_files(key, clean)
+        available = {src for src, (f, _d) in files.items() if f}
         tid = uuid.uuid4().hex[:12]
         now = _dt.datetime.now().isoformat(timespec="seconds")
         self.db.execute(
             "INSERT INTO timelines (id, series_key, title, doc, created_at, updated_at)"
             " VALUES (?,?,?,?,?,?)", (tid, key, clean["title"], dumps(clean), now, now))
-        return {**self.get_timeline(tid), "missing": tl_recipe.missing_sources(clean, episodes)}
+        return {**self.get_timeline(tid), "missing": tl_recipe.missing_sources(clean, available)}
 
     def get_timeline(self, tid: str, with_doc: bool = True) -> dict[str, Any]:
         from .timeline import recipe as tl_recipe
@@ -514,8 +516,9 @@ class Core:
             raise NotFoundError(f"timeline {tid} not found")
         out = self._timeline_row(row, with_doc)
         if with_doc:
-            episodes = {e.id for e in self.library.episodes(row["series_key"]) if e.file}
-            out["missing"] = tl_recipe.missing_sources(out["doc"], episodes)
+            files = self._source_files(row["series_key"], out["doc"])
+            available = {src for src, (f, _d) in files.items() if f}
+            out["missing"] = tl_recipe.missing_sources(out["doc"], available)
         return out
 
     def update_timeline(self, tid: str, doc: Any) -> dict[str, Any]:
@@ -548,18 +551,18 @@ class Core:
         if row is None:
             raise NotFoundError(f"timeline {tid} not found")
         doc = json.loads(row["doc"])
-        episodes = {e.id: e for e in self.library.episodes(row["series_key"])}
+        files = self._source_files(row["series_key"], doc)
         cache = anchors_mod.AnchorCache(self.db)
         missing: list[str] = []
         for part in doc["parts"]:
             for seg in part["segments"]:
-                ep = episodes.get(seg["src"])
-                if not ep or not ep.file or not Path(ep.file).is_file():
+                path, _dur = files.get(seg["src"], (None, None))
+                if not path or not Path(path).is_file():
                     if seg["src"] not in missing:
                         missing.append(seg["src"])
                     continue
                 for side in ("start", "end"):
-                    a = anchors_mod.make_anchors(self.cfg.ffmpeg, ep.file, seg[side],
+                    a = anchors_mod.make_anchors(self.cfg.ffmpeg, path, seg[side],
                                                  self.cfg.fingerprint, kinds, cache)
                     seg.setdefault("anchors", {})[side] = a
         out = {**doc, "_missing": sorted(missing)}
@@ -586,8 +589,8 @@ class Core:
         if row is None:
             raise NotFoundError(f"timeline {tid} not found")
         doc = json.loads(row["doc"])
-        episodes = {e.id: e for e in self.library.episodes(row["series_key"])}
-        # every cut point, grouped per source episode
+        files = self._source_files(row["series_key"], doc)
+        # every cut point, grouped per source
         bounds: dict[str, list[dict[str, Any]]] = {}
         for pi, part in enumerate(doc["parts"], start=1):
             for si, seg in enumerate(part["segments"], start=1):
@@ -599,26 +602,46 @@ class Core:
         done = 0
         sources: dict[str, Any] = {}
         for src, blist in sorted(bounds.items()):
-            ep = episodes.get(src)
-            if not ep or not ep.file or not Path(ep.file).is_file():
+            path, _dur = files.get(src, (None, None))
+            entry = doc["sources"].get(src, {})
+            meta = {"kind": entry.get("kind", "episode")}
+            if entry.get("edition"):
+                meta["edition"] = entry["edition"]
+            if not path or not Path(path).is_file():
                 sources[src] = {"matched": False, "reason": "no file in this library",
-                                "boundaries": []}
+                                "boundaries": [], **meta}
                 done += len(blist)
                 continue
             results = []
             for b in blist:
                 if b["anchors"]:
                     r = anchors_mod.find_in_file(self.cfg.ffmpeg, self.cfg.fingerprint,
-                                                 ep.file, b["t"], b["anchors"])
+                                                 path, b["t"], b["anchors"])
                 else:
                     r = {"time": b["t"], "offset": None, "method": "none", "confidence": 0.0}
-                results.append({k: b[k] for k in ("part", "segment", "side", "t")} | r)
+                results.append({k: b[k] for k in ("part", "segment", "side", "t")}
+                               | {"anchored": bool(b["anchors"])} | r)
                 done += 1
                 ctx.progress(done / total, f"{src} {b['side']} of part {b['part']}")
             rec = anchors_mod.reconcile(results)
             matched = sum(1 for r in results if r["method"] != "none")
+            # per-segment: anchors present but nothing matched = not in this edition
+            segs: dict[str, str] = {}
+            for (p, s), group in itertools.groupby(results,
+                                                   key=lambda b: (b["part"], b["segment"])):
+                g = list(group)
+                anchored = [b for b in g if b["anchored"]]
+                found = [b for b in anchored if b["method"] != "none"]
+                if not anchored:
+                    segs[f"{p}:{s}"] = "unanchored"
+                elif not found:
+                    segs[f"{p}:{s}"] = "missing"  # not in your edition
+                elif len(found) < len(anchored):
+                    segs[f"{p}:{s}"] = "partial"
+                else:
+                    segs[f"{p}:{s}"] = "ok"
             sources[src] = {"matched": matched > 0, "matched_boundaries": matched,
-                            "total_boundaries": len(results), **rec}
+                            "total_boundaries": len(results), "segments": segs, **meta, **rec}
         report = {"timeline_id": tid, "sources": sources,
                   "unmatched_sources": [s for s, v in sources.items() if not v["matched"]]}
         now = _dt.datetime.now().isoformat(timespec="seconds")
@@ -630,6 +653,29 @@ class Core:
                 "message": f"synced {total} cut points over {len(sources)} source(s)"}
 
     # -- timeline rendering -------------------------------------------------------
+    def _source_files(self, key: str, doc: dict[str, Any]
+                      ) -> dict[str, tuple[str | None, float | None]]:
+        """Every source in the recipe -> (file, duration) of the user's copy, or None."""
+        episodes = {e.id: e for e in self.library.episodes(key)}
+        out: dict[str, tuple[str | None, float | None]] = {}
+        for src, s in doc["sources"].items():
+            if s.get("kind") == "movie":
+                m = self.library.find_movie(s.get("tmdb"), edition=s.get("edition", ""))
+                out[src] = (m.file, m.duration) if m else (None, None)
+            else:
+                e = episodes.get(src)
+                out[src] = (e.file, e.duration) if e else (None, None)
+        return out
+
+    def _skip_set(self, report: dict[str, Any]) -> set[tuple[int, int]]:
+        """(part, segment) pairs the sync flagged as not in this edition."""
+        out = set()
+        for src in report.get("sources", {}).values():
+            for ps, status in (src.get("segments") or {}).items():
+                if status == "missing":
+                    p, s = ps.split(":")
+                    out.add((int(p), int(s)))
+        return out
     def _timeline_ctx(self, tid: str) -> tuple[dict[str, Any], str, dict[str, Any]]:
         row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
         if row is None:
@@ -658,16 +704,20 @@ class Core:
         from .timeline import render as tl_render
 
         doc, key, report = self._timeline_ctx(tid)
-        episodes = {e.id: e for e in self.library.episodes(key)}
+        files = self._source_files(key, doc)
         series = self.library.get_series(key)
         corr = tl_render.corrected_map(report)
+        skip = self._skip_set(report)
         show = tl_render.show_name(series.title, doc["title"])
         parts = []
         for pi, part in enumerate(doc["parts"]):
-            cut, warns = tl_render.part_cut(doc, pi, episodes, corr)
+            cut, warns = tl_render.part_cut(doc, pi, files, corr, skip)
+            if not cut.segments:
+                parts.append({"part": pi + 1, "title": part["title"], "skipped": True,
+                              "warnings": warns})
+                continue
             amap, awarn = self._audio_map(list({s.file for s in cut.segments}))
-            fname = tl_render.part_filename(show, pi + 1, part["title"], self.cfg.ffmpeg.container)
-            out = self.cfg.output_dir / show / "Season 01" / fname
+            out = self._timeline_part_path(show, doc, pi, part["title"])
             rp = plan.build_plan(cut, self.cfg.ffmpeg, out, Path("<workdir>"), self.prober,
                                  mode=mode, audio_map=amap)
             parts.append({"part": pi + 1, "title": part["title"], "mode": rp.mode,
@@ -675,8 +725,20 @@ class Core:
                           "runtime": round(cut.final_runtime, 1),
                           "segments": [{**asdict(s), "duration": round(s.duration, 3)}
                                        for s in cut.segments],
-                          "command": rp.command, "warnings": warns + awarn + rp.warnings})
-        return {"show": show, "synced": bool(report), "parts": parts}
+                          "command": rp.command, "files": rp.files,
+                          "warnings": warns + awarn + rp.warnings})
+        return {"show": show, "synced": bool(report),
+                "layout": "movie" if len(doc["parts"]) == 1 else "show", "parts": parts}
+
+    def _timeline_part_path(self, show: str, doc: dict[str, Any], pi: int,
+                            part_title: str) -> Path:
+        from .timeline import render as tl_render
+
+        ext = self.cfg.ffmpeg.container
+        if len(doc["parts"]) == 1:  # a single-part edit is a movie to Plex
+            return self.cfg.output_dir / show / f"{show}.{ext}"
+        return (self.cfg.output_dir / show / "Season 01"
+                / tl_render.part_filename(show, pi + 1, part_title, ext))
 
     def submit_timeline_render(self, tid: str, mode: str = "auto", keep: bool | None = None,
                                refresh: bool = False) -> dict[str, Any]:
@@ -698,24 +760,31 @@ class Core:
         keep = payload.get("keep")
         if keep is None:
             keep = self.cfg.render.keep
-        episodes = {e.id: e for e in self.library.episodes(key)}
+        episodes_files = self._source_files(key, doc)
         series = self.library.get_series(key)
         corr = tl_render.corrected_map(report)
+        skip = self._skip_set(report)
         show = tl_render.show_name(series.title, doc["title"])
-        season_dir = self.cfg.output_dir / show / "Season 01"
-        season_dir.mkdir(parents=True, exist_ok=True)
-        (season_dir.parent / "tvshow.nfo").write_text(
-            tl_render.nfo_show(show), encoding="utf-8")
+        movie_mode = len(doc["parts"]) == 1  # single-part edit -> Plex movie folder
+        show_dir = self.cfg.output_dir / show
+        show_dir.mkdir(parents=True, exist_ok=True)
+        if movie_mode:
+            (show_dir / f"{show}.nfo").write_text(tl_render.nfo_movie(show), encoding="utf-8")
+        else:
+            (show_dir / "tvshow.nfo").write_text(tl_render.nfo_show(show), encoding="utf-8")
 
         outputs, cached, warnings = [], 0, []
         self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="tl-render-", dir=self.cfg.data_dir) as tmp:
             for pi, part in enumerate(doc["parts"]):
-                cut, warns = tl_render.part_cut(doc, pi, episodes, corr)
+                cut, warns = tl_render.part_cut(doc, pi, episodes_files, corr, skip)
+                warnings += warns
+                if not cut.segments:
+                    warnings.append(f"part {pi + 1} ({part['title']}): nothing to render")
+                    continue
                 amap, awarn = self._audio_map(list({s.file for s in cut.segments}))
-                warnings += warns + awarn
-                out = season_dir / tl_render.part_filename(show, pi + 1, part["title"],
-                                                           self.cfg.ffmpeg.container)
+                warnings += awarn
+                out = self._timeline_part_path(show, doc, pi, part["title"])
                 workdir = Path(tmp) / f"part{pi + 1}"
                 workdir.mkdir()
                 mode: plan.Mode = payload.get("mode", "auto") or "auto"
@@ -734,12 +803,13 @@ class Core:
                     self.renders.add(h, key, f"{doc['title']} · part {pi + 1}", str(out),
                                      rp.mode, bool(keep), job_id=ctx.job_id)
                     outputs.append(str(out))
-                nfo = tl_render.nfo_episode(part["title"], pi + 1)
-                out.with_suffix(".nfo").write_text(nfo, encoding="utf-8")
+                if not movie_mode:
+                    nfo = tl_render.nfo_episode(part["title"], pi + 1)
+                    out.with_suffix(".nfo").write_text(nfo, encoding="utf-8")
         plex_note = self._plex_refresh()
         return {"show": show, "parts": len(outputs), "cached": cached, "outputs": outputs,
                 "warnings": warnings, "plex": plex_note,
-                "message": f"wrote {len(outputs)} part(s) to {season_dir} ({cached} cached)"}
+                "message": f"wrote {len(outputs)} part(s) to {show_dir} ({cached} cached)"}
 
     def _plex_refresh(self) -> str:
         """Ask Plex to rescan show sections after a timeline render. Best effort."""

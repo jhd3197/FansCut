@@ -30,7 +30,7 @@ WINDOW = 4.0  # seconds each side of the cut point
 AUDIO_FPS = 10  # fingerprint/audio.py frame rate
 VIDEO_FPS = 4
 AUDIO_BER_MAX = 0.32  # accept an audio match under this bit error rate
-VIDEO_DIST_MAX = 10.0  # accept a video match under this mean dHash distance
+VIDEO_DIST_MAX = 5.0  # true dHash matches score <1; unrelated content ~9+ (tuned on fixtures)
 SEARCH = 90.0  # seconds either side of the recipe time to search first
 
 

@@ -38,6 +38,11 @@ class PlexClient(BaseClient):
             "Metadata", []
         )
 
+    def movies(self, section_key: str) -> list[dict[str, Any]]:
+        return self._get(f"/library/sections/{section_key}/all", {"type": 1})["MediaContainer"].get(
+            "Metadata", []
+        )
+
     def refresh_section(self, key: str) -> None:
         """Ask Plex to rescan a library section (best effort, no reply body)."""
         try:
