@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
 import { useCrumbRoot, useLoad, usePageTitle } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
-import { Crumbs, enc, hm, KV, Poster, SRC_COLOURS } from '../components/kit.jsx';
+import { ArtPoster, Crumbs, enc, hm, KV, Poster, SRC_COLOURS } from '../components/kit.jsx';
 import { ErrorBox, Loading } from '../components/ui.jsx';
 import { useApi } from '../lib/store.js';
 
@@ -134,6 +134,34 @@ function Segments({ doc, values, report }) {
   );
 }
 
+// "about 2 h 10 min" for an estimate
+export function about(sec) {
+  if (sec < 90) return 'about a minute';
+  const m = Math.round(sec / 60);
+  if (m < 60) return `about ${m} min`;
+  const h = Math.floor(m / 60);
+  const r = Math.round((m % 60) / 5) * 5;
+  return `about ${h} h${r ? ` ${r} min` : ''}`;
+}
+
+// "Build on this PC": how long, why, and the quick way to make it faster.
+function Estimate({ id, variant }) {
+  const est = useApi(`/timelines/${enc(id)}/estimate${variant ? `?variant=${enc(variant)}` : ''}`, { quiet: true });
+  const e = est.data;
+  if (!e) return null;
+  const encode = e.reasons.some((r) => r.startsWith('re-encoded'));
+  return (
+    <section aria-labelledby="c-est" className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: 620 }}>
+      <h2 id="c-est" style={{ fontSize: 14 }}>Build on this PC: {e.label} · {about(e.seconds)}</h2>
+      <span style={{ fontSize: 13, color: 'var(--text2)' }}>Why: {e.reasons.join(', ')}</span>
+      {encode && !e.gpu && (
+        <span style={{ fontSize: 13 }}>Faster option: turn on the GPU encoder in <Link to="/settings?section=render">Settings</Link>, usually several times quicker.</span>
+      )}
+      <span className="tiny muted">{e.basis === 'measured' ? 'Timed from your last builds on this PC.' : 'From typical speeds; it gets closer after your first build.'}</span>
+    </section>
+  );
+}
+
 function Variants({ view, value, onChange }) {
   const rows = view?.variants || [];
   const offToggles = (view?.toggles || []).filter((t) => !t.enabled);
@@ -198,6 +226,11 @@ export function CutDetail() {
     movieKeys[`${m.tmdb_id}|${m.edition || ''}`] ??= m.key;
     movieKeys[`${m.tmdb_id}|`] ??= m.key;
   }
+  // the films' own posters, in recipe order, for the hero (no text drawn on the art)
+  const artByKey = new Map((movies.data?.movies || []).map((m) => [m.key, m.art]));
+  const heroArt = [...new Set(Object.values(doc.sources).filter((s) => s.kind === 'movie')
+    .map((s) => artByKey.get(movieKeys[`${s.tmdb}|${s.edition || ''}`] || movieKeys[`${s.tmdb}|`]))
+    .filter(Boolean))];
   const buildTo = `/cuts/${enc(id)}/build${variant ? `?variant=${enc(variant)}` : ''}`;
   const kv = Object.entries(credits).filter(([k]) => !NOT_KV.has(k)).map(([k, v]) => [
     CREDIT_LABELS[k] || k.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()),
@@ -209,7 +242,8 @@ export function CutDetail() {
       <Crumbs items={[crumb.root, [doc.title]]} />
       <div className="hero">
         <div style={{ width: 240, flex: 'none' }}>
-          <Poster title={doc.title} sub={subtitle} tag={doc.category || 'Cut'} kind={posterKind(doc)} />
+          <ArtPoster keys={heroArt} layout={heroArt.length > 1 ? 'split' : 'single'}
+            fallback={<Poster title={doc.title} sub={subtitle} kind={posterKind(doc)} bare />} />
         </div>
         <div className="hero-body" style={{ gap: 18 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -224,6 +258,7 @@ export function CutDetail() {
             {url && <a className="btn" href={url} target="_blank" rel="noreferrer">View on GitHub</a>}
           </div>
           <Variants view={variants.data} value={chosen?.id ?? ''} onChange={setVariant} />
+          <Estimate id={id} variant={chosen?.id || ''} />
           {variants.error && <ErrorBox error={variants.error} onRetry={variants.reload} />}
         </div>
       </div>

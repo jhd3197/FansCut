@@ -28,12 +28,21 @@ export function when(iso, now = new Date()) {
 }
 
 // Stage list for the running card, from the job's kind and its latest message.
+export const BUILD_PHASES = ['Check files and cut points', 'Effect segments', 'Cut and join', 'Subtitles and poster', 'Add to Plex'];
+
 export function stages(job) {
   const running = job.status === 'running';
   const msg = job.message || '';
   const at = (names, i) => names.map((n, k) => [n, job.status === 'done' || k < i ? 'Done' : k === i && running ? 'Running' : 'Waiting']);
   switch (job.kind) {
     case 'timeline_render': {
+      // builds report their phase (1–5); a build with no effects skips phase 2
+      if (job.phase?.i) {
+        return BUILD_PHASES.map((n, k) => {
+          const st = job.status === 'done' || k < job.phase.i - 1 ? 'Done' : k === job.phase.i - 1 && running ? 'Running' : 'Waiting';
+          return [n, st, st === 'Running' ? job.phase.detail : ''];
+        });
+      }
       const m = msg.match(/part (\d+)\/(\d+)/);
       const names = ['Check files', 'Cut parts', 'Write poster and add to Plex'];
       if (m) names[1] = `Cut parts (${m[1]} of ${m[2]})`;
@@ -124,10 +133,11 @@ function Running({ job, queued, onCancel, busy }) {
       </div>
       {steps.length > 0 && (
         <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(150px, 100%), 1fr))', gap: 10, fontSize: 13 }}>
-          {steps.map(([name, st]) => (
+          {steps.map(([name, st, detail]) => (
             <li key={name} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <span className={st === 'Done' ? 'c-ready' : st === 'Running' ? 'c-accent' : 'muted'}>{st}</span>
               <span>{name}</span>
+              {detail && <span className="tiny muted" style={{ overflowWrap: 'anywhere' }}>{detail}</span>}
             </li>
           ))}
         </ol>
