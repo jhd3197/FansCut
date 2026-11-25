@@ -104,10 +104,26 @@ function Copies({ doc, missing, report, colour }) {
   );
 }
 
-function Review({ doc, weak, checked, onCheck, onPreview, editTo }) {
+// What the cut point looks like in the user's copy: the last frame kept before an end,
+// the first frame kept after a start.
+function Still({ tid, p }) {
+  const t = p.corrected ?? p.t;
+  const at = p.side === 'end' ? Math.max(t - 0.04, 0) : t;
+  const [failed, setFailed] = useState(false);
+  return (
+    <figure style={{ margin: 0, flex: '0 0 200px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {failed
+        ? <span className="tiny muted" style={{ aspectRatio: '16 / 9', display: 'grid', placeItems: 'center', background: 'var(--poster)', borderRadius: 6 }}>No still</span>
+        : <img src={`/api/timelines/${enc(tid)}/sources/${enc(p.src)}/frame?t=${at.toFixed(3)}`} alt="" loading="lazy"
+          onError={() => setFailed(true)} style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', borderRadius: 6, background: 'var(--poster)' }} />}
+      <figcaption className="tiny muted">{p.side === 'end' ? 'Last frame before the cut' : 'First frame after the cut'} · <span className="mono">{p.src} {fmtTime(t, 1)}</span></figcaption>
+    </figure>
+  );
+}
+
+function Review({ tid, doc, weak, checked, onCheck, onPreview, editTo }) {
   const { points, unanchored, gone } = weak;
   const open = points.filter((p) => !checked[p.key]);
-  const isEpisode = (src) => doc.sources[src]?.kind !== 'movie';
   const shown = points.slice(0, 12);
   return (
     <section aria-labelledby="i-check" className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14, borderColor: open.length ? 'var(--warn-line)' : undefined }}>
@@ -127,14 +143,14 @@ function Review({ doc, weak, checked, onCheck, onPreview, editTo }) {
           {shown.map((p) => {
             const seg = doc.parts[p.part - 1]?.segments[p.segment - 1];
             return (
-              <li key={p.key} style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', padding: '8px 0', borderTop: '1px solid var(--raised)' }}>
+              <li key={p.key} style={{ display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--raised)' }}>
+                <Still tid={tid} p={p} />
                 <span style={{ flex: '1 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
                   <span>{doc.parts.length > 1 ? `Part ${p.part} · ` : ''}Segment {p.segment} {p.side}{seg?.desc ? ` · ${seg.desc}` : ''}</span>
                   <span className="mono tiny c-accent">{p.src} {fmtTime(p.corrected ?? p.t, 1)} · {p.why}</span>
                 </span>
-                {isEpisode(p.src)
-                  ? <button type="button" className="btn btn-sm" onClick={() => onPreview(p.src, p.corrected ?? p.t)}>Play 10 s around it</button>
-                  : <Link className="btn btn-sm" to={editTo}>Open in editor</Link>}
+                <button type="button" className="btn btn-sm" onClick={() => onPreview(p.src, p.corrected ?? p.t)}>Play 10 s around it</button>
+                <Link className="btn btn-sm btn-ghost" to={editTo}>Open in editor</Link>
                 {checked[p.key]
                   ? <button type="button" className="btn btn-sm btn-ghost" onClick={() => onCheck([p.key], false)}>Checked · undo</button>
                   : <button type="button" className="btn btn-sm btn-primary" onClick={() => onCheck([p.key], true)}>Looks right</button>}
@@ -325,7 +341,7 @@ export function Build() {
       )}
 
       {report && (
-        <Review doc={doc} weak={weak} checked={checked} onCheck={onCheck}
+        <Review tid={id} doc={doc} weak={weak} checked={checked} onCheck={onCheck}
           onPreview={(src, t) => setPreview({ src, t })} editTo={editTo} />
       )}
 
@@ -392,7 +408,7 @@ export function Build() {
       {preview && (
         <Dialog title={`${preview.src} at ${fmtTime(preview.t, 1)}`} onClose={() => setPreview(null)}>
           <video controls autoPlay style={{ width: '100%' }}
-            src={`/api/series/${enc(tl.data.series_key)}/episodes/${enc(preview.src)}/preview?t=${preview.t}`} />
+            src={`/api/timelines/${enc(id)}/sources/${enc(preview.src)}/preview?t=${preview.t}`} />
         </Dialog>
       )}
     </div>

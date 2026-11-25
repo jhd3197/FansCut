@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAct, useLoad } from '../lib/hooks.js';
 import { Dialog, ErrorBox, Loading, Notice } from '../components/ui.jsx';
-import { KV } from '../components/kit.jsx';
+import { enc, KV } from '../components/kit.jsx';
 import { useApi } from '../lib/store.js';
 
 const KIND = {
@@ -14,6 +15,34 @@ const KIND = {
   filename: 'Filename',
 };
 const COLOR = { error: 'var(--danger)', warn: 'var(--accent)', info: 'var(--info)' };
+
+// Where "Inspect tracks" goes: the movie or show page the finding is about.
+function refTo(ref) {
+  if (!ref?.key) return null;
+  return ref.kind === 'movie' ? `/movies/${enc(ref.key)}` : `/series/${enc(ref.key)}`;
+}
+
+const cropCheck = (f) => f.check === 'mismatch' && /picture shape|frame size/.test(f.message);
+
+// "Preview crop": a frame of each odd file with the picture area FansCut detected drawn on it.
+function CropPreview({ f, onClose }) {
+  const files = f.files?.length ? f.files : [f.file].filter(Boolean);
+  const [bad, setBad] = useState({});
+  return (
+    <Dialog title={`Picture area · ${f.title}`} onClose={onClose} wide>
+      <p className="muted" style={{ margin: 0 }}>The blue box is the picture FansCut found inside the frame. Anything outside it is black bars.</p>
+      {files.map((file) => (
+        <figure key={file} style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {bad[file]
+            ? <span className="tiny c-warn">No frame: run a whole-library check (no search) first, so this file is in the saved report.</span>
+            : <img src={`/api/library/check/frame?file=${encodeURIComponent(file)}`} alt={`A frame of ${baseName(file)}`}
+              onError={() => setBad((b) => ({ ...b, [file]: true }))} style={{ width: '100%', borderRadius: 6, background: 'var(--poster)' }} />}
+          <figcaption className="file">{file}</figcaption>
+        </figure>
+      ))}
+    </Dialog>
+  );
+}
 
 function baseName(p) {
   return p ? p.split(/[\\/]/).pop() : '';
@@ -71,6 +100,8 @@ export function Health() {
   const [deepFor, setDeepFor] = useState({}); // title -> {busy, result, error}
   const [fixed, setFixed] = useState([]);
   const [confirm, setConfirm] = useState(null);
+  const [open, setOpen] = useState({}); // finding index -> its full list shown
+  const [crop, setCrop] = useState(null);
   const { act, msg, busy, clear } = useAct();
   const elapsed = useElapsed(running);
 
@@ -81,6 +112,7 @@ export function Health() {
     setRunError(null);
     try {
       setResult(await api(`/library/check?q=${encodeURIComponent(q.trim())}&deep=${deep}`));
+      setOpen({});
       setDeepFor({});
     } catch (e) {
       setRunError(e);
@@ -187,6 +219,11 @@ export function Health() {
                       {f.fix && <p className="tiny"><span className="c-ready">Fix</span> {f.fix}</p>}
                       {rn && <p className="tiny mono" style={{ overflowWrap: 'anywhere' }}>→ {baseName(rn.to)}</p>}
                       {f.check === 'incomplete' && deepNote(f)}
+                      {open[i] && f.items?.length > 0 && (
+                        <ul className="tiny mono" style={{ margin: 0, paddingLeft: 18, columns: '8em auto' }}>
+                          {f.items.map((x) => <li key={x}>{x}</li>)}
+                        </ul>
+                      )}
                     </div>
                     <div className="row">
                       {rn && <button className="btn" type="button" disabled={busy || rn.writable === false}
@@ -194,6 +231,12 @@ export function Health() {
                       {f.check === 'incomplete' && (
                         <button className="btn" type="button" disabled={deepFor[f.title]?.busy} onClick={() => readToEnd(f)}>Read to the end</button>
                       )}
+                      {f.check === 'languages' && refTo(f.ref) && <Link className="btn" to={refTo(f.ref)}>Inspect tracks</Link>}
+                      {f.items?.length > 0 && (
+                        <button className="btn" type="button" aria-expanded={Boolean(open[i])}
+                          onClick={() => setOpen((o) => ({ ...o, [i]: !o[i] }))}>{open[i] ? 'Hide list' : 'Show list'}</button>
+                      )}
+                      {cropCheck(f) && <button className="btn" type="button" onClick={() => setCrop(f)}>Preview crop</button>}
                     </div>
                   </div>
                 </article>
@@ -235,6 +278,7 @@ export function Health() {
 
       <System />
 
+      {crop && <CropPreview f={crop} onClose={() => setCrop(null)} />}
       {confirm && (
         <Dialog title="Rename this file?" onClose={() => setConfirm(null)}>
           <p className="mono tiny" style={{ overflowWrap: 'anywhere', margin: 0 }}>{confirm.file}</p>

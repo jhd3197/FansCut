@@ -439,16 +439,16 @@ export function TimelineEdit() {
                 </div>
                 <div className="viewer">
                   <div className="screen">
-                    {viewer && !videoErr && base && !isMovie(viewer.src) ? (
+                    {viewer && !videoErr ? (
                       <video key={`${viewer.src}@${viewer.t}`} controls autoPlay
-                        src={`/api/series/${enc(seriesKey)}/episodes/${enc(viewer.src)}/preview?t=${viewer.t}`}
+                        src={`/api/timelines/${enc(id)}/sources/${enc(viewer.src)}/preview?t=${viewer.t}`}
                         onLoadedMetadata={(e) => { e.currentTarget.currentTime = viewer.t - clipBase; }}
                         onTimeUpdate={(e) => setNow(clipBase + e.currentTarget.currentTime)}
                         onError={() => setVideoErr(true)} />
                     ) : (
                       <span style={{ color: '#666', padding: 16, textAlign: 'center' }}>
                         {!viewer ? 'Select a segment to preview it'
-                          : videoErr || isMovie(viewer.src) || !base ? `No preview for ${viewer.src} (previews play episode files only)` : ''}
+                          : `No preview for ${viewer.src}: it isn't in your library${dirty ? ', or the recipe has unsaved sources (save first)' : ''}`}
                       </span>
                     )}
                   </div>
