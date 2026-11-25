@@ -249,7 +249,8 @@ def test_cut_endpoint(matched):
     assert cut["kept_episodes"] == ["S01E01", "S01E04", "S01E06"]
     assert {s["episode_id"] for s in cut["skipped_episodes"]} == {"S01E02", "S01E03", "S01E05"}
     assert cut["segments"][0] == {"episode_id": "S01E01", "file": "/tv/Harbor Lights/S01E01.mkv",
-                                  "start": 0.0, "end": 1350.0, "reason": "trimmed outro", "duration": 1350.0}
+                                  "start": 0.0, "end": 1350.0, "reason": "trimmed outro",
+                                  "duration": 1350.0, "xfade_ms": 0.0}
     t = cut["totals"]
     assert (t["kept"], t["original_runtime"], t["final_runtime"]) == (3, 8640, 1350 + 1440 * 2)
     assert t["time_saved"] == 8640 - t["final_runtime"]

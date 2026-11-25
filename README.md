@@ -143,6 +143,7 @@ provide them:
 
 1. **`config.yaml`**: simplest. Keep it private; FansCut saves it with mode 0600.
 2. **Environment variables**: `FANSCUT_SONARR_URL`, `FANSCUT_SONARR_API_KEY`,
+   `FANSCUT_RADARR_URL`, `FANSCUT_RADARR_API_KEY`,
    `FANSCUT_PLEX_URL`, `FANSCUT_PLEX_TOKEN`, `FANSCUT_AI_API_KEY`. A non-empty
    variable beats `config.yaml`, and is never written back to it, even when you
    save on the Settings page (those fields show "set by environment"). See
@@ -247,6 +248,15 @@ scratch: parts and segments with drag-to-reorder, preview playback, an AI
 outline from pasted chronology notes, and "Export + anchors" to share the
 result. `fanscut recipe validate --file` checks a recipe offline; the
 companion fanscut-recipes repo runs it in CI.
+
+Timeline sources can also be **movies** (Radarr, Plex movie sections, or a
+movies folder with one subfolder per movie): a source keyed `M<tmdb id>` with
+`{"kind": "movie", "tmdb": 27205, "edition": "extended"}`. If a scene's
+anchors don't exist in your edition (theatrical vs extended), sync marks the
+segment "not in your edition" and the render skips it with a warning.
+Segments accept `xfade_ms` for an audio crossfade that keeps sync by letting
+the outgoing audio run past the video cut. A single-part timeline renders as
+a Plex *movie* folder; multi-part renders as a show.
 
 ## Cut recipes
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ..models import Episode, Series
+from ..models import Episode, Movie, Series
 
 VIDEO_EXT = {".mkv", ".mp4", ".m4v", ".avi", ".webm", ".mov", ".ts"}
 _SXXEXX = re.compile(r"[Ss](\d{1,2})[ ._-]?[Ee](\d{1,4})")
@@ -68,3 +68,22 @@ def scan_series_dir(d: Path) -> list[Episode]:
                     file=str(f)),
         )
     return [eps[k] for k in sorted(eps)]
+
+
+_TMDB_TAG = re.compile(r"\{tmdb[=-](\d+)\}", re.IGNORECASE)
+
+
+def list_movies_folder(root: Path) -> list[Movie]:
+    """One subfolder per movie; '{tmdb-27205}' or '{tmdbid=...}' in the name sets the id."""
+    if not root.is_dir():
+        return []
+    out = []
+    for d in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")):
+        vids = _videos(d)
+        if not vids:
+            continue
+        tmdb = _TMDB_TAG.search(d.name)
+        title, year = clean_title(_TMDB_TAG.sub("", d.name).strip())
+        out.append(Movie(key=f"foldermovie:{d.name}", source="folder", title=title, year=year,
+                         tmdb_id=int(tmdb.group(1)) if tmdb else None, file=str(vids[0])))
+    return out
