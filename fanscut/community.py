@@ -129,7 +129,8 @@ def _entry(raw: Any) -> dict[str, Any]:
             "tagline": _text(raw.get("tagline", ""), 80),
             "sources": sources,
             "variants": [_text(v, 60) for v in raw.get("variants", [])[:20]],
-            "poster": _https(raw["poster"]) if raw.get("poster") else ""}
+            "poster": _https(raw["poster"]) if raw.get("poster") else "",
+            "season": raw["season"] if raw.get("season") in ("christmas", "halloween") else None}
 
 
 class GitHub:

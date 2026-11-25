@@ -1434,11 +1434,13 @@ class Core:
 
     def catalogue(self) -> dict[str, Any]:
         """Every cut in the community index, rated against this library."""
-        from . import community
+        from . import community, suggest
 
         movies, _ = self.library.list_movies()
         series, _ = self.library.list_series()
         tmdb = {m.tmdb_id for m in movies if m.tmdb_id and m.file}
+        genres_of = {m.tmdb_id: m.genres for m in movies if m.tmdb_id and m.genres}
+        genres_of_tv = {s.tvdb_id: s.genres for s in series if s.tvdb_id and s.genres}
         tvdb = {s.tvdb_id for s in series if s.tvdb_id}
         installed = {r["repo"]: r["timeline_id"] for r in self.db.query(
             "SELECT repo, timeline_id FROM installs")}
@@ -1450,6 +1452,11 @@ class Core:
                         "status": status, "missing": missing, "repo": e["repo"],
                         "poster": e["poster"], "installed": installed.get(e["slug"]),
                         "tmdb_ids": [x["tmdb"] for x in e["sources"] if x.get("tmdb")],
+                        "genres": suggest.rank_genres(
+                            [genres_of.get(x.get("tmdb"), []) for x in e["sources"]]
+                            + [genres_of_tv.get(x.get("tvdb"), []) for x in e["sources"]]),
+                        "season": suggest.season_for(
+                            e["name"], [x["title"] for x in e["sources"]], e.get("season")),
                         "tvdb_ids": [x["tvdb"] for x in e["sources"] if x.get("tvdb")],
                         "detail": {"sources": len(e["sources"]), "variants": e["variants"]}})
         return {"index": self.cfg.community.index_url, "cuts": out}
@@ -1737,6 +1744,14 @@ class Core:
                                     missing_files, lang_missing, art_ref(s))
             if sgn:
                 out.append(sgn)
+        # genres and season from the library items each suggestion uses (Discover shelves)
+        items: dict[str, Any] = {m.key: m for m in movies}
+        items.update({s.key: s for s in series_list})
+        for sg in out:
+            used = [items[k] for k in sg.get("keys", []) if k in items]
+            sg["genres"] = suggest.rank_genres([x.genres for x in used])
+            sg["season"] = suggest.season_for(sg.get("name") or sg.get("title") or "",
+                                              [x.title for x in used])
         order = {"ready": 0, "partly": 1, "missing": 2}
         out.sort(key=lambda s: (order.get(s["status"], 3), s["title"]))
         return {"suggestions": out}

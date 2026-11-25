@@ -158,3 +158,9 @@ def test_default_index_is_fanscut_community():
 
     assert CommunityCfg().index_url == INDEX
     assert "fanscut-community/main/index.json" in INDEX
+
+
+def test_index_season_field_is_kept_or_dropped():
+    good = community.validate_index({"schema": 1, "cuts": [{**ENTRY, "season": "christmas"}]})[0]
+    bad = community.validate_index({"schema": 1, "cuts": [{**ENTRY, "season": "easter"}]})[0]
+    assert good["season"] == "christmas" and bad["season"] is None

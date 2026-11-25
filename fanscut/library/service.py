@@ -163,6 +163,7 @@ class Library:
             season_count=sum(1 for x in s.get("seasons") or [] if x.get("seasonNumber", 0) > 0)
             or max(stats.get("seasonCount", 0) - _has_specials(s), 0),
             is_anime=s.get("seriesType") == "anime",
+            genres=[g for g in s.get("genres") or [] if isinstance(g, str)],
             poster=_remote_image(s.get("images"), "poster"),
             backdrop=_remote_image(s.get("images"), "fanart"),
         )
@@ -176,6 +177,7 @@ class Library:
             year=m.get("year"), episode_count=m.get("leafCount", 0),
             episode_total=m.get("leafCount", 0), season_count=m.get("childCount", 0),
             collections=[c.get("tag", "") for c in m.get("Collection", []) if c.get("tag")],
+            genres=[g["tag"] for g in m.get("Genre", []) if g.get("tag")],
             tvdb_id=int(ids["tvdb"]) if ids.get("tvdb", "").isdigit() else None,
             tmdb_id=int(ids["tmdb"]) if ids.get("tmdb", "").isdigit() else None,
             poster=m.get("thumb") or None, backdrop=m.get("art") or None,
@@ -244,6 +246,7 @@ class Library:
         return Movie(key=f"radarr:{m['id']}", source="radarr", title=m.get("title", ""),
                      year=m.get("year") or None, tmdb_id=m.get("tmdbId") or None,
                      tmdb_collection=coll.get("tmdbId") or None,
+                     genres=[g for g in m.get("genres") or [] if isinstance(g, str)],
                      file=self._map(f["path"]) if f.get("path") else None, duration=runtime,
                      poster=_remote_image(m.get("images"), "poster"),
                      backdrop=_remote_image(m.get("images"), "fanart"))
@@ -257,6 +260,7 @@ class Library:
         tmdb = int(ids["tmdb"]) if ids.get("tmdb", "").isdigit() else None
         return Movie(key=f"plexmovie:{m['ratingKey']}", source="plex", title=m.get("title", ""),
                      year=m.get("year"), tmdb_id=tmdb, plex_key=str(m["ratingKey"]),
+                     genres=[g["tag"] for g in m.get("Genre", []) if g.get("tag")],
                      file=self._map(part["file"]) if part.get("file") else None,
                      duration=ms / 1000 if ms else None,
                      collections=[c.get("tag", "") for c in m.get("Collection", [])
@@ -367,6 +371,7 @@ def _merge_series(items: list[Series]) -> list[Series]:
             hit.episode_total = hit.episode_total or s.episode_total
             hit.season_count = hit.season_count or s.season_count
             hit.collections = list(dict.fromkeys([*hit.collections, *s.collections]))
+            hit.genres = hit.genres or s.genres
             hit.poster = hit.poster or s.poster
             hit.backdrop = hit.backdrop or s.backdrop
             if hit.tvdb_id:
@@ -427,6 +432,7 @@ def _merge_movies(items: list[Movie]) -> list[Movie]:
         into.backdrop = into.backdrop or other.backdrop
         into.plex_key = into.plex_key or other.plex_key
         into.tmdb_collection = into.tmdb_collection or other.tmdb_collection
+        into.genres = into.genres or other.genres
 
     for m in items:
         if m.file:

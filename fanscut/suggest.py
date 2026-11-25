@@ -17,6 +17,7 @@ library keys whose posters the tile uses (/api/art/poster/<key>). Status:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -107,3 +108,44 @@ def canon_cut(series_title: str, key: str, n_filler: int, n_episodes: int,
             "missing": missing,
             "detail": {"series_key": key, "filler_episodes": n_filler,
                        "episodes": n_episodes}}
+
+
+# -- Discover shelves: genres and seasons ---------------------------------------------------
+
+SEASONS = ("christmas", "halloween")
+_SEASON_WORDS = {
+    "christmas": re.compile(r"\b(christmas|xmas|santa|grinch|holiday|nutcracker|noel)\b", re.I),
+    "halloween": re.compile(r"\b(halloween|hocus pocus|trick r treat)\b", re.I),
+}
+
+
+def rank_genres(lists: list[list[str]], top: int = 2) -> list[str]:
+    """The genres most of the films share, main genre first on a tie."""
+    score: dict[str, tuple[int, int]] = {}
+    for genres in lists:
+        for i, g in enumerate(genres):
+            n, best = score.get(g, (0, 99))
+            score[g] = (n + 1, min(best, i))
+    return [g for g, _ in sorted(score.items(), key=lambda kv: (-kv[1][0], kv[1][1], kv[0]))][:top]
+
+
+def season_of(texts: list[str], explicit: str | None = None) -> str | None:
+    """"christmas" / "halloween" when a cut belongs to that time of year: said outright
+    (a community entry's `season`), or plain in its name or its films' titles."""
+    if explicit in SEASONS:
+        return explicit
+    blob = " ".join(t for t in texts if t)
+    return next((name for name, rx in _SEASON_WORDS.items() if rx.search(blob)), None)
+
+
+def season_for(name: str, titles: list[str], explicit: str | None = None) -> str | None:
+    """A cut's season: said outright, in its own name, or shared by at least half its
+    films (one Christmas sequel doesn't make Beauty and the Beast a Christmas cut)."""
+    own = season_of([name], explicit)
+    if own or not titles:
+        return own
+    found = [season_of([t]) for t in titles]
+    for season in SEASONS:
+        if found.count(season) * 2 >= len(titles):
+            return season
+    return None
