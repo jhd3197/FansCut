@@ -102,6 +102,7 @@ export function MoviePage() {
           </div>
           <KV rows={rows} />
           <div className="row wrap">
+            <Link className="btn btn-primary" to={`/movies/${encodeURIComponent(m.key)}/scenes`}>Scenes and tags</Link>
             <button type="button" className="btn" onClick={() => setTpl(true)}>New cut with this film</button>
           </div>
           {tpl && <TemplateDialog movies={[m.key]} template="watch-order" onClose={() => setTpl(false)} />}

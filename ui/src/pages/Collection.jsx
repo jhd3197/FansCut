@@ -64,6 +64,7 @@ export function CollectionPage() {
             {order && <button type="button" className="btn btn-primary" onClick={playInOrder} disabled={busy}
               title="Creates a Plex playlist of these films in order">Play in order</button>}
             <button type="button" className="btn" onClick={() => setTpl(true)}>New cut from this collection</button>
+            <Link className="btn" to={`/collections/${enc(data.name)}/scenes`}>Tagged scenes</Link>
           </div>
         </div>
       </div>

@@ -5,6 +5,8 @@ import { Discover } from './pages/Discover.jsx';
 import { LibraryPage } from './pages/LibraryPage.jsx';
 import { CollectionPage } from './pages/Collection.jsx';
 import { MoviePage } from './pages/Movie.jsx';
+import { ScenesPage } from './pages/Scenes.jsx';
+import { CollectionScenesPage } from './pages/CollectionScenes.jsx';
 import { ShowPage } from './pages/Show.jsx';
 import { SeasonPage } from './pages/Season.jsx';
 import { EpisodePage } from './pages/Episode.jsx';
@@ -90,7 +92,9 @@ export function App() {
           <Route path="/" element={<Discover />} />
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/collections/:name" element={<CollectionPage />} />
+          <Route path="/collections/:name/scenes" element={<CollectionScenesPage />} />
           <Route path="/movies/:key" element={<MoviePage />} />
+          <Route path="/movies/:key/scenes" element={<ScenesPage />} />
           <Route path="/series/:key" element={<ShowPage />} />
           <Route path="/series/:key/season/:season" element={<SeasonPage />} />
           <Route path="/series/:key/episode/:eid" element={<EpisodePage />} />
