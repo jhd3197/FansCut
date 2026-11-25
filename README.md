@@ -59,9 +59,21 @@ from the environment instead; see [Secrets](#secrets).*
   the end. Every range is editable in the UI.
 - **Cut planner**: turns all of that into an ordered cut list (with padding,
   merging and a minimum segment length) and tells you how much time you saved.
+- **Custom segments**: per-episode kept ranges ("my own cut") that beat the
+  preset and trims, used exactly as given — for compilations of the parts you
+  actually want.
 - **Renderer**: ffmpeg concat. Stream copy when the files match, re-encode when
   they don't (or when you ask). Runs as a background job with progress and
   cancel. A dry run shows the exact ffmpeg command without running it.
+- **Render cache**: outputs are named after a hash of their inputs, so
+  re-rendering an unchanged cut replays the existing file. Each render has a
+  keep flag; non-kept files are auto-deleted after `render.ephemeral_days`.
+- **Automation**: point a Sonarr Webhook connection at
+  `/api/webhooks/sonarr` and new episodes queue detection + a render
+  automatically (off by default).
+- **AI recipes**: paste the cut notes people publish (what they cut and why,
+  never the video) and a configured LLM turns them into a recipe you review
+  before applying.
 - **Recipes**: export your choices for a series as a small JSON file and import
   them somewhere else.
 - **REST API** under `/api`, docs at `/docs`, health at `/healthz`.
@@ -96,7 +108,8 @@ On Windows use `.\dev.ps1` with the same commands. Without `dev.sh`:
 `pip install -e ".[dev]"`, then `python -m fanscut serve`. To get the UI from
 the Python server, run `npm run build` in `ui/` first.
 
-There's also a small CLI: `fanscut serve | scan | doctor | fillers refresh`.
+There's also a small CLI: `fanscut serve | scan | doctor | fillers refresh |
+recipe ai`.
 
 ## Config
 
@@ -114,6 +127,9 @@ from the environment, see [Secrets](#secrets).
 | `fillers` | where the snapshot lives, where to refresh it from, whether to use Jikan as a fallback |
 | `fingerprint` | sample rate, how many minutes of head/tail to analyse, min/max segment length, match threshold |
 | `ffmpeg` | binaries, `nvenc`, CRF, x264 preset, audio bitrate, `mkv` or `mp4` |
+| `render` | output cache: default keep flag, auto-delete days for non-kept renders |
+| `automation` | Sonarr webhook: accept it, run detection first, keep flag for its renders |
+| `ai` | OpenAI-compatible endpoint (base URL, model, key) for AI recipes |
 | `cut` | default preset, unknown policy, padding, merge gap, minimum segment, transition |
 
 Folder mode expects one subfolder per series, with files named like
@@ -121,14 +137,16 @@ Folder mode expects one subfolder per series, with files named like
 
 ## Secrets
 
-Only four values are secret or environment-specific: the Sonarr URL and API
-key, and the Plex URL and token. You have three ways to provide them:
+Only five values are secret or environment-specific: the Sonarr URL and API
+key, the Plex URL and token, and the AI endpoint key. You have three ways to
+provide them:
 
 1. **`config.yaml`**: simplest. Keep it private; FansCut saves it with mode 0600.
 2. **Environment variables**: `FANSCUT_SONARR_URL`, `FANSCUT_SONARR_API_KEY`,
-   `FANSCUT_PLEX_URL`, `FANSCUT_PLEX_TOKEN`. A non-empty variable beats
-   `config.yaml`, and is never written back to it, even when you save on the
-   Settings page (those fields show "set by environment"). See `.env.example`.
+   `FANSCUT_PLEX_URL`, `FANSCUT_PLEX_TOKEN`, `FANSCUT_AI_API_KEY`. A non-empty
+   variable beats `config.yaml`, and is never written back to it, even when you
+   save on the Settings page (those fields show "set by environment"). See
+   `.env.example`.
 3. **`*_FILE` variables**: the same names with a `_FILE` suffix
    (`FANSCUT_PLEX_TOKEN_FILE=/run/secrets/plex_token`) point at a file whose
    trimmed contents are the value. This is the Docker/Compose secrets style. If
@@ -137,9 +155,8 @@ key, and the Plex URL and token. You have three ways to provide them:
 ### Doppler
 
 Any secret manager that can inject environment variables works; with
-[Doppler](https://www.doppler.com/) create the four `FANSCUT_*` secrets above
+[Doppler](https://www.doppler.com/) create the `FANSCUT_*` secrets above
 in a project and config of your choosing, then:
-
 ```bash
 doppler setup
 doppler run -- ./dev.sh serve
@@ -219,20 +236,43 @@ season + episode number (episodes it can't find are reported and skipped).
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "series": { "title": "Harbor Lights", "mal_id": 900001, "anilist_id": 800001 },
   "preset": "canon_only",
   "options": { "pad": 0.5, "merge_gap": 1.0, "min_segment": 5.0, "keep_intro_first_episode": true },
   "episodes": {
     "S01E02": { "label": "canon" },
     "S01E03": { "include": false },
-    "S01E04": { "trims": { "intro": [62.0, 151.5], "outro": [1330.0, 1440.0], "recap": null } }
+    "S01E04": { "segments": [[620.0, 845.0], [1100.0, 1180.0]],
+                "trims": { "intro": [62.0, 151.5], "outro": [1330.0, 1440.0], "recap": null } }
   }
 }
 ```
 
 `trims` ranges are `[start, end]` in seconds; `null` means "no such range here".
-`label` is one of `canon | mixed | filler | unknown`.
+`label` is one of `canon | mixed | filler | unknown`. `segments` (schema 2) are
+the kept parts of the episode, used exactly as given — the "my own cut" mode.
+Schema 1 files (no `segments`) still import.
+
+## Automation and the render cache
+
+Set `automation.sonarr_webhook: true` and add a Webhook connection in Sonarr
+pointing at `http://<fanscut>:6464/api/webhooks/sonarr`. A Download or Upgrade
+event then queues OP/ED detection for the touched seasons and a render, with
+no button pressing. It never re-renders the same cut twice: outputs are named
+after a hash of everything that shapes them, and an unchanged cut is served
+from the cache. Renders you don't mark "keep" are deleted after
+`render.ephemeral_days` — handy for a watch-and-clean-up flow; manage the
+files on the Jobs page or via `/api/renders`.
+
+## AI recipes
+
+Fan editors often publish their cut lists and reasoning but not the video.
+With `ai.base_url` and `ai.model` set (any OpenAI-compatible endpoint — Ollama
+works fine, no key needed), paste those notes into "AI recipe…" on the series
+page, or run `fanscut recipe ai --series KEY --notes notes.txt`. The LLM turns
+them into a schema-2 recipe; it's validated before anything is applied, and
+every range stays editable afterwards.
 
 ## Limits
 

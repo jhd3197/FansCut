@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { LabelBadge, Progress } from './ui.jsx';
 import { TrimFields } from './TrimFields.jsx';
+import { SegmentsFields } from './SegmentsFields.jsx';
 import { EpisodeTrack } from './Timeline.jsx';
 import { setPath } from '../pages/Settings.jsx';
 
@@ -58,6 +59,39 @@ describe('TrimFields', () => {
     render(<TrimFields episode={ep} save={save} reset={vi.fn()} />);
     fireEvent.click(screen.getByText('Clear'));
     await waitFor(() => expect(save).toHaveBeenCalledWith('intro', null, null));
+  });
+});
+
+describe('SegmentsFields', () => {
+  const ep = { id: 'S01E01', duration: 1440, segments: [[60, 150]] };
+
+  it('adds and saves segments as seconds', async () => {
+    const save = vi.fn().mockResolvedValue();
+    render(<SegmentsFields episode={{ ...ep, segments: [] }} save={save} />);
+    fireEvent.click(screen.getByText('Add segment'));
+    const end = screen.getByLabelText('Segment 1 end');
+    fireEvent.change(end, { target: { value: '2:00' } });
+    fireEvent.blur(end);
+    fireEvent.click(screen.getByText('Save segments'));
+    await waitFor(() => expect(save).toHaveBeenCalledWith([[0, 120]]));
+  });
+
+  it('rejects an inverted range instead of calling the server', async () => {
+    const save = vi.fn();
+    render(<SegmentsFields episode={ep} save={save} />);
+    const end = screen.getByLabelText('Segment 1 end');
+    fireEvent.change(end, { target: { value: '0:30' } });
+    fireEvent.blur(end);
+    fireEvent.click(screen.getByText('Save segments'));
+    await screen.findByRole('alert');
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('clears all segments back to preset mode', async () => {
+    const save = vi.fn().mockResolvedValue();
+    render(<SegmentsFields episode={ep} save={save} />);
+    fireEvent.click(screen.getByText('Clear all'));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(null));
   });
 });
 

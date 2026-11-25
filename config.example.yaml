@@ -53,6 +53,21 @@ ffmpeg:
   audio_bitrate: 192k
   container: mkv         # mkv | mp4
 
+render:                  # output cache: an unchanged cut replays the existing file
+  keep: true             # default keep flag for new renders
+  ephemeral_days: 7      # auto-delete non-kept renders older than this; 0 = never
+
+automation:              # POST /api/webhooks/sonarr from a Sonarr Webhook connection
+  sonarr_webhook: false  # true = a Download/Upgrade event queues detect + render
+  auto_detect: true      # run OP/ED detection on the affected seasons first
+  keep: true             # keep flag for webhook-triggered renders
+
+ai:                      # recipe generation from community notes (OpenAI-compatible)
+  base_url: ""           # e.g. http://localhost:11434/v1 (Ollama)
+  api_key: ""            # prefer the FANSCUT_AI_API_KEY env var over this file
+  model: ""              # e.g. qwen2.5:7b
+  timeout: 120
+
 cut:                     # defaults for every series; each series can override
   preset: canon_only     # canon_only | canon_mixed | everything | custom
   unknown_policy: keep   # episodes with no label: keep | skip
