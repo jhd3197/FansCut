@@ -83,6 +83,8 @@ The full docs live in [`docs/`](docs/index.md) and build with MkDocs
 - [Filler data](docs/filler-data.md): where labels come from, licensing caveat
 - [OP/ED and recap trimming](docs/trimming.md)
 - [Cut recipes](docs/cut-recipes.md) and [AI recipes](docs/ai-recipes.md)
+- [Scene tagging and X-Ray](docs/scene-tagging.md): tag scenes by hand or with
+  AI (`fanscut mcp` for Claude Code), cast, cuts from tags
 - [Timeline recipes](docs/timelines.md): chronological edits, movies, toggles,
   edit operations
 - [Discover and community cuts](docs/discover.md)

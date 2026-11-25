@@ -50,6 +50,7 @@ library:
 catalogues:
   offline: false         # true = never call AniList/Jikan/GitHub, use caches only
   cache_days: 14
+  tmdb_api_key: ""       # cast for films outside Plex; prefer FANSCUT_TMDB_API_KEY
 
 fillers:
   dir: ""                # default <data_dir>/fillers; every *.json in it is read
@@ -83,10 +84,11 @@ automation:              # POST /api/webhooks/sonarr from a Sonarr Webhook conne
   auto_detect: true      # run OP/ED detection on the affected seasons first
   keep: true             # keep flag for webhook-triggered renders
 
-ai:                      # recipe generation from community notes (OpenAI-compatible)
-  base_url: ""           # e.g. http://localhost:11434/v1 (Ollama)
+ai:                      # recipes from notes and scene tagging, through Prompture
+  model: ""              # e.g. claude/claude-opus-5-5, ollama/qwen3:8b, or a bare name with base_url
+  vision_model: ""       # looks at frame grids when tagging; empty = model (e.g. ollama/qwen3-vl:8b)
+  base_url: ""           # OpenAI-compatible endpoint for a bare model name, e.g. http://localhost:11434/v1
   api_key: ""            # prefer the FANSCUT_AI_API_KEY env var over this file
-  model: ""              # e.g. qwen2.5:7b
   timeout: 120
 
 cut:                     # defaults for every series; each series can override

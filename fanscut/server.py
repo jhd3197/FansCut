@@ -29,6 +29,7 @@ from .routes import (
     library,
     plex,
     renders,
+    scenes,
     suggestions,
     system,
     timeline,
@@ -201,7 +202,7 @@ def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
 
     for r in (auth.router, system.router, library.router, cut.router, jobs.router, fillers.router,
               renders.router, webhooks.router, timeline.router, suggestions.router,
-              browse.router, plex.router):
+              browse.router, plex.router, scenes.router):
         app.include_router(r)
 
     ui = ui_dir()

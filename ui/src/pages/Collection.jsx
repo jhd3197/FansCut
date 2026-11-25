@@ -67,6 +67,7 @@ export function CollectionPage() {
             {order && <button type="button" className="btn btn-primary" onClick={playInOrder} disabled={busy}
               title="Creates a Plex playlist of these films in order">Play in order</button>}
             <Link className="btn" to={newCutTo({ movies: data.films.filter((f) => f.on_disk).map((f) => f.key) })} state={from}>New cut from this collection</Link>
+            <Link className="btn" to={`/collections/${enc(data.name)}/scenes`}>Tagged scenes</Link>
           </div>
         </div>
       </div>

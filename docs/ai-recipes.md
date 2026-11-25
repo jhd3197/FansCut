@@ -1,8 +1,9 @@
 # AI recipes
 
 Fan editors often publish their cut lists and reasoning but not the video.
-With `ai.base_url` and `ai.model` set (any OpenAI-compatible endpoint; Ollama
-works fine, no key needed), paste those notes into "AI recipe…" on the series
+With `ai.model` set (a [Prompture](https://github.com/jhd3197/prompture) model
+such as `claude/claude-opus-5-5` or `ollama/qwen3:8b`, or a bare name plus
+`ai.base_url` for any OpenAI-compatible endpoint), paste those notes into "AI recipe…" on the series
 page, or run:
 
 ```bash

@@ -3,7 +3,6 @@
 import json
 
 import pytest
-import responses
 
 from fanscut import ai
 from fanscut.config import AICfg
@@ -38,24 +37,19 @@ def _episodes():
             for n in range(1, 7)]
 
 
-def test_generate_recipe_validates_llm_output():
+def test_generate_recipe_validates_llm_output(fake_llm):
     cfg = AICfg(base_url=LLM, model="test-model")
-    with responses.RequestsMock() as rsps:
-        rsps.add(responses.POST, f"{LLM}/chat/completions",
-                 json={"choices": [{"message": {"content": json.dumps(RECIPE)}}]})
+    with fake_llm.answering(json.dumps(RECIPE)):
         doc = ai.generate_recipe(cfg, _series(), _episodes(), "drop ep 2; keep 0:10-1:35 of ep 4")
-        assert json.loads(rsps.calls[0].request.body)["model"] == "test-model"
+        assert fake_llm.models == ["openai/test-model"]
     assert doc["episodes"]["S01E04"]["segments"] == [[10.0, 95.0]]
 
 
-def test_generate_recipe_rejects_bad_llm_output():
+def test_generate_recipe_rejects_bad_llm_output(fake_llm):
     cfg = AICfg(base_url=LLM, model="test-model")
     bad = {"schema": 2, "episodes": {"S01E01": {"label": "epic"}}}
-    with responses.RequestsMock() as rsps:
-        rsps.add(responses.POST, f"{LLM}/chat/completions",
-                 json={"choices": [{"message": {"content": json.dumps(bad)}}]})
-        with pytest.raises(Exception, match="label"):
-            ai.generate_recipe(cfg, _series(), _episodes(), "notes")
+    with fake_llm.answering(json.dumps(bad)), pytest.raises(Exception, match="label"):
+        ai.generate_recipe(cfg, _series(), _episodes(), "notes")
 
 
 def test_unconfigured_or_empty_input():
@@ -65,13 +59,11 @@ def test_unconfigured_or_empty_input():
         ai.generate_recipe(AICfg(base_url=LLM, model="m"), _series(), _episodes(), "  ")
 
 
-def test_ai_recipe_endpoint(client, app_cfg):
+def test_ai_recipe_endpoint(client, app_cfg, fake_llm):
     app_cfg.ai.base_url = LLM
     app_cfg.ai.model = "test-model"
     client.get(f"{E}/episodes")  # warm the 30s library cache before the nested mock blocks Sonarr
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        rsps.add(responses.POST, f"{LLM}/chat/completions",
-                 json={"choices": [{"message": {"content": json.dumps(RECIPE)}}]})
+    with fake_llm.answering(json.dumps(RECIPE)):
         r = client.post(f"{E}/recipe/ai", json={"notes": "drop episode 2, keep 0:10-1:35 of ep 4"})
         assert r.status_code == 200
         assert r.json()["recipe"]["episodes"]["S01E04"]["segments"] == [[10.0, 95.0]]
@@ -82,3 +74,17 @@ def test_ai_recipe_endpoint(client, app_cfg):
     eps = episodes(client)
     assert eps["S01E02"]["include"] is False
     assert eps["S01E04"]["segments"] == [[10.0, 95.0]]
+
+
+def test_model_spec_maps_config_to_prompture():
+    assert ai.model_spec(AICfg(model="claude/claude-opus-5-5", api_key="k")) == \
+        ("claude/claude-opus-5-5", {"api_key": "k"})
+    assert ai.model_spec(AICfg(base_url=LLM + "/", model="qwen3:8b")) == \
+        ("openai/qwen3:8b", {"base_url": LLM, "api_key": "not-needed"})
+    assert ai.model_spec(AICfg(model="ollama/qwen3-vl:8b", base_url="http://box:11434")) == \
+        ("ollama/qwen3-vl:8b", {"endpoint": "http://box:11434"})
+    cfg = AICfg(model="claude/claude-opus-5-5", vision_model="ollama/qwen3-vl:8b")
+    assert ai.model_spec(cfg, vision=True)[0] == "ollama/qwen3-vl:8b"
+    assert ai.model_spec(cfg)[0] == "claude/claude-opus-5-5"
+    with pytest.raises(ai.AIError, match="provider prefix"):
+        ai.model_spec(AICfg(model="qwen3:8b"))

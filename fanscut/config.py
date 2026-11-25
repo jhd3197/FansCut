@@ -33,6 +33,7 @@ ENV_FIELDS = {
     "FANSCUT_PLEX_TOKEN": "library.plex.token",
     "FANSCUT_AI_API_KEY": "ai.api_key",
     "FANSCUT_GITHUB_TOKEN": "community.github_token",
+    "FANSCUT_TMDB_API_KEY": "catalogues.tmdb_api_key",
 }
 
 
@@ -111,6 +112,7 @@ class ArtCfg(BaseModel):
 class CataloguesCfg(BaseModel):
     offline: bool = False
     cache_days: int = 14
+    tmdb_api_key: str = Secret()  # cast for films outside Plex; prefer FANSCUT_TMDB_API_KEY
 
 
 class FillersCfg(BaseModel):
@@ -212,9 +214,13 @@ class CommunityCfg(BaseModel):
 
 
 class AICfg(BaseModel):
-    base_url: str = ""  # OpenAI-compatible endpoint, e.g. http://localhost:11434/v1 (Ollama)
-    api_key: str = Secret()  # secret; prefer FANSCUT_AI_API_KEY over the config file
+    # A Prompture model string ("claude/claude-opus-5-5", "ollama/qwen3-vl:8b",
+    # "google/gemini-2.5-flash"), or a bare name for the OpenAI-compatible
+    # endpoint in base_url (e.g. http://localhost:11434/v1 for Ollama).
     model: str = ""
+    vision_model: str = ""  # model that looks at frames when tagging; empty = model
+    base_url: str = ""
+    api_key: str = Secret()  # secret; prefer FANSCUT_AI_API_KEY over the config file
     timeout: int = 120
 
 

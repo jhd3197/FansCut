@@ -188,3 +188,21 @@ def test_folder_scan_sorts_temp_files_last():
 
     assert _TEMP.search("Film.tmp.mkv") and _TEMP.search("Film.partial.mkv")
     assert _TEMP.search("muxing.mkv") and not _TEMP.search("Film.tmpl.mkv")
+
+
+def test_harry_potter_groups_all_eight_films_even_when_plex_tags_three():
+    from fanscut.browse import collection_groups
+    from fanscut.models import Movie
+
+    films = [(671, "Harry Potter and the Sorcerer's Stone", 2001, []),
+             (672, "Harry Potter and the Chamber of Secrets", 2002, ["Popular on My Server"]),
+             (673, "Harry Potter and the Prisoner of Azkaban", 2004, ["Harry Potter"]),
+             (674, "Harry Potter and the Goblet of Fire", 2005, []),
+             (675, "Harry Potter and the Order of the Phoenix", 2007, ["Harry Potter"]),
+             (767, "Harry Potter and the Half-Blood Prince", 2009, ["Harry Potter"]),
+             (12444, "Harry Potter and the Deathly Hallows: Part 1", 2010, []),
+             (12445, "Harry Potter and the Deathly Hallows: Part 2", 2011, [])]
+    movies = [Movie(key=f"plexmovie:{t}", source="plex", title=n, year=y, tmdb_id=t, file=f"/m/{t}.mkv",
+                    collections=c) for t, n, y, c in films]
+    hp = next(g for g in collection_groups(movies) if g["name"] == "Harry Potter")
+    assert [m.tmdb_id for m in hp["movies"]] == [t for t, *_ in films]

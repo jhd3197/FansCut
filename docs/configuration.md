@@ -24,7 +24,7 @@ The Docker image reads `/config/config.yaml`; start from
 | `ffmpeg` | binaries, `nvenc`, CRF, x264 preset, audio bitrate, `mkv` or `mp4` |
 | `render` | output cache: default keep flag, auto-delete days for non-kept renders, preferred audio language |
 | `automation` | Sonarr webhook: accept it, run detection first, keep flag for its renders |
-| `ai` | OpenAI-compatible endpoint (base URL, model, key) for AI recipes |
+| `ai` | the Prompture model (and vision model) for AI recipes and scene tagging |
 | `cut` | default preset, unknown policy, padding, merge gap, minimum segment, transition |
 | `schedule` | cron schedules for the background tasks |
 | `notify` | where to send a message when a job is done or failed |
@@ -130,6 +130,7 @@ somewhere else, map the prefix in `path_mappings` (the longest match wins).
 catalogues:
   offline: false         # true = never call AniList/Jikan/GitHub, use caches only
   cache_days: 14
+  tmdb_api_key: ""       # cast for films outside Plex; prefer FANSCUT_TMDB_API_KEY
 
 fillers:
   dir: ""                # default <data_dir>/fillers; every *.json in it is read
@@ -190,14 +191,19 @@ See [Automation](automation.md).
 ## ai
 
 ```yaml
-ai:                      # recipe generation from community notes (OpenAI-compatible)
-  base_url: ""           # e.g. http://localhost:11434/v1 (Ollama)
+ai:                      # recipes from notes and scene tagging, through Prompture
+  model: ""              # e.g. claude/claude-opus-5-5, ollama/qwen3:8b, or a bare name with base_url
+  vision_model: ""       # looks at frame grids when tagging; empty = model (e.g. ollama/qwen3-vl:8b)
+  base_url: ""           # OpenAI-compatible endpoint for a bare model name, e.g. http://localhost:11434/v1
   api_key: ""            # prefer the FANSCUT_AI_API_KEY env var over this file
-  model: ""              # e.g. qwen2.5:7b
   timeout: 120
 ```
 
-See [AI recipes](ai-recipes.md).
+`model` is a [Prompture](https://github.com/jhd3197/prompture) model string;
+provider keys (`ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, ...) come from the
+environment as Prompture reads them. A bare name such as `qwen2.5:7b` with
+`base_url` set keeps the old OpenAI-compatible setup working. See
+[AI recipes](ai-recipes.md) and [Scene tagging](scene-tagging.md).
 
 ## cut
 
@@ -256,7 +262,8 @@ provide them:
 1. **`config.yaml`**: simplest. Keep it private; FansCut saves it with mode 0600.
 2. **Environment variables**: `FANSCUT_SONARR_URL`, `FANSCUT_SONARR_API_KEY`,
    `FANSCUT_RADARR_URL`, `FANSCUT_RADARR_API_KEY`,
-   `FANSCUT_PLEX_URL`, `FANSCUT_PLEX_TOKEN`, `FANSCUT_AI_API_KEY`. A non-empty
+   `FANSCUT_PLEX_URL`, `FANSCUT_PLEX_TOKEN`, `FANSCUT_AI_API_KEY`,
+   `FANSCUT_TMDB_API_KEY`. A non-empty
    variable beats `config.yaml`, and is never written back to it, even when you
    save on the Settings page (those fields show "set by environment"). See
    `.env.example`.

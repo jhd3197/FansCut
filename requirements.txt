@@ -7,3 +7,5 @@ fastapi>=0.110
 uvicorn>=0.27
 pydantic>=2
 numpy>=1.26
+prompture[media]>=1.19.1
+pillow>=10.1                 # contact sheets for scene tagging

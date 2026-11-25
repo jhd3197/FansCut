@@ -110,6 +110,10 @@ class Core:
                     "timeline_sync": self._job_timeline_sync,
                     "timeline_render": self._job_timeline_render,
                     "find_similar": self._job_find_similar}
+        from .scenes.service import SceneService
+
+        self.scenes = SceneService(self)
+        handlers.update({"scene_index": self.scenes.job_index, "scene_tag": self.scenes.job_ai})
         self.worker = Worker(self.jobs, {k: self._pin(fn) for k, fn in handlers.items()},
                              on_finish=self._job_finished)
         self._apply_lock = threading.Lock()
@@ -2010,8 +2014,7 @@ class Core:
     def ai_recipe(self, key: str, notes: str, apply: bool = False) -> dict[str, Any]:
         """Community cut notes -> validated recipe (schema 2); optionally applied."""
         series = self.library.get_series(key)
-        doc = ai_mod.generate_recipe(self.cfg.ai, series, self.library.episodes(key),
-                                     notes, session=self.session)
+        doc = ai_mod.generate_recipe(self.cfg.ai, series, self.library.episodes(key), notes)
         out: dict[str, Any] = {"recipe": doc}
         if apply:
             out["import"] = self.import_recipe(key, doc)
@@ -2020,8 +2023,7 @@ class Core:
     def ai_outline(self, key: str, notes: str) -> dict[str, Any]:
         """Chronology notes -> scene outline (parts with placeholder segments)."""
         series = self.library.get_series(key)
-        outline = ai_mod.generate_outline(self.cfg.ai, series, self.library.episodes(key),
-                                          notes, session=self.session)
+        outline = ai_mod.generate_outline(self.cfg.ai, series, self.library.episodes(key), notes)
         known = {e.id for e in self.library.episodes(key)}
         for part in outline:
             part["scenes"] = [s for s in part["scenes"] if s["src"] in known]

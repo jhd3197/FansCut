@@ -403,10 +403,12 @@ export function Settings() {
 
           <section id="ai" aria-labelledby="ai-h">
             <h2 id="ai-h" className="sh">AI</h2>
-            <p className="muted tiny" style={{ margin: '0 0 8px' }}>Any OpenAI-compatible chat endpoint (Ollama, LM Studio, OpenAI…). Turns community cut notes into a recipe.</p>
-            {text('ai.base_url', 'Base URL', null, { placeholder: 'http://localhost:11434/v1', className: 'inp mono' })}
-            {text('ai.model', 'Model', null, { placeholder: 'qwen2.5:7b' })}
+            <p className="muted tiny" style={{ margin: '0 0 8px' }}>Turns cut notes into recipes and tags scenes. Models go through Prompture: claude/…, google/…, ollama/…, or a bare name for the OpenAI-compatible endpoint in Base URL.</p>
+            {text('ai.model', 'Model', 'Provider and name, e.g. claude/claude-opus-5-5 or ollama/qwen3:8b.', { placeholder: 'ollama/qwen3:8b', className: 'inp mono' })}
+            {text('ai.vision_model', 'Vision model', 'Looks at frame grids when tagging scenes. Empty uses Model.', { placeholder: 'ollama/qwen3-vl:8b', className: 'inp mono' })}
+            {text('ai.base_url', 'Base URL', 'Only for a bare model name (OpenAI-compatible) or a remote Ollama.', { placeholder: 'http://localhost:11434/v1', className: 'inp mono' })}
             {text('ai.api_key', 'API key', 'Prefer FANSCUT_AI_API_KEY over the config file.', { type: 'password', autoComplete: 'off' })}
+            {text('catalogues.tmdb_api_key', 'TMDB key', 'Cast for films outside Plex (scene tagging). Prefer FANSCUT_TMDB_API_KEY.', { type: 'password', autoComplete: 'off' })}
             {text('ai.timeout', 'Timeout', 'Seconds.', { type: 'number', min: 5, className: 'inp mono', style: { width: 90 } })}
           </section>
 
