@@ -6,6 +6,7 @@ from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from ..core import UNSET, WHOLE
@@ -156,6 +157,25 @@ class DetectBody(BaseModel):
 @router.post("/series/{key}/detect-trims", status_code=202)
 def detect_trims(core: CoreDep, key: str, body: DetectBody) -> dict[str, Any]:
     return core.submit_detect(key, body.season)
+
+
+# -- preview clips and scene search -----------------------------------------------
+@router.get("/series/{key}/episodes/{episode_id}/preview")
+def preview(core: CoreDep, key: str, episode_id: str, t: float = Query(ge=0)) -> FileResponse:
+    """10 s around t, for reviewing a cut point in the browser."""
+    return FileResponse(core.preview_clip(key, episode_id, t), media_type="video/mp4")
+
+
+class SimilarBody(BaseModel):
+    episode_id: str
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+
+
+@router.post("/series/{key}/find-similar", status_code=202)
+def find_similar(core: CoreDep, key: str, body: SimilarBody) -> dict[str, Any]:
+    """Find this range's audio in the rest of the series (flashbacks, reused scenes)."""
+    return core.submit_find_similar(key, body.episode_id, body.start, body.end)
 
 
 # -- custom segments ("my own cut") ---------------------------------------------

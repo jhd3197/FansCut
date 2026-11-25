@@ -59,7 +59,8 @@ class Core:
         self.renders = RenderStore(db)
         self.worker = Worker(self.jobs, {"render": self._job_render, "detect": self._job_detect,
                                          "timeline_sync": self._job_timeline_sync,
-                                         "timeline_render": self._job_timeline_render})
+                                         "timeline_render": self._job_timeline_render,
+                                         "find_similar": self._job_find_similar})
         self.apply_config(cfg)
 
     def apply_config(self, cfg: Config) -> None:
@@ -757,6 +758,74 @@ class Core:
         except Exception as exc:  # noqa: BLE001 - refresh is a courtesy, never fatal
             return f"plex refresh failed: {exc}"
 
+    # -- preview clips (sync review and the timeline editor) -----------------------
+    def preview_clip(self, key: str, episode_id: str, t: float) -> Path:
+        """10 s around t (5 s each side) as a tiny mp4, cached in data_dir/previews."""
+        import hashlib
+
+        episodes = {e.id: e for e in self.library.episodes(key)}
+        ep = episodes.get(episode_id)
+        if not ep or not ep.file or not Path(ep.file).is_file():
+            raise NotFoundError(f"{episode_id} has no file in this library")
+        st = Path(ep.file).stat()
+        raw = f"{ep.file}|{st.st_mtime}|{st.st_size}|{t:.2f}"
+        digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
+        out = self.cfg.data_dir / "previews" / f"{digest}.mp4"
+        if not out.is_file():
+            out.parent.mkdir(parents=True, exist_ok=True)
+            tmp = out.with_suffix(".tmp.mp4")
+            ffmpeg.run_capture(
+                [self.cfg.ffmpeg.binary, "-v", "error", "-ss", f"{max(t - 5, 0):.3f}", "-t", "10",
+                 "-i", ep.file, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                 "-vf", "scale=640:-2", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
+                 "-movflags", "+faststart", str(tmp)])
+            tmp.replace(out)
+        return out
+
+    # -- find a scene in other episodes --------------------------------------------
+    def submit_find_similar(self, key: str, episode_id: str, start: float, end: float
+                            ) -> dict[str, Any]:
+        episodes = {e.id: e for e in self.library.episodes(key)}
+        ep = episodes.get(episode_id)
+        if not ep or not ep.file:
+            raise NotFoundError(f"{episode_id} has no file in this library")
+        if end - start < 2:
+            raise FansCutError("the range must be at least 2 seconds")
+        return self.worker.submit("find_similar", f"Find {episode_id} {start:.0f}s scene",
+                                  {"series_key": key, "episode_id": episode_id,
+                                   "start": start, "end": end})
+
+    def _job_find_similar(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+        """Locate a range's audio in every other episode (flashbacks, reused footage)."""
+        from .fingerprint.audio import features
+        from .fingerprint.match import find_shared
+
+        key, eid = payload["series_key"], payload["episode_id"]
+        fp, ff = self.cfg.fingerprint, self.cfg.ffmpeg
+        episodes = [e for e in self.library.episodes(key) if e.file and e.duration]
+        src = next(e for e in episodes if e.id == payload["episode_id"])
+        assert src.file is not None
+        query = features(ffmpeg.decode_audio(ff, src.file, payload["start"],
+                                             payload["end"] - payload["start"], fp.sample_rate),
+                         fp.sample_rate)
+        min_len = max((payload["end"] - payload["start"]) * 0.8, 5.0)
+        max_len = (payload["end"] - payload["start"]) * 2
+        hits = []
+        for i, e in enumerate(episodes):
+            ctx.progress(i / len(episodes), e.id)
+            if e.id == src.id:
+                continue
+            assert e.file is not None and e.duration is not None
+            hay = features(ffmpeg.decode_audio(ff, e.file, 0, e.duration, fp.sample_rate),
+                           fp.sample_rate)
+            for m in find_shared(query, hay, 0.7, min_len, max_len):
+                hits.append({"episode_id": e.id, "start": round(m.b_start, 2),
+                             "end": round(m.b_end, 2)})
+        hits.sort(key=lambda h: (h["episode_id"], h["start"]))
+        return {"matches": hits,
+                "message": f"{len(hits)} possible repeat(s) of {eid} "
+                           f"{payload['start']:.0f}–{payload['end']:.0f}s"}
+
     # -- AI-assisted recipes ----------------------------------------------------
     def ai_recipe(self, key: str, notes: str, apply: bool = False) -> dict[str, Any]:
         """Community cut notes -> validated recipe (schema 2); optionally applied."""
@@ -767,6 +836,16 @@ class Core:
         if apply:
             out["import"] = self.import_recipe(key, doc)
         return out
+
+    def ai_outline(self, key: str, notes: str) -> dict[str, Any]:
+        """Chronology notes -> scene outline (parts with placeholder segments)."""
+        series = self.library.get_series(key)
+        outline = ai_mod.generate_outline(self.cfg.ai, series, self.library.episodes(key),
+                                          notes, session=self.session)
+        known = {e.id for e in self.library.episodes(key)}
+        for part in outline:
+            part["scenes"] = [s for s in part["scenes"] if s["src"] in known]
+        return {"outline": [p for p in outline if p["scenes"]]}
 
     # -- recipes --------------------------------------------------------------
     def export_recipe(self, key: str) -> dict[str, Any]:
