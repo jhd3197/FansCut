@@ -129,6 +129,8 @@ class RenderCfg(BaseModel):
     keep: bool = True  # default for new renders; False = evict automatically
     ephemeral_days: int = 7  # sweep deletes non-kept renders older than this; 0 = never
     language: str = ""  # preferred audio language tag (e.g. jpn, eng); "" = first track
+    effectcraft_cli: str = ""  # path to effectcraft-cli; "" = grades stay in ffmpeg
+    effectcraft_grade: bool = True  # route segment grades through EffectCraft when it's set
 
 
 class AutomationCfg(BaseModel):

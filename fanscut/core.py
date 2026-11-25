@@ -704,6 +704,26 @@ class Core:
                 amap[f] = idx
         return amap, warnings
 
+    def _through_effectcraft(self, cut: Any, workdir: Path, ctx: JobContext, pi: int) -> Any:
+        """Grade segments through EffectCraft when it's configured; others untouched."""
+        from dataclasses import replace
+
+        from .render import effectcraft
+
+        cli = self.cfg.render.effectcraft_cli
+        if not cli or not self.cfg.render.effectcraft_grade:
+            return cut
+        todo = [i for i, s in enumerate(cut.segments)
+                if ((s.fx or {}).get("video") or {}).get("grade") and not s.fx.get("speed")]
+        if not todo:
+            return cut
+        segs = list(cut.segments)
+        for n, i in enumerate(todo, start=1):
+            ctx.progress(0.0, f"part {pi + 1}: EffectCraft grade {n}/{len(todo)}")
+            segs[i] = effectcraft.render_segment(cli, self.cfg.ffmpeg, segs[i],
+                                                 self.prober(segs[i].file), workdir, f"ec{i}")
+        return replace(cut, segments=segs)
+
     def _hdr_params(self, path: str) -> str:
         return ffmpeg.hdr10_params(self.cfg.ffmpeg, path)
 
@@ -851,6 +871,11 @@ class Core:
                 else:
                     ctx.progress(pi / len(doc["parts"]),
                                  f"part {pi + 1}/{len(doc['parts'])}: {part['title']}")
+                    graded = self._through_effectcraft(cut, workdir, ctx, pi)
+                    if graded is not cut:  # the hash stays the recipe's, not the temp files'
+                        rp = plan.build_plan(graded, self.cfg.ffmpeg, out, workdir,
+                                             self.prober, mode=mode, audio_map=amap,
+                                             hdr_params=self._hdr_params)
                     run.execute(rp, workdir, lambda p: None, ctx.cancel)
                     self.renders.drop_path(str(out), except_hash=h)
                     self.renders.add(h, key, f"{doc['title']} · part {pi + 1}", str(out),
