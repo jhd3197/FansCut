@@ -1,8 +1,9 @@
 name: Docker CI
 
-# The app image builds (UI stage and Python stage). release.yml gates on it
-# and builds the published images itself; a dev -> main pull request skips
-# it because the push already built that commit.
+# The app image builds (UI stage and Python stage) and starts: the smoke test
+# runs it with no config and waits for /healthz. release.yml gates on it and
+# builds the published images itself; a dev -> main pull request skips it
+# because the push already built that commit.
 on:
   pull_request:
     paths:
@@ -24,15 +25,40 @@ permissions:
 
 jobs:
   build:
-    name: docker build
+    name: docker build and smoke test
     if: github.event_name != 'pull_request' || github.head_ref != 'dev'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
         with:
           context: .
           push: false
+          load: true
+          tags: fanscut:ci
           cache-from: type=gha,scope=ci
           cache-to: type=gha,mode=max,scope=ci
+      - name: Start the container and wait for /healthz
+        run: |
+          docker run -d --name fanscut-ci -p 6464:6464 fanscut:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:6464/healthz > /dev/null; then
+              echo "healthy after ${i}s"; break
+            fi
+            if [ "$i" = 30 ]; then
+              echo "::error::/healthz never answered"; docker logs fanscut-ci; exit 1
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:6464/ | grep -qi '<div id="root"' \
+            || { echo "::error::the UI is not served"; exit 1; }
+      - name: Report hardware encoders in the image's ffmpeg
+        run: |
+          docker exec fanscut-ci sh -c 'ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "nvenc|vaapi|qsv" || true'
+          if ! docker exec fanscut-ci sh -c 'ffmpeg -hide_banner -encoders 2>/dev/null | grep -q hevc_nvenc'; then
+            echo "::warning::This ffmpeg build has no hevc_nvenc encoder; the GPU override cannot use NVENC."
+          fi
+      - name: Container logs
+        if: always()
+        run: docker logs fanscut-ci 2>&1 | tail -n 50 || true
