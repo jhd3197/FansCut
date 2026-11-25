@@ -57,7 +57,8 @@ class Core:
         self.session = session
         self.jobs = JobStore(db)
         self.renders = RenderStore(db)
-        self.worker = Worker(self.jobs, {"render": self._job_render, "detect": self._job_detect})
+        self.worker = Worker(self.jobs, {"render": self._job_render, "detect": self._job_detect,
+                                         "timeline_sync": self._job_timeline_sync})
         self.apply_config(cfg)
 
     def apply_config(self, cfg: Config) -> None:
@@ -535,6 +536,96 @@ class Core:
             raise NotFoundError(f"timeline {tid} not found")
         self.db.execute("DELETE FROM timelines WHERE id = ?", (tid,))
         self.db.execute("DELETE FROM timeline_syncs WHERE timeline_id = ?", (tid,))
+
+    # -- timeline anchors: export (author) and sync (user) ------------------------
+    def export_timeline(self, tid: str, kinds: tuple[str, ...] = ("a", "v")) -> dict[str, Any]:
+        """The recipe with anchors computed from the author's own files."""
+        from .timeline import anchors as anchors_mod
+
+        row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        doc = json.loads(row["doc"])
+        episodes = {e.id: e for e in self.library.episodes(row["series_key"])}
+        cache = anchors_mod.AnchorCache(self.db)
+        missing: list[str] = []
+        for part in doc["parts"]:
+            for seg in part["segments"]:
+                ep = episodes.get(seg["src"])
+                if not ep or not ep.file or not Path(ep.file).is_file():
+                    if seg["src"] not in missing:
+                        missing.append(seg["src"])
+                    continue
+                for side in ("start", "end"):
+                    a = anchors_mod.make_anchors(self.cfg.ffmpeg, ep.file, seg[side],
+                                                 self.cfg.fingerprint, kinds, cache)
+                    seg.setdefault("anchors", {})[side] = a
+        out = {**doc, "_missing": sorted(missing)}
+        return out
+
+    def timeline_sync_report(self, tid: str) -> dict[str, Any] | None:
+        row = self.db.one("SELECT report, updated_at FROM timeline_syncs WHERE timeline_id = ?",
+                          (tid,))
+        if row is None:
+            return None
+        return {**json.loads(row["report"]), "updated_at": row["updated_at"]}
+
+    def submit_timeline_sync(self, tid: str) -> dict[str, Any]:
+        row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        return self.worker.submit("timeline_sync", f"Sync {row['title']}", {"timeline_id": tid})
+
+    def _job_timeline_sync(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+        from .timeline import anchors as anchors_mod
+
+        tid = payload["timeline_id"]
+        row = self.db.one("SELECT * FROM timelines WHERE id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"timeline {tid} not found")
+        doc = json.loads(row["doc"])
+        episodes = {e.id: e for e in self.library.episodes(row["series_key"])}
+        # every cut point, grouped per source episode
+        bounds: dict[str, list[dict[str, Any]]] = {}
+        for pi, part in enumerate(doc["parts"], start=1):
+            for si, seg in enumerate(part["segments"], start=1):
+                for side in ("start", "end"):
+                    bounds.setdefault(seg["src"], []).append({
+                        "part": pi, "segment": si, "side": side, "t": seg[side],
+                        "anchors": (seg.get("anchors") or {}).get(side)})
+        total = sum(len(v) for v in bounds.values())
+        done = 0
+        sources: dict[str, Any] = {}
+        for src, blist in sorted(bounds.items()):
+            ep = episodes.get(src)
+            if not ep or not ep.file or not Path(ep.file).is_file():
+                sources[src] = {"matched": False, "reason": "no file in this library",
+                                "boundaries": []}
+                done += len(blist)
+                continue
+            results = []
+            for b in blist:
+                if b["anchors"]:
+                    r = anchors_mod.find_in_file(self.cfg.ffmpeg, self.cfg.fingerprint,
+                                                 ep.file, b["t"], b["anchors"])
+                else:
+                    r = {"time": b["t"], "offset": None, "method": "none", "confidence": 0.0}
+                results.append({k: b[k] for k in ("part", "segment", "side", "t")} | r)
+                done += 1
+                ctx.progress(done / total, f"{src} {b['side']} of part {b['part']}")
+            rec = anchors_mod.reconcile(results)
+            matched = sum(1 for r in results if r["method"] != "none")
+            sources[src] = {"matched": matched > 0, "matched_boundaries": matched,
+                            "total_boundaries": len(results), **rec}
+        report = {"timeline_id": tid, "sources": sources,
+                  "unmatched_sources": [s for s, v in sources.items() if not v["matched"]]}
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        self.db.execute(
+            "INSERT OR REPLACE INTO timeline_syncs (timeline_id, report, updated_at)"
+            " VALUES (?,?,?)", (tid, dumps(report), now))
+        return {"sources": len(sources), "boundaries": total,
+                "unmatched": len(report["unmatched_sources"]),
+                "message": f"synced {total} cut points over {len(sources)} source(s)"}
 
     # -- AI-assisted recipes ----------------------------------------------------
     def ai_recipe(self, key: str, notes: str, apply: bool = False) -> dict[str, Any]:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from . import CoreDep
 
@@ -35,3 +35,27 @@ def update_timeline(core: CoreDep, tid: str, body: dict[str, Any]) -> dict[str, 
 def delete_timeline(core: CoreDep, tid: str) -> dict[str, bool]:
     core.delete_timeline(tid)
     return {"ok": True}
+
+
+@router.get("/timelines/{tid}/export")
+def export_timeline(core: CoreDep, tid: str,
+                    anchors: str = Query("both", pattern="^(both|audio|video|none)$")
+                    ) -> dict[str, Any]:
+    """The recipe with cut-point anchors computed from the author's files."""
+    kinds = {"both": ("a", "v"), "audio": ("a",), "video": ("v",), "none": ()}[anchors]
+    if not kinds:
+        return core.get_timeline(tid)["doc"]
+    return core.export_timeline(tid, kinds)
+
+
+@router.post("/timelines/{tid}/sync", status_code=202)
+def sync_timeline(core: CoreDep, tid: str) -> dict[str, Any]:
+    return core.submit_timeline_sync(tid)
+
+
+@router.get("/timelines/{tid}/sync")
+def sync_report(core: CoreDep, tid: str) -> dict[str, Any]:
+    report = core.timeline_sync_report(tid)
+    if report is None:
+        return {"synced": False}
+    return {"synced": True, **report}

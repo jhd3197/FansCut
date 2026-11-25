@@ -135,3 +135,53 @@ def test_cli_recipe_validate(tmp_path, capsys):
     assert cli.main(["recipe", "validate", "--file", str(f)]) == 1
     assert "invalid JSON" in capsys.readouterr().err
     assert Config()  # keep import honest
+
+
+def test_timeline_sync_job_and_report(client, monkeypatch):
+    """Sync matches every boundary and stores a per-source report."""
+    import fanscut.timeline.anchors as anchors_mod
+
+    doc = dict(TWO_PART)
+    doc["sources"] = {"S01E01": {"duration": 1440.0}, "S01E04": {"duration": 1440.0}}
+    doc["parts"] = [{"title": "p1", "segments": [
+        {"src": "S01E01", "start": 100.0, "end": 200.0,
+         "anchors": {"start": {"a": "a1:" + "QUJD" * 100}, "end": {"a": "a1:" + "QUJD" * 100}}}]}]
+    tid = client.post(f"{E}/timelines", json=doc).json()["id"]
+
+    seen = []
+
+    def fake_find(ff, fp, path, t, anch, **kw):
+        seen.append((path, t))
+        return {"time": t + 2.3, "offset": 2.3, "method": "audio", "confidence": 0.9}
+
+    monkeypatch.setattr(anchors_mod, "find_in_file", fake_find)
+    # the mocked Sonarr files don't exist on disk; pretend they do
+    from pathlib import Path
+    monkeypatch.setattr(Path, "is_file", lambda self: True)
+
+    job = client.post(f"/api/timelines/{tid}/sync").json()
+    core = client.app_ref.state.core
+    core.worker.run_pending()
+    done = client.get(f"/api/jobs/{job['id']}").json()
+    assert done["status"] == "done" and done["result"]["boundaries"] == 2
+
+    rep = client.get(f"/api/timelines/{tid}/sync").json()
+    assert rep["synced"] is True
+    src = rep["sources"]["S01E01"]
+    assert src["matched"] is True and src["strategy"] == "constant"
+    assert [b["corrected"] for b in src["boundaries"]] == [102.3, 202.3]
+    # an edit invalidates the sync
+    client.put(f"/api/timelines/{tid}", json=doc)
+    assert client.get(f"/api/timelines/{tid}/sync").json()["synced"] is False
+
+
+def test_timeline_sync_reports_missing_files(client, monkeypatch):
+    tid = client.post(f"{E}/timelines", json=TWO_PART).json()["id"]  # S00E01 missing
+    client.post(f"/api/timelines/{tid}/sync")
+    core = client.app_ref.state.core
+    from pathlib import Path
+    monkeypatch.setattr(Path, "is_file", lambda self: True)
+    core.worker.run_pending()
+    rep = client.get(f"/api/timelines/{tid}/sync").json()
+    assert "S00E01" in rep["unmatched_sources"]
+    assert rep["sources"]["S00E01"]["reason"] == "no file in this library"
