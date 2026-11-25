@@ -329,12 +329,23 @@ def _merge_movies(items: list[Movie]) -> list[Movie]:
     entry with no file (Radarr still wanting it) is dropped when another
     source has the film on disk, and replaced by that copy.
     """
-    kept: list[Movie] = []
+    kept: dict[int, Movie] = {}  # id(movie) -> movie, in insertion order
     by_file: dict[str, Movie] = {}
     fileless: dict[object, Movie] = {}
+    # tmdb / title-year id -> kept movies with a file: lookups stay O(1) per movie
+    # (scanning every kept movie per new file took seconds on a 1,400-film library)
+    on_disk_by_id: dict[object, list[Movie]] = {}
 
     def ids(m: Movie) -> list[object]:
         return ([("tmdb", m.tmdb_id)] if m.tmdb_id else []) + [_title_key(m.title, m.year)]
+
+    def with_file(m: Movie) -> list[Movie]:
+        seen: dict[int, Movie] = {}
+        for i in ids(m):
+            for k in on_disk_by_id.get(i, []):
+                if id(k) in kept:
+                    seen[id(k)] = k
+        return list(seen.values())
 
     def absorb(into: Movie, other: Movie) -> None:
         into.tmdb_id = into.tmdb_id or other.tmdb_id
@@ -350,22 +361,23 @@ def _merge_movies(items: list[Movie]) -> list[Movie]:
             stale = next((fileless.pop(i) for i in ids(m) if i in fileless), None)
             if stale is None:
                 # a file renamed since Radarr last looked: its path is gone, this one is real
-                stale = next((k for k in kept if k.file and set(ids(k)) & set(ids(m))
-                              and not os.path.exists(k.file) and os.path.exists(m.file)), None)
+                stale = next((k for k in with_file(m)
+                              if not os.path.exists(k.file or "") and os.path.exists(m.file)), None)
                 if stale is not None:
                     by_file.pop(_file_key(stale.file or ""), None)
             if stale is not None:
-                kept.remove(stale)
+                kept.pop(id(stale), None)
                 for i in ids(stale):
                     fileless.pop(i, None)
                 absorb(m, stale)
-            kept.append(m)
+            kept[id(m)] = m
             by_file[fk] = m
+            for i in ids(m):
+                on_disk_by_id.setdefault(i, []).append(m)
             continue
-        on_disk = next((k for k in kept if k.file and set(ids(k)) & set(ids(m))), None)
-        if on_disk is not None or any(i in fileless for i in ids(m)):
+        if with_file(m) or any(i in fileless for i in ids(m)):
             continue
-        kept.append(m)
+        kept[id(m)] = m
         for i in ids(m):
             fileless[i] = m
-    return kept
+    return list(kept.values())
