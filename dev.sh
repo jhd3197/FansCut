@@ -2,7 +2,7 @@
 # FansCut local dev helper (Linux / macOS / Git Bash)
 #
 #   ./dev.sh setup          install Python deps (and UI deps if ui/ exists)
-#   ./dev.sh serve          run the app (http://127.0.0.1:6464)
+#   ./dev.sh serve          run the app (http://127.0.0.1:6464); restarts when the code changes
 #   ./dev.sh test           pytest, in parallel
 #   ./dev.sh lint           ruff + mypy
 #   ./dev.sh ui             UI dev server with live reload (http://127.0.0.1:5464,
@@ -51,7 +51,7 @@ case "$cmd" in
         ui npm ci
         ;;
     serve)
-        exec "$PYTHON" -m fanscut serve "$@"
+        exec "$PYTHON" -m fanscut serve --reload "$@"
         ;;
     test)
         exec "$PYTHON" -m pytest -q -n auto "$@"

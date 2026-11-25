@@ -11,7 +11,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+from pathlib import Path
 
 from . import __version__, config, doctor
 from .core import Core
@@ -24,8 +26,17 @@ def _serve(args: argparse.Namespace, cfg: config.Config) -> int:
 
     from .server import create_app
 
-    uvicorn.run(create_app(cfg, args.config), host=args.host or cfg.server.host,
-                port=args.port or cfg.server.port, log_level="info")
+    host, port = args.host or cfg.server.host, args.port or cfg.server.port
+    if args.reload:
+        # Restart on every code change under fanscut/. The reloaded process
+        # builds its own app from FANSCUT_CONFIG and inherits this environment
+        # (secrets included), so nothing has to be passed by hand.
+        os.environ["FANSCUT_CONFIG"] = str(Path(args.config or config.default_path()).resolve())
+        uvicorn.run("fanscut.server:create_app", factory=True, reload=True,
+                    reload_dirs=[str(Path(__file__).parent)], host=host, port=port,
+                    log_level="info")
+        return 0
+    uvicorn.run(create_app(cfg, args.config), host=host, port=port, log_level="info")
     return 0
 
 
@@ -113,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("serve", help="run the web app")
     s.add_argument("--host")
     s.add_argument("--port", type=int)
+    s.add_argument("--reload", action="store_true",
+                   help="restart when the code changes (local development)")
     s.set_defaults(fn=_serve)
     sub.add_parser("doctor", help="check ffmpeg and directories").set_defaults(fn=_doctor)
     f = sub.add_parser("fillers", help="filler data")

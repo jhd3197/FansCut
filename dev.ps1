@@ -1,7 +1,7 @@
 # FansCut local dev helper (Windows / PowerShell)
 #
 #   .\dev.ps1 setup          install Python and UI dependencies
-#   .\dev.ps1 serve          run the app (http://127.0.0.1:6464)
+#   .\dev.ps1 serve          run the app (http://127.0.0.1:6464); restarts when the code changes
 #   .\dev.ps1 ui             UI dev server with live reload (http://127.0.0.1:5464)
 #   .\dev.ps1 test           pytest, in parallel
 #   .\dev.ps1 lint           ruff + mypy
@@ -49,7 +49,7 @@ switch ($Command) {
         Step "pip install -e .[dev]" { & $Python -m pip install -e ".[dev]" }
         Step "npm ci" { Ui { npm ci } }
     }
-    "serve" { & $Python -m fanscut serve @Rest; exit $LASTEXITCODE }
+    "serve" { & $Python -m fanscut serve --reload @Rest; exit $LASTEXITCODE }
     "ui" {
         if (-not (Test-Path "ui\node_modules")) { Step "npm ci" { Ui { npm ci } } }
         Ui { npm run dev -- @Rest }
