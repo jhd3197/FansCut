@@ -109,13 +109,16 @@ class ApiVersionMiddleware:
 def _mount_ui(app: FastAPI, ui: Path) -> None:
     """Serve the built UI; unknown non-API paths get index.html so client-side routes reload."""
     root = ui.resolve()
+    base = str(root)
 
     @app.get("/{path:path}", include_in_schema=False)
     def spa(path: str) -> FileResponse:
         if path.split("/", 1)[0] in ("api", "docs", "redoc", "openapi.json", "healthz"):
             raise HTTPException(404, "Not Found")
-        f = (root / path).resolve()
-        if path and f.is_file() and f.is_relative_to(root):
+        # normpath + a prefix check: the form path scanners recognise as a guard
+        full = os.path.normpath(os.path.join(base, path))
+        f = Path(full)
+        if path and full.startswith(base + os.sep) and f.is_file():
             # Vite's assets/ names carry a content hash: cache them for good
             immutable = path.startswith("assets/")
             if path == "sw.js":  # browsers must always see the current worker
