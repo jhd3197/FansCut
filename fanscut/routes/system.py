@@ -33,6 +33,26 @@ def get_settings(core: CoreDep) -> dict[str, Any]:
     return config.masked(core.cfg) | {"env_locked": config.env_locked()}
 
 
+@router.post("/api/settings/detect", tags=["settings"])
+def detect_local_apps(core: CoreDep, request: Request) -> dict[str, Any]:
+    """Fill empty Plex/Radarr/Sonarr settings from the apps on this machine and save."""
+    from ..library import autodetect
+
+    found = autodetect.detect()
+    new = core.cfg.model_copy(deep=True)
+    filled = autodetect.fill(new, config.env_locked(), found)
+    if filled:
+        path: Path = request.app.state.config_path
+        try:
+            config.save(new, path)
+        except OSError as exc:
+            raise FansCutError(f"could not write {path}: {exc.strerror}") from exc
+        core.apply_config(new)
+    return {"filled": filled,
+            "found": [{"service": f.service, "url": f.url, "source": f.source} for f in found],
+            "settings": config.masked(core.cfg) | {"env_locked": config.env_locked()}}
+
+
 @router.put("/api/settings", tags=["settings"])
 def put_settings(core: CoreDep, body: dict[str, Any], request: Request) -> dict[str, Any]:
     new = config.merge_update(core.cfg, body)

@@ -71,6 +71,15 @@ export function Settings() {
   const setMaps = (next) => setCfg((c) => setPath(c, 'library.path_mappings', next));
 
   const save = () => act(async () => { setCfg(await api('/settings', { method: 'PUT', body: cfg })); }, 'Settings saved');
+  const detect = () => act(async () => {
+    const r = await api('/settings/detect', { method: 'POST' });
+    setCfg(r.settings);
+    return r;
+  }, (r) => {
+    const names = { plex: 'Plex', radarr: 'Radarr', sonarr: 'Sonarr' };
+    if (r.filled.length) return `Connected ${r.filled.map((s) => names[s]).join(', ')} and saved.`;
+    return r.found.length ? `Found ${r.found.map((f) => names[f.service]).join(', ')}; already set up.` : 'No Plex, Radarr or Sonarr found on this computer.';
+  });
   const test = async (service, body) => {
     setTests((t) => ({ ...t, [service]: { text: 'Testing…' } }));
     try {
@@ -121,6 +130,11 @@ export function Settings() {
         <div style={{ flex: '999 1 520px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 36 }}>
           <section id="sources" aria-labelledby="src-h">
             <h2 id="src-h" className="sh">Sources</h2>
+            <Row label="Find automatically" hint="Reads Plex, Radarr and Sonarr's own settings on this computer and fills any empty URL or key.">
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="btn" type="button" disabled={busy} onClick={detect}>Find apps on this computer</button>
+              </div>
+            </Row>
             <Row label="Plex" hint="Optional. Shows and movies. Leave sections empty for every show library.">
               <div className="stack10">
                 {input('library.plex.url', { 'aria-label': 'Plex URL', placeholder: 'http://plex:32400' })}

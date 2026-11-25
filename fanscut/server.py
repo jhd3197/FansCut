@@ -38,6 +38,24 @@ def ui_dir() -> Path:
     )
 
 
+def _autodetect(cfg: Config, path: Path) -> None:
+    """Fill empty Plex/Radarr/Sonarr settings from the apps on this machine and
+    save them, so a local install needs no keys typed in. FANSCUT_AUTODETECT=0
+    turns it off."""
+    if os.environ.get("FANSCUT_AUTODETECT", "1") == "0":
+        return
+    from .library import autodetect
+
+    filled = autodetect.fill(cfg, config.env_locked())
+    if not filled:
+        return
+    log.info("filled %s from the apps on this machine", ", ".join(filled))
+    try:
+        config.save(cfg, path)
+    except OSError as exc:
+        log.warning("could not save detected settings to %s: %s", path, exc.strerror)
+
+
 def _mount_ui(app: FastAPI, ui: Path) -> None:
     """Serve the built UI; unknown non-API paths get index.html so client-side routes reload."""
     root = ui.resolve()
@@ -48,14 +66,20 @@ def _mount_ui(app: FastAPI, ui: Path) -> None:
             raise HTTPException(404, "Not Found")
         f = (root / path).resolve()
         if path and f.is_file() and f.is_relative_to(root):
-            return FileResponse(f)
-        return FileResponse(root / "index.html")
+            # Vite's assets/ names carry a content hash: cache them for good
+            immutable = path.startswith("assets/")
+            return FileResponse(f, headers={"Cache-Control": "public, max-age=31536000, immutable"
+                                            if immutable else "no-cache"})
+        # index.html names the current bundle; never let a browser keep a stale one
+        return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
                start_worker: bool = True) -> FastAPI:
     path = Path(config_path) if config_path else config.default_path()
-    cfg = cfg or config.load(path)
+    if cfg is None:  # a real start (tests pass their own config and skip this)
+        cfg = config.load(path)
+        _autodetect(cfg, path)
     core = Core(cfg, Database(cfg.db_path))
 
     @asynccontextmanager

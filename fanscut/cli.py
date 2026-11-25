@@ -34,9 +34,10 @@ def _serve(args: argparse.Namespace, cfg: config.Config) -> int:
         os.environ["FANSCUT_CONFIG"] = str(Path(args.config or config.default_path()).resolve())
         uvicorn.run("fanscut.server:create_app", factory=True, reload=True,
                     reload_dirs=[str(Path(__file__).parent)], host=host, port=port,
-                    log_level="info")
+                    log_level="info", timeout_graceful_shutdown=5)
         return 0
-    uvicorn.run(create_app(cfg, args.config), host=host, port=port, log_level="info")
+    uvicorn.run(create_app(cfg, args.config), host=host, port=port, log_level="info",
+                timeout_graceful_shutdown=5)
     return 0
 
 
