@@ -4,11 +4,10 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAct, useLoad, usePoll } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
-import { Crumbs, enc, hm } from '../components/kit.jsx';
+import { Crumbs, enc, hm, SRC_COLOURS } from '../components/kit.jsx';
 import { Dialog, ErrorBox, Loading, Notice, Progress } from '../components/ui.jsx';
 
 const ACTIVE = ['queued', 'running'];
-const SRC_COLOURS = ['#7FA8F0', '#B9A3F2', '#6CC5CC', '#F2A93B', '#E98CC0', '#3FA37A'];
 const STEP_STYLE = {
   done: ['var(--ready)', 'Done', 'var(--text)'],
   now: ['var(--accent)', 'Now', 'var(--text)'],
@@ -110,7 +109,7 @@ function Review({ doc, weak, checked, onCheck, onPreview, editTo }) {
   const isEpisode = (src) => doc.sources[src]?.kind !== 'movie';
   const shown = points.slice(0, 12);
   return (
-    <section aria-labelledby="i-check" className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14, borderColor: open.length ? '#3A3220' : undefined }}>
+    <section aria-labelledby="i-check" className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14, borderColor: open.length ? 'var(--warn-line)' : undefined }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
         <h2 id="i-check">
           {points.length === 0 ? 'Every cut point matched' : `${open.length} cut point${open.length === 1 ? '' : 's'} to check`}
@@ -118,7 +117,7 @@ function Review({ doc, weak, checked, onCheck, onPreview, editTo }) {
         {points.length > 0 && <span className="mono tiny c-accent">{points.length - open.length} of {points.length} checked</span>}
       </div>
       {points.length > 0 && (
-        <p style={{ margin: 0, color: '#C4C7CD', fontSize: 13 }}>
+        <p style={{ margin: 0, color: 'var(--text2)', fontSize: 13 }}>
           FansCut found these points but isn’t sure. Watch a few seconds around each one, then confirm it, or nudge it in the editor.
         </p>
       )}
@@ -294,7 +293,7 @@ export function Build() {
       {!report && (
         <section aria-labelledby="i-sync" className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <h2 id="i-sync">Find cut points</h2>
-          <p style={{ margin: 0, color: '#C4C7CD', fontSize: 13 }}>
+          <p style={{ margin: 0, color: 'var(--text2)', fontSize: 13 }}>
             FansCut listens to your copies and lines up every cut point in the recipe with them. Nothing is cut yet.
           </p>
           {syncing && (

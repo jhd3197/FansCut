@@ -76,7 +76,6 @@ export function MyCuts() {
 
   return (
     <div className="page" style={{ maxWidth: 1100 }}>
-      <style>{'.mycuts-thumb .ttl { display: none; }'}</style>
       <div className="toolbar">
         <Seg label="Show" value={show} onChange={setShow}
           options={[['all', 'All'], ['updates', nUpd ? `Updates ${nUpd}` : 'Updates'], ['cuts', 'Cuts'], ['playlists', 'Playlists']]} />
@@ -113,7 +112,7 @@ export function MyCuts() {
                   <span className="tiny muted">Cut · {facts}</span>
                   <span className={`tiny ${cls}`}>{upd[c.id]?.update ? 'Update available' : text}</span>
                 </span>
-                <span style={{ fontSize: 13, color: '#C4C7CD', overflowWrap: 'anywhere' }} title={files[0]?.path}>
+                <span style={{ fontSize: 13, color: 'var(--text2)', overflowWrap: 'anywhere' }} title={files[0]?.path}>
                   {where || <span className="dim">—</span>}
                   {files.length > 1 && <span className="tiny muted"> · {files.length} files</span>}
                 </span>

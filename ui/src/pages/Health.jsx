@@ -152,7 +152,7 @@ export function Health() {
         </div>
 
         {running && (
-          <p className="muted" role="status" style={{ margin: 0, padding: '14px 18px', borderBottom: '1px solid #22262B' }}>
+          <p className="muted" role="status" style={{ margin: 0, padding: '14px 18px', borderBottom: '1px solid var(--raised)' }}>
             Checking every file{q.trim() ? ` matching “${q.trim()}”` : ''}… {elapsed}s. A big library can take a few minutes.
           </p>
         )}
@@ -178,7 +178,7 @@ export function Health() {
                     <span className="kind" style={{ paddingTop: 2 }}>{KIND[f.check] || f.check}</span>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
                       <h3>{f.title}</h3>
-                      <p style={{ color: '#C4C7CD', fontSize: 13 }}>{f.message}</p>
+                      <p style={{ color: 'var(--text2)', fontSize: 13 }}>{f.message}</p>
                       {f.file && <span className="file">{f.file}</span>}
                       {f.files?.length > 0 && (
                         <span className="file">{f.files.length} file(s): {f.files.slice(0, 4).map(baseName).join(' · ')}{f.files.length > 4 ? ' …' : ''}</span>
@@ -226,7 +226,7 @@ export function Health() {
         )}
 
         {fixed.map((t, i) => (
-          <div key={i} style={{ padding: '14px 18px', fontSize: 13, color: 'var(--muted)', display: 'flex', gap: 10, borderTop: '1px solid #22262B' }}>
+          <div key={i} style={{ padding: '14px 18px', fontSize: 13, color: 'var(--muted)', display: 'flex', gap: 10, borderTop: '1px solid var(--raised)' }}>
             <span className="c-ready">Fixed</span><span>{t}</span>
           </div>
         ))}

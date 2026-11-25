@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { useAct, useLoad } from '../lib/hooks.js';
 import { ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import './Settings.css';
 
 // Immutable set at a dotted path: set(cfg, 'library.sonarr.url', v)
 export function setPath(obj, path, value) {
@@ -19,22 +20,6 @@ const CODECS = [
   ['hevc', 'HEVC 10-bit (keeps HDR)'],
   ['h264', 'H.264 (plays everywhere, no HDR)'],
 ];
-
-const CSS = `
-.settings .sub a { display:block; padding:6px 10px; border-radius:5px; color:var(--muted); font-size:13px; }
-.settings .sub a:hover, .settings .sub a[aria-current=true] { color:var(--text); background:var(--panel2); }
-.settings .srow { display:grid; grid-template-columns:minmax(0,220px) minmax(0,1fr); gap:8px 24px; align-items:start; padding:16px 0; border-top:1px solid #22262B; }
-.settings .srow > .lbl { font-size:13px; font-weight:500; padding-top:8px; }
-.settings .hint { display:block; font-weight:400; color:var(--muted); font-size:12px; margin-top:2px; }
-.settings .inp { font:14px var(--font); color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:6px; height:36px; padding:0 10px; width:100%; max-width:420px; }
-.settings .inp.mono { font-family:var(--mono); font-size:13px; }
-.settings .inp:disabled { opacity:.6; }
-.settings .stack10 { display:flex; flex-direction:column; gap:10px; }
-.settings .ck { display:flex; gap:10px; align-items:center; font-size:13px; }
-.settings .ck input { accent-color:var(--accent); margin:0; width:16px; height:16px; }
-.settings h2.sh { margin:0 0 4px; font-size:17px; font-weight:700; }
-@media (max-width: 640px) { .settings .srow { grid-template-columns:1fr; } }
-`;
 
 function Row({ label, hint, htmlFor, children }) {
   const head = <>{label}{hint && <span className="hint">{hint}</span>}</>;
@@ -120,7 +105,7 @@ export function Settings() {
 
   return (
     <div className="page settings" style={{ maxWidth: 1060, gap: 24 }}>
-      <style>{CSS}</style>
+      
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <span className="muted tiny">Saved to config.yaml. Host and port changes need a restart.</span>
         <button className="btn btn-primary" type="button" onClick={save} disabled={busy}>Save changes</button>

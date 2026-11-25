@@ -162,7 +162,7 @@ function Recent({ jobs, onRemove, busy }) {
                 return (
                   <tr key={j.id}>
                     <td>{jobName(j)}</td>
-                    <td className={cls} style={{ color: cls ? undefined : '#C4C7CD', overflowWrap: 'anywhere' }}>
+                    <td className={cls} style={{ color: cls ? undefined : 'var(--text2)', overflowWrap: 'anywhere' }}>
                       {j.status === 'failed' ? `Failed: ${result}` : j.status === 'cancelled' ? 'Cancelled' : result}
                     </td>
                     <td className="mono muted" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{when(j.updated_at || j.created_at)}</td>

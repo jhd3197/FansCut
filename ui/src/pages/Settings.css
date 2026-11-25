@@ -1,0 +1,14 @@
+/* Settings page (scoped under .settings) */
+.settings .sub a { display:block; padding:6px 10px; border-radius:5px; color:var(--muted); font-size:13px; }
+.settings .sub a:hover, .settings .sub a[aria-current=true] { color:var(--text); background:var(--panel2); }
+.settings .srow { display:grid; grid-template-columns:minmax(0,220px) minmax(0,1fr); gap:8px 24px; align-items:start; padding:16px 0; border-top:1px solid var(--raised); }
+.settings .srow > .lbl { font-size:13px; font-weight:500; padding-top:8px; }
+.settings .hint { display:block; font-weight:400; color:var(--muted); font-size:12px; margin-top:2px; }
+.settings .inp { font:14px var(--font); color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:6px; height:36px; padding:0 10px; width:100%; max-width:420px; }
+.settings .inp.mono { font-family:var(--mono); font-size:13px; }
+.settings .inp:disabled { opacity:.6; }
+.settings .stack10 { display:flex; flex-direction:column; gap:10px; }
+.settings .ck { display:flex; gap:10px; align-items:center; font-size:13px; }
+.settings .ck input { accent-color:var(--accent); margin:0; width:16px; height:16px; }
+.settings h2.sh { margin:0 0 4px; font-size:17px; font-weight:700; }
+@media (max-width: 640px) { .settings .srow { grid-template-columns:1fr; } }

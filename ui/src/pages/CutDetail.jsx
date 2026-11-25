@@ -4,10 +4,9 @@ import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
 import { useLoad } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
-import { Crumbs, enc, hm, KV, Poster } from '../components/kit.jsx';
+import { Crumbs, enc, hm, KV, Poster, SRC_COLOURS } from '../components/kit.jsx';
 import { ErrorBox, Loading } from '../components/ui.jsx';
 
-const SRC_COLOURS = ['#7FA8F0', '#B9A3F2', '#6CC5CC', '#F2A93B', '#E98CC0', '#3FA37A'];
 const CREDIT_LABELS = {
   author: 'Made by', based_on: 'Based on', repo: 'Repository', repository: 'Repository',
   url: 'Link', version: 'Version', license: 'License',
@@ -211,10 +210,10 @@ export function CutDetail() {
         <div className="hero-body" style={{ gap: 18 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <h1 className="display" style={{ font: '700 40px/1 var(--display)' }}>{doc.title}</h1>
-            {subtitle && <span style={{ fontSize: 16, color: '#C4C7CD' }}>{subtitle}</span>}
+            {subtitle && <span style={{ fontSize: 16, color: 'var(--text2)' }}>{subtitle}</span>}
             <span className="mono muted" style={{ fontSize: 13 }}>{meta}</span>
           </div>
-          {description && <p style={{ margin: 0, color: '#C4C7CD', maxWidth: 620 }}>{description}</p>}
+          {description && <p style={{ margin: 0, color: 'var(--text2)', maxWidth: 620 }}>{description}</p>}
           <div className="row wrap">
             <Link className="btn btn-primary" to={buildTo}>Build this cut</Link>
             <Link className="btn" to={`/cuts/${enc(id)}/edit`}>Open in editor</Link>
