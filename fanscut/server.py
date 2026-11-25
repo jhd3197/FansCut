@@ -23,6 +23,7 @@ from .routes import (
     jobs,
     library,
     renders,
+    scenes,
     suggestions,
     system,
     timeline,
@@ -90,7 +91,7 @@ def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
 
     for r in (system.router, library.router, cut.router, jobs.router, fillers.router,
               renders.router, webhooks.router, timeline.router, suggestions.router,
-              browse.router):
+              browse.router, scenes.router):
         app.include_router(r)
 
     ui = ui_dir()

@@ -157,7 +157,38 @@ def _v7(conn: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2, _v3, _v4, _v5, _v6, _v7]
+def _v8(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE scene_index (
+            film_key   TEXT PRIMARY KEY,           -- movie key (radarr:12, plexmovie:3456, ...)
+            doc        TEXT NOT NULL,              -- shots, subtitle lines, scenes (JSON)
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE scene_tags (
+            id         TEXT PRIMARY KEY,
+            film_key   TEXT NOT NULL,
+            tmdb_id    INTEGER,
+            start      REAL NOT NULL,
+            end        REAL NOT NULL,
+            tags       TEXT NOT NULL,              -- ["christmas", "great-hall"]
+            people     TEXT NOT NULL,              -- [{"name": "...", "character": "..."}]
+            summary    TEXT NOT NULL DEFAULT '',
+            source     TEXT NOT NULL,              -- "user", "ai:<model>", "mcp"
+            status     TEXT NOT NULL,              -- proposed | accepted | rejected
+            confidence REAL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX scene_tags_film ON scene_tags (film_key, start);
+        CREATE TABLE cast_cache (
+            film_key   TEXT PRIMARY KEY,
+            doc        TEXT NOT NULL,              -- {"source": "plex"|"tmdb", "cast": [...]}
+            updated_at TEXT NOT NULL
+        );
+    """)
+
+
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2, _v3, _v4, _v5, _v6, _v7, _v8]
 
 
 class Database:

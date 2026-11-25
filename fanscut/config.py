@@ -31,6 +31,7 @@ ENV_FIELDS = {
     "FANSCUT_PLEX_TOKEN": "library.plex.token",
     "FANSCUT_AI_API_KEY": "ai.api_key",
     "FANSCUT_GITHUB_TOKEN": "community.github_token",
+    "FANSCUT_TMDB_API_KEY": "catalogues.tmdb_api_key",
 }
 
 
@@ -86,6 +87,7 @@ class LibraryCfg(BaseModel):
 class CataloguesCfg(BaseModel):
     offline: bool = False
     cache_days: int = 14
+    tmdb_api_key: str = ""  # secret; cast lists for films outside Plex. Prefer FANSCUT_TMDB_API_KEY
 
 
 class FillersCfg(BaseModel):
@@ -287,6 +289,8 @@ def masked(cfg: Config) -> dict[str, Any]:
         d["ai"]["api_key"] = MASK
     if d["community"]["github_token"]:
         d["community"]["github_token"] = MASK
+    if d["catalogues"]["tmdb_api_key"]:
+        d["catalogues"]["tmdb_api_key"] = MASK
     return d
 
 

@@ -62,6 +62,11 @@ class Core:
                                          "timeline_sync": self._job_timeline_sync,
                                          "timeline_render": self._job_timeline_render,
                                          "find_similar": self._job_find_similar})
+        from .scenes.service import SceneService
+
+        self.scenes = SceneService(self)
+        self.worker.handlers.update({"scene_index": self.scenes.job_index,
+                                     "scene_tag": self.scenes.job_ai})
         self.apply_config(cfg)
 
     def apply_config(self, cfg: Config) -> None:
