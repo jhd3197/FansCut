@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,6 +18,7 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 from .errors import ConfigError
+from .fsutil import atomic_write
 
 MASK = "***"
 
@@ -162,6 +164,17 @@ class AutomationCfg(BaseModel):
     keep: bool = True  # keep flag for webhook-triggered renders
 
 
+class NotifyTarget(BaseModel):
+    url: str
+    format: Literal["json", "discord", "ntfy"] = "json"
+    events: list[Literal["done", "failed"]] = Field(
+        default_factory=lambda: ["done", "failed"])  # type: ignore[arg-type]
+
+
+class NotifyCfg(BaseModel):
+    targets: list[NotifyTarget] = Field(default_factory=list)
+
+
 class CommunityCfg(BaseModel):
     index_url: str = "https://raw.githubusercontent.com/jhd3197/fanscut-recipes/main/index.json"
     github_token: str = Secret()  # secret, for private cut repos; prefer FANSCUT_GITHUB_TOKEN
@@ -188,6 +201,7 @@ class Config(BaseModel):
     cut: CutCfg = Field(default_factory=CutCfg)
     render: RenderCfg = Field(default_factory=RenderCfg)
     automation: AutomationCfg = Field(default_factory=AutomationCfg)
+    notify: NotifyCfg = Field(default_factory=NotifyCfg)
     ai: AICfg = Field(default_factory=AICfg)
     community: CommunityCfg = Field(default_factory=CommunityCfg)
 
@@ -242,19 +256,60 @@ def _dig(d: dict[str, Any], path: str) -> tuple[dict[str, Any], str]:
 
 
 def parse(raw: dict[str, Any] | None) -> Config:
+    raw = {k: v for k, v in (raw or {}).items() if k != "config_version"}
     try:
-        return Config.model_validate(raw or {})
+        return Config.model_validate(raw)
     except ValidationError as exc:
         raise ConfigError(str(exc)) from exc
 
 
+# -- versioned migrations of the raw file ------------------------------------------
+# Each step takes the raw dict at version N-1 and returns it at version N, so a
+# renamed or moved key keeps the user's value. Add a step and bump CONFIG_VERSION.
+def _m1(raw: dict[str, Any]) -> dict[str, Any]:
+    return raw  # version 1: the first versioned layout (files before it had no number)
+
+
+CONFIG_MIGRATIONS: list[Callable[[dict[str, Any]], dict[str, Any]]] = [_m1]
+CONFIG_VERSION = len(CONFIG_MIGRATIONS)
+
+
+def migrate(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """(raw at CONFIG_VERSION, whether a step changed anything). A no-op step does
+    not count, so a hand-written, commented config.yaml is not rewritten for it."""
+    import copy
+
+    have = raw.pop("config_version", 0)
+    if not isinstance(have, int) or have < 0:
+        have = 0
+    if have > CONFIG_VERSION:
+        raise ConfigError(f"config_version {have} is newer than this FansCut understands "
+                          f"({CONFIG_VERSION}); update FansCut")
+    before = copy.deepcopy(raw)
+    for step in CONFIG_MIGRATIONS[have:]:
+        raw = step(raw)
+    return raw, raw != before
+
+
 def load(path: Path | str | None = None) -> Config:
     p = Path(path) if path else default_path()
-    raw = _read_raw(p)
+    raw, changed = migrate(_read_raw(p))
+    if changed and p.is_file():
+        # keep the pre-migration file, then write the migrated one
+        with contextlib.suppress(OSError):
+            atomic_write(p.with_name(p.name + ".pre-migrate.bak"), p.read_bytes())
+            save(parse(_with_env(raw)), p)
+    return parse(_with_env(raw))
+
+
+def _with_env(raw: dict[str, Any]) -> dict[str, Any]:
+    import copy
+
+    raw = copy.deepcopy(raw)
     for path_, val in env_overrides().items():
         d, leaf = _dig(raw, path_)
         d[leaf] = val
-    return parse(raw)
+    return raw
 
 
 def _read_raw(p: Path) -> dict[str, Any]:
@@ -291,9 +346,10 @@ def save(cfg: Config, path: Path | str) -> None:
             for k in path_.split("."):
                 src = src.get(k) if isinstance(src, dict) else None
             d[leaf] = src if isinstance(src, str) else ""
-    p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    with contextlib.suppress(OSError):
-        p.chmod(0o600)  # may hold secrets; best effort, fails quietly on Windows
+    data = {"config_version": CONFIG_VERSION, **data}
+    # temp file + rename: a crash mid-save cannot corrupt config.yaml; the old one
+    # stays as config.yaml.bak. 0600: it may hold secrets.
+    atomic_write(p, yaml.safe_dump(data, sort_keys=False), backup=True, mode=0o600)
 
 
 def _secret_paths(model: type[BaseModel], prefix: str = "") -> list[str]:

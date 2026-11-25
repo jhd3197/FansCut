@@ -10,6 +10,7 @@ import datetime as _dt
 import itertools
 import json
 import tempfile
+import threading
 import uuid
 from dataclasses import asdict, fields
 from pathlib import Path
@@ -18,7 +19,7 @@ from typing import Any
 import requests
 
 from . import ai as ai_mod
-from . import art
+from . import art, notify
 from . import recipe as recipe_mod
 from .art import ArtStore, art_ref
 from .catalogues import match as catalogue_match
@@ -30,6 +31,7 @@ from .fillers import anifiller, jikan_flags
 from .fillers import labels as labelling
 from .fingerprint import detect
 from .fingerprint.cache import FingerprintCache
+from .fsutil import atomic_write
 from .jobs import JobContext, JobStore, Worker
 from .library.service import Library
 from .models import LABELS, TRIM_KINDS, Episode
@@ -55,35 +57,90 @@ def _opts_from(base: dict[str, Any], extra: dict[str, Any] | None) -> CutOptions
     return CutOptions(**merged)
 
 
+class _State:
+    """Everything apply_config builds from one config. A job pins the State it
+    started with, so a settings save mid-render cannot swap the library or the
+    ffmpeg settings out from under it."""
+
+    __slots__ = ("art", "cfg", "http_anilist", "http_jikan", "library", "prober")
+    cfg: Config
+
+    def __init__(self, **kw: Any):
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+_pinned = threading.local()
+
+
+def _state_attr(name: str) -> Any:
+    def fget(self: Core) -> Any:
+        st = getattr(_pinned, "state", None)
+        return getattr(st if st is not None and getattr(_pinned, "core", None) is self
+                       else self._live, name)
+
+    def fset(self: Core, value: Any) -> None:  # tests swap in fakes
+        setattr(self._live, name, value)
+
+    return property(fget, fset)
+
+
 class Core:
+    cfg: Config = _state_attr("cfg")
+    prober: ffmpeg.Prober = _state_attr("prober")
+    library: Library = _state_attr("library")
+    art: ArtStore = _state_attr("art")
+    http_jikan: CachedHttp = _state_attr("http_jikan")
+    http_anilist: CachedHttp = _state_attr("http_anilist")
+
     def __init__(self, cfg: Config, db: Database, session: requests.Session | None = None):
         self.db = db
         self._own_session = session is None
         self.session = session or requests.Session()
         self.jobs = JobStore(db)
         self.renders = RenderStore(db)
-        self.worker = Worker(self.jobs, {"render": self._job_render, "detect": self._job_detect,
-                                         "timeline_sync": self._job_timeline_sync,
-                                         "timeline_render": self._job_timeline_render,
-                                         "find_similar": self._job_find_similar})
+        handlers = {"render": self._job_render, "detect": self._job_detect,
+                    "timeline_sync": self._job_timeline_sync,
+                    "timeline_render": self._job_timeline_render,
+                    "find_similar": self._job_find_similar}
+        self.worker = Worker(self.jobs, {k: self._pin(fn) for k, fn in handlers.items()},
+                             on_finish=self._job_finished)
+        self._apply_lock = threading.Lock()
         self.apply_config(cfg)
+
+    def _pin(self, fn: Any) -> Any:
+        """Run a job handler against the settings that were live when it started."""
+        def run(payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+            _pinned.state, _pinned.core = self._live, self
+            try:
+                result: dict[str, Any] = fn(payload, ctx)
+                return result
+            finally:
+                _pinned.state = _pinned.core = None
+        return run
+
+    def _job_finished(self, job: dict[str, Any]) -> None:
+        notify.job_finished(self._live.cfg.notify, job)
 
     def apply_config(self, cfg: Config) -> None:
         """(Re)build everything that depends on settings; at start and after a settings save."""
-        self.cfg = cfg
-        self.prober = ffmpeg.Prober(cfg.ffmpeg, self.db)
-        self.library = Library(cfg, self.prober)
-        art.CACHE_REMOTE = cfg.art.cache_remote
-        self.art = ArtStore(self.library, cfg.data_dir / "art",
-                            max_bytes=max(16, cfg.art.cache_mb) * 1024 * 1024,
-                            session=self.session)
-        if self._own_session:  # internet calls (catalogues, GitHub) go through network.proxy
-            self.session.proxies = {}
-            apply_proxy(self.session, cfg.network)
-        cat = cfg.catalogues
-        self.http_jikan = CachedHttp(self.db, 0.4, cat.cache_days, cat.offline, self.session)
-        self.http_anilist = CachedHttp(self.db, 0.8, cat.cache_days, cat.offline, self.session)
-        self._fillers: anifiller.FillerIndex | None = None
+        with self._apply_lock:
+            prober = ffmpeg.Prober(cfg.ffmpeg, self.db)
+            library = Library(cfg, prober)
+            art.CACHE_REMOTE = cfg.art.cache_remote
+            store = ArtStore(library, cfg.data_dir / "art",
+                             max_bytes=max(16, cfg.art.cache_mb) * 1024 * 1024,
+                             session=self.session)
+            if self._own_session:  # internet calls (catalogues, GitHub) use network.proxy
+                self.session.proxies = {}
+                apply_proxy(self.session, cfg.network)
+            cat = cfg.catalogues
+            # one assignment: a reader sees the old State or the new one, never a mix
+            self._live = _State(
+                cfg=cfg, prober=prober, library=library, art=store,
+                http_jikan=CachedHttp(self.db, 0.4, cat.cache_days, cat.offline, self.session),
+                http_anilist=CachedHttp(self.db, 0.8, cat.cache_days, cat.offline, self.session))
+            self._fillers: anifiller.FillerIndex | None = None
 
     # -- filler data ----------------------------------------------------------
     @property
@@ -356,13 +413,17 @@ class Core:
                 "cached": self.renders.hit(rp.cache_key) is not None}
 
     def submit_render(self, key: str, seasons: list[int] | None, options: dict[str, Any] | None,
-                      mode: str, keep: bool | None = None, refresh: bool = False) -> dict[str, Any]:
+                      mode: str, keep: bool | None = None, refresh: bool = False,
+                      after: list[str] | None = None) -> dict[str, Any]:
+        """Queue a render. `after`: job ids it must wait for (detection of its seasons)."""
         series = self.library.get_series(key)
         self.build_cut(key, seasons, options)  # fail fast on a bad request
-        return self.worker.submit("render", f"Render {series.title}",
-                                  {"series_key": key, "seasons": seasons, "options": options,
+        payload: dict[str, Any] = {"series_key": key, "seasons": seasons, "options": options,
                                    "mode": mode, "keep": keep, "refresh": refresh,
-                                   "title": series.title})
+                                   "title": series.title}
+        if after:
+            payload["after"] = after
+        return self.worker.submit("render", f"Render {series.title}", payload)
 
     def _job_render(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
         self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
@@ -450,7 +511,8 @@ class Core:
                     if len(with_files) >= 2:
                         jobs.append(self.submit_detect(key, s))
             jobs.append(self.submit_render(key, seasons, None, "auto",
-                                           keep=self.cfg.automation.keep))
+                                           keep=self.cfg.automation.keep,
+                                           after=[j["id"] for j in jobs]))
         except FansCutError as exc:
             return {"ok": False, "action": "error", "reason": str(exc)}
         return {"ok": True, "action": "queued", "series": series.title, "seasons": seasons,
@@ -480,14 +542,15 @@ class Core:
 
     def store_detected(self, key: str, found: dict[str, dict[str, tuple[float, float]]]) -> None:
         """Replace auto trims; anything the user has touched stays as they left it."""
-        for eid, ranges in found.items():
-            self.db.execute(
-                "DELETE FROM trims WHERE series_key=? AND episode_id=? AND source='auto'",
-                (key, eid))
-            for kind, (s, e) in ranges.items():
+        with self.db.transaction():  # a crash mid-way must not leave episodes half-cleared
+            for eid, ranges in found.items():
                 self.db.execute(
-                    "INSERT OR IGNORE INTO trims (series_key, episode_id, kind, start, end, source)"
-                    " VALUES (?,?,?,?,?,'auto')", (key, eid, kind, s, e))
+                    "DELETE FROM trims WHERE series_key=? AND episode_id=? AND source='auto'",
+                    (key, eid))
+                for kind, (s, e) in ranges.items():
+                    self.db.execute(
+                        "INSERT OR IGNORE INTO trims (series_key, episode_id, kind, start, end,"
+                        " source) VALUES (?,?,?,?,?,'auto')", (key, eid, kind, s, e))
 
     # -- timelines (chronological recipes) --------------------------------------
     def _timeline_row(self, r: Any, with_doc: bool = False) -> dict[str, Any]:
@@ -544,17 +607,18 @@ class Core:
         if len(dumps(doc)) > tl_recipe.MAX_BYTES:
             raise FansCutError("recipe is over the 2 MB limit")
         clean = tl_recipe.validate(doc)
-        self.db.execute("UPDATE timelines SET title = ?, doc = ?, updated_at = ? WHERE id = ?",
-                        (clean["title"], dumps(clean),
-                         _dt.datetime.now().isoformat(timespec="seconds"), tid))
-        self.db.execute("DELETE FROM timeline_syncs WHERE timeline_id = ?", (tid,))
+        with self.db.transaction():
+            self.db.execute("UPDATE timelines SET title = ?, doc = ?, updated_at = ? WHERE id = ?",
+                            (clean["title"], dumps(clean),
+                             _dt.datetime.now().isoformat(timespec="seconds"), tid))
+            self.db.execute("DELETE FROM timeline_syncs WHERE timeline_id = ?", (tid,))
         return self.get_timeline(tid)
 
     def delete_timeline(self, tid: str) -> None:
         if self.db.one("SELECT id FROM timelines WHERE id = ?", (tid,)) is None:
             raise NotFoundError(f"timeline {tid} not found")
+        # its sync report and install record go with it (ON DELETE CASCADE)
         self.db.execute("DELETE FROM timelines WHERE id = ?", (tid,))
-        self.db.execute("DELETE FROM timeline_syncs WHERE timeline_id = ?", (tid,))
 
     # -- timeline anchors: export (author) and sync (user) ------------------------
     def export_timeline(self, tid: str, kinds: tuple[str, ...] = ("a", "v")) -> dict[str, Any]:
@@ -891,7 +955,7 @@ class Core:
                         rp = plan.build_plan(graded, self.cfg.ffmpeg, out, workdir,
                                              self.prober, mode=mode, audio_map=amap,
                                              hdr_params=self._hdr_params)
-                    run.execute(rp, workdir, lambda p: None, ctx.cancel)
+                    run.execute(rp, workdir, ctx.part(pi, len(doc["parts"])), ctx.cancel)
                     self.renders.drop_path(str(out), except_hash=h)
                     self.renders.add(h, key, f"{doc['title']} · part {pi + 1}", str(out),
                                      rp.mode, bool(keep), job_id=ctx.job_id)
@@ -1076,8 +1140,7 @@ class Core:
         if not q:  # a whole-library run is what the nav badge and library notes show
             result["checked_at"] = _dt.datetime.now().isoformat(timespec="seconds")
             self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
-            (self.cfg.data_dir / "library-check.json").write_text(dumps(result),
-                                                                  encoding="utf-8")
+            atomic_write(self.cfg.data_dir / "library-check.json", dumps(result))
         return result
 
     def last_check(self) -> dict[str, Any] | None:

@@ -223,17 +223,24 @@ def run_with_progress(
     err_lines: list[str] = []
     drain = threading.Thread(target=lambda: err_lines.extend(proc.stderr or []), daemon=True)
     drain.start()
-    for line in proc.stdout:
-        if cancel is not None and cancel.is_set():
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            raise JobCancelled("render cancelled")
-        key, _, val = line.strip().partition("=")
-        if key in ("out_time_us", "out_time_ms") and val.lstrip("-").isdigit() and total_seconds:
-            on_progress(min(max(int(val) / 1_000_000 / total_seconds, 0.0), 1.0))
+    def stop() -> None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    try:
+        for line in proc.stdout:
+            if cancel is not None and cancel.is_set():
+                raise JobCancelled("render cancelled")
+            key, _, val = line.strip().partition("=")
+            numeric = val.lstrip("-").isdigit()
+            if key in ("out_time_us", "out_time_ms") and numeric and total_seconds:
+                on_progress(min(max(int(val) / 1_000_000 / total_seconds, 0.0), 1.0))
+    except BaseException:  # cancelled, or on_progress raised: never leave ffmpeg running
+        stop()
+        raise
     proc.wait()
     drain.join(timeout=2)
     if cancel is not None and cancel.is_set():

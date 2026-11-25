@@ -90,7 +90,7 @@ def test_background_thread_processes_jobs_and_stops():
     # This failed on CI a few times with the job still queued after 20 s and
     # nothing logged; if it happens again, say what the worker was doing.
     if not ran.wait(30):
-        alive = worker._thread is not None and worker._thread.is_alive()
+        alive = worker.alive()
         pytest.fail(f"job never started (status {store.get(jid)['status']}, worker alive: "
                     f"{alive})\n{_thread_stacks()}")
     for _ in range(100):  # the handler returned; the store update follows
@@ -99,7 +99,7 @@ def test_background_thread_processes_jobs_and_stops():
         time.sleep(0.05)
     worker.stop()
     assert store.get(jid)["status"] == "done"
-    assert worker._thread is not None and not worker._thread.is_alive()
+    assert worker._threads and not any(t.is_alive() for t in worker._threads)
 
 
 def test_running_jobs_requeued_on_start():
@@ -128,3 +128,53 @@ def test_delete_rules_and_listing_order():
     worker.run_pending()
     store.delete(first)
     assert [j["id"] for j in store.list()] == [second]
+
+
+def test_duplicate_submits_return_the_queued_job():
+    store, worker = make({"k": lambda p, c: {}})
+    a = worker.submit("k", "Render Harbor Lights", {"seasons": [1]})
+    b = worker.submit("k", "Render Harbor Lights", {"seasons": [1]})
+    c = worker.submit("k", "Render Harbor Lights", {"seasons": [2]})
+    assert a["id"] == b["id"] and c["id"] != a["id"]
+    assert len(store.list()) == 2
+
+
+def test_after_waits_for_its_dependency_across_lanes():
+    order = []
+    store, worker = make({"detect": lambda p, c: order.append("detect") or {},
+                          "render": lambda p, c: order.append("render") or {}})
+    det = worker.submit("detect", "d", {})
+    worker.submit("render", "r", {"after": [det["id"]]})
+    assert store.get(det["id"])["lane"] == "light"
+    assert worker.run_pending("heavy") == 0  # the render waits for detection
+    worker.run_pending("light")
+    worker.run_pending("heavy")
+    assert order == ["detect", "render"]
+
+
+def test_cancel_check_and_parts():
+    seen = []
+
+    def handler(_p, ctx):
+        prog = ctx.part(1, 4)
+        prog(0.5)
+        seen.append(store.get(ctx.job_id)["progress"])
+        ctx.cancel.set()
+        ctx.check()
+        return {}
+
+    store, worker = make({"k": handler})
+    jid = worker.submit("k", "t", {})["id"]
+    worker.run_pending()
+    assert seen == [0.375] and store.get(jid)["status"] == "cancelled"
+
+
+def test_on_finish_called_with_the_finished_job():
+    got = []
+    from fanscut.db import Database
+
+    store = JobStore(Database(":memory:"))
+    worker = Worker(store, {"k": lambda p, c: {"message": "ok"}}, on_finish=got.append)
+    worker.submit("k", "t", {})
+    worker.run_pending()
+    assert got[0]["status"] == "done"
