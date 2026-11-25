@@ -156,6 +156,10 @@ class RenderCfg(BaseModel):
     language: str = ""  # preferred audio language tag (e.g. jpn, eng); "" = first track
     effectcraft_cli: str = ""  # path to effectcraft-cli; "" = grades stay in ffmpeg
     effectcraft_grade: bool = True  # route segment grades through EffectCraft when it's set
+    # "Add to Plex", after every build (Plex must be set up under library.plex)
+    plex_refresh: bool = True  # rescan the Plex sections the output lands in
+    plex_collection: str = "FansCut"  # add the result to this collection; "" = don't
+    poster: bool = True  # write poster.jpg next to the output (the cut's, else a frame)
 
 
 class AutomationCfg(BaseModel):

@@ -332,5 +332,13 @@ def all_cuts(core: Core) -> dict[str, Any]:
             "repo": installs.get(r["id"], ""),
             "synced": core.db.one("SELECT 1 FROM timeline_syncs WHERE timeline_id = ?",
                                   (r["id"],)) is not None})
+    # watch-order playlists FansCut made in Plex (nothing rendered)
+    for p in core.plex_items("playlist"):
+        films = p["detail"].get("films", [])
+        cuts.append({"kind": "playlist", "id": f"playlist:{p['rating_key']}",
+                     "playlist_id": p["rating_key"], "suggestion": p["ref"],
+                     "title": p["title"], "films": films, "parts": 1, "segments": len(films),
+                     "minutes": None, "tmdb_ids": [], "episode_ids": [], "series_key": "",
+                     "updated_at": p["created_at"], "synced": True})
     renders = core.list_renders()
     return {"cuts": cuts, "renders": renders}

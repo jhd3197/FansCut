@@ -203,3 +203,20 @@ def test_render_can_skip_the_fanscut_collection(client, monkeypatch):
     monkeypatch.setattr(core, "_timeline_ctx", lambda t: (TWO_PART, "k", {"ok": True}))
     job = client.post(f"/api/timelines/{tid}/render", json={"collection": False}).json()
     assert client.get(f"/api/jobs/{job['id']}").json()["payload"]["collection"] is False
+
+
+def test_add_to_plex_settings_are_honoured(client, monkeypatch):
+    core = client.app_ref.state.core
+    core.cfg.library.plex.url, core.cfg.library.plex.token = "http://plex", "t"
+    calls = []
+    monkeypatch.setattr(core, "_plex_refresh", lambda: calls.append("refresh") or "refreshed")
+    monkeypatch.setattr(core, "_plex_find", lambda title: calls.append("find") or (None, ""))
+
+    core.cfg.render.plex_refresh = False
+    core.cfg.render.plex_collection = ""
+    assert core._plex_finalize("Took", ["/out/Took.mkv"]) == "Plex refresh is off"
+    assert calls == []  # neither a rescan nor a collection lookup
+
+    core.cfg.render.plex_refresh, core.cfg.render.plex_collection = True, "Fan edits"
+    note = core._plex_finalize("Took", ["/out/Took.mkv"])
+    assert calls == ["refresh", "find"] and "not found in Plex yet" in note

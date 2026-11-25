@@ -105,6 +105,23 @@ def create_from_template(core: CoreDep, tid: str, body: TemplateBody) -> dict[st
     return core.template_create(tid, body.model_dump())
 
 
+@router.get("/movies/{key:path}/plex")
+def movie_plex(core: CoreDep, key: str) -> dict[str, str]:
+    """Movie → Play: the film's page in Plex Web on the user's server."""
+    return {"url": core.movie_plex_url(key)}
+
+
+@router.get("/cuts/{tid}/plex")
+def cut_plex(core: CoreDep, tid: str) -> dict[str, str]:
+    """My cuts → Open in Plex: the built cut, once Plex has scanned it."""
+    return {"url": core.cut_plex_url(tid)}
+
+
+@router.get("/playlists/{pid}/plex")
+def playlist_plex(core: CoreDep, pid: str) -> dict[str, str]:
+    return {"url": core.playlist_plex_url(pid)}
+
+
 @router.get("/cuts")
 def my_cuts(core: CoreDep) -> dict[str, Any]:
     """Every timeline and every rendered file."""

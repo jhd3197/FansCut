@@ -84,13 +84,17 @@ def test_install_records_sha_poster_and_updates(client, sonarr_mock, tmp_path):
     assert ups[0]["update"] is False
 
     # the repo moved on: update pulls the new recipe into the same timeline
-    new = {**TOOK, "title": "Took (v2)"}
+    new = {**TOOK, "title": "Took (v2)",
+           "parts": [{"title": "Took", "segments": [{"src": "AUJ", "start": 2.0, "end": 9.0}]}]}
     sonarr_mock.add(responses.GET, f"{API}/commits/dev", json={"sha": SHA2})
     sonarr_mock.add(responses.GET, f"{API}/contents/fanscut.json?ref={SHA2}",
                     body=json.dumps(new))
-    assert client.get("/api/cuts/updates").json()["installs"][0]["update"] is True
+    ups = client.get("/api/cuts/updates").json()["installs"]
+    assert ups[0]["update"] is True
+    assert ups[0]["summary"] == "1 film re-timed, renamed to “Took (v2)”"
     up = client.post(f"/api/cuts/{out['id']}/update").json()
     assert up["id"] == out["id"] and up["changed"] and up["sha"] == SHA2
+    assert up["summary"].startswith("1 film re-timed")
     assert client.get(f"/api/timelines/{out['id']}").json()["title"] == "Took (v2)"
 
 
@@ -117,3 +121,20 @@ def test_github_token_is_masked(client):
     core.cfg.community.github_token = "ghp_secret"
     s = client.get("/api/settings").json()
     assert "ghp_secret" not in json.dumps(s)
+
+
+def test_change_summary_words():
+    def doc(*segs, parts=1, variants=()):
+        return {"title": "T", "sources": {"S01E01": {}, "S01E02": {}},
+                "variants": [{"id": v} for v in variants],
+                "parts": [{"segments": list(segs)}] * parts}
+
+    a = {"src": "S01E01", "start": 0, "end": 10}
+    b = {"src": "S01E02", "start": 0, "end": 10}
+    moved = {**a, "end": 12}
+    assert community.change_summary(doc(a, b), doc(moved, {**b, "start": 1})) == \
+        "2 episodes re-timed"
+    assert community.change_summary(doc(a), doc(a, b)) == "1 scene added"
+    assert community.change_summary(doc(a, b), doc(b, a)) == "2 scenes replaced"
+    assert community.change_summary(doc(a), doc(a, variants=["x"])) == "1 new variant"
+    assert community.change_summary(doc(a), doc(a)).startswith("details changed")

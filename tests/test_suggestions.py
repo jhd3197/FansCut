@@ -153,3 +153,34 @@ def test_install_watch_order_makes_playlist_no_render(client, took_library):
     from urllib.parse import unquote
     assert "library/metadata/100" in unquote(posts[0].request.url)
     assert client.get("/api/jobs").json()["jobs"] == []  # nothing rendered
+
+    # My cuts lists it (the Playlists filter), with a link into Plex
+    cuts = client.get("/api/cuts").json()["cuts"]
+    pl = next(c for c in cuts if c["kind"] == "playlist")
+    assert pl["playlist_id"] == "777" and len(pl["films"]) == 3
+    url = client.get("/api/playlists/777/plex").json()["url"]
+    assert url == f"{PLEX}/web/index.html#!/server/abc/playlist?key=%2Fplaylists%2F777"
+    assert client.get("/api/playlists/999/plex").status_code == 404
+
+
+def test_movie_play_links_into_plex(client, took_library):
+    key = client.get("/api/library/movies").json()["movies"][0]["key"]
+    url = client.get(f"/api/movies/{key}/plex").json()["url"]
+    assert url.startswith(f"{PLEX}/web/index.html#!/server/abc/details?key=")
+    assert url.endswith("%2Flibrary%2Fmetadata%2F100")
+
+
+def test_cut_opens_in_plex_once_scanned(client, took_library):
+    tid = client.post("/api/series/movie:49051/timelines", json=TOOK_RECIPE).json()["id"]
+    # Plex's title filter also returns near misses (the Hobbit films): not the cut
+    assert client.get(f"/api/cuts/{tid}/plex").status_code == 404  # not scanned yet
+    core = client.app_ref.state.core
+    from fanscut.timeline import render as tl_render
+
+    doc = TOOK_RECIPE
+    show = tl_render.show_name(core._timeline_series_title("movie:49051", doc), doc["title"])
+    took_library.replace(responses.GET, f"{PLEX}/library/sections/2/all", json={
+        "MediaContainer": {"Metadata": [{"ratingKey": "4242", "title": show}]}})
+    url = client.get(f"/api/cuts/{tid}/plex").json()["url"]
+    assert url.endswith("%2Flibrary%2Fmetadata%2F4242")
+    assert core.db.one("SELECT rating_key FROM plex_items WHERE ref = ?", (tid,))[0] == "4242"

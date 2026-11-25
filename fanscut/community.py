@@ -233,3 +233,49 @@ def save_poster(data: bytes, ext: str, folder: Path, name: str) -> str:
     path = folder / f"{name}{ext}"
     path.write_bytes(data)
     return str(path)
+
+
+def _plural(n: int, one: str, many: str = "") -> str:
+    return f"{n} {one if n == 1 else (many or one + 's')}"
+
+
+def change_summary(old: dict[str, Any], new: dict[str, Any]) -> str:
+    """What an update changes, in a few words: "2 episodes re-timed, 1 scene added".
+
+    Segments are compared by position (part, index); a segment with the same source
+    whose times moved counts its source as re-timed."""
+    def segs(doc: dict[str, Any]) -> dict[tuple[int, int], dict[str, Any]]:
+        return {(pi, si): s for pi, p in enumerate(doc.get("parts", []))
+                for si, s in enumerate(p.get("segments", []))}
+
+    a, b = segs(old), segs(new)
+    retimed: set[str] = set()
+    for k in a.keys() & b.keys():
+        x, y = a[k], b[k]
+        if x.get("src") == y.get("src") and (
+                abs(x.get("start", 0) - y.get("start", 0)) >= 0.01
+                or abs(x.get("end", 0) - y.get("end", 0)) >= 0.01):
+            retimed.add(str(y.get("src")))
+    swapped = sum(1 for k in a.keys() & b.keys() if a[k].get("src") != b[k].get("src"))
+    added, removed = len(b.keys() - a.keys()), len(a.keys() - b.keys())
+    out = []
+    if retimed:
+        movies = all((new.get("sources", {}).get(s) or {}).get("kind") == "movie"
+                     for s in retimed)
+        out.append(f"{_plural(len(retimed), 'film' if movies else 'episode')} re-timed")
+    if added:
+        out.append(f"{_plural(added, 'scene')} added")
+    if removed:
+        out.append(f"{_plural(removed, 'scene')} removed")
+    if swapped:
+        out.append(f"{_plural(swapped, 'scene')} replaced")
+    dp = len(new.get("parts", [])) - len(old.get("parts", []))
+    if dp:
+        out.append(f"{_plural(abs(dp), 'part')} {'added' if dp > 0 else 'removed'}")
+    had = {v.get("id") for v in old.get("variants", [])}
+    nv = {v.get("id") for v in new.get("variants", [])} - had
+    if nv:
+        out.append(_plural(len(nv), "new variant"))
+    if new.get("title") != old.get("title"):
+        out.append(f"renamed to “{new.get('title')}”")
+    return ", ".join(out) or "details changed (notes, credits or anchors)"

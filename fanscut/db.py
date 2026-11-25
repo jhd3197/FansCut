@@ -194,7 +194,23 @@ def _v8() -> str:
     """
 
 
-MIGRATIONS: list[Callable[[], str]] = [_v1, _v2, _v3, _v4, _v5, _v6, _v7, _v8]
+def _v9() -> str:
+    # What FansCut put into Plex: rendered cuts (found after Plex scans them) and
+    # watch-order playlists, so My cuts can list playlists and open either in Plex.
+    return """
+        CREATE TABLE plex_items (
+            kind        TEXT NOT NULL,             -- 'cut' or 'playlist'
+            ref         TEXT NOT NULL,             -- timeline id, or the suggestion id
+            rating_key  TEXT NOT NULL,             -- Plex's id for the item
+            title       TEXT NOT NULL,
+            detail      TEXT NOT NULL DEFAULT '{}',-- JSON: films for a playlist
+            created_at  TEXT NOT NULL,
+            PRIMARY KEY (kind, ref)
+        );
+    """
+
+
+MIGRATIONS: list[Callable[[], str]] = [_v1, _v2, _v3, _v4, _v5, _v6, _v7, _v8, _v9]
 
 
 class Database:

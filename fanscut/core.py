@@ -992,10 +992,12 @@ class Core:
                 if not movie_mode:
                     nfo = tl_render.nfo_episode(part["title"], pi + 1)
                     out.with_suffix(".nfo").write_text(nfo, encoding="utf-8")
-        poster = (self._installed_poster(tid, show_dir)
-                  or (self._write_poster(show_dir, outputs[0]) if outputs else None))
+        poster = None
+        if self.cfg.render.poster:
+            poster = (self._installed_poster(tid, show_dir)
+                      or (self._write_poster(show_dir, outputs[0]) if outputs else None))
         plex_note = self._plex_finalize(show, outputs,
-                                        collection=payload.get("collection", True))
+                                        collection=payload.get("collection", True), tid=tid)
         return {"show": show, "parts": len(outputs), "cached": cached, "outputs": outputs,
                 "poster": poster, "subtitles": sidecars,
                 "warnings": warnings, "plex": plex_note,
@@ -1029,45 +1031,144 @@ class Core:
                 tmp.unlink()
             return None
 
-    def _plex_finalize(self, show: str, outputs: list[str], collection: bool = True) -> str:
-        """Refresh Plex and add the rendered show/movie to a 'FansCut' collection."""
-        note = self._plex_refresh()
-        if not (collection and self.cfg.library.plex.url and self.cfg.library.plex.token
-                and outputs):
+    def _plex_finalize(self, show: str, outputs: list[str], collection: bool = True,
+                       tid: str | None = None) -> str:
+        """Settings → Add to Plex: rescan, then add the result to the FansCut collection.
+
+        Plex scans in the background, so the new item is often not there yet; the
+        collection step then says so, and "Open in Plex" finds it later."""
+        rcfg = self.cfg.render
+        note = self._plex_refresh() if rcfg.plex_refresh else "Plex refresh is off"
+        name = rcfg.plex_collection.strip()
+        if not (collection and name and self.cfg.library.plex.url
+                and self.cfg.library.plex.token and outputs):
             return note
         try:
+            item, section = self._plex_find(show)
+            if not item:
+                return f"{note}; “{show}” not found in Plex yet (rescan picks it up)"
+            rk = str(item["ratingKey"])
             plex = self.library.plex()
             assert plex is not None
-            want = set(self.cfg.library.plex.sections) | set(self.cfg.library.plex.movie_sections)
-            for s in plex.sections():
-                if want and s["key"] not in want and s["title"] not in want:
-                    continue
-                item = plex.find_in_section(s["key"], show)
-                if not item:
-                    continue
-                cid = plex.collection_id(s["key"], "FansCut", str(item["ratingKey"]))
-                plex.add_to_collection(cid, str(item["ratingKey"]))  # Plex dedups
-                return f"{note}; added “{show}” to the FansCut collection"
-            return f"{note}; “{show}” not found in Plex yet (rescan picks it up)"
+            cid = plex.collection_id(section, name, rk)
+            plex.add_to_collection(cid, rk)  # Plex dedups
+            if tid:
+                self._remember_plex("cut", tid, rk, show)
+            return f"{note}; added “{show}” to the {name} collection"
         except Exception as exc:  # noqa: BLE001 - collection add is a courtesy
             return f"{note}; collection step failed: {exc}"
 
+    def _plex_sections(self) -> list[dict[str, Any]]:
+        """The show and movie sections FansCut works with (all of them when none are set)."""
+        plex = self.library.plex()
+        assert plex is not None
+        pc = self.cfg.library.plex
+        out = []
+        for s in plex.sections():
+            want = set(pc.sections) if s["type"] == "show" else set(pc.movie_sections)
+            if s["type"] in ("show", "movie") and (
+                    not want or s["key"] in want or s["title"] in want):
+                out.append(s)
+        return out
+
+    def _plex_find(self, title: str) -> tuple[dict[str, Any] | None, str]:
+        plex = self.library.plex()
+        assert plex is not None
+        for s in self._plex_sections():
+            item = plex.find_in_section(s["key"], title)
+            if item:
+                return item, s["key"]
+        return None, ""
+
     def _plex_refresh(self) -> str:
-        """Ask Plex to rescan show sections after a timeline render. Best effort."""
+        """Ask Plex to rescan after a render: show sections and movie sections, since a
+        single-part cut lands in a movie library. Best effort."""
         if not (self.cfg.library.plex.url and self.cfg.library.plex.token):
             return "no Plex configured"
         try:
             plex = self.library.plex()
             assert plex is not None
-            want = set(self.cfg.library.plex.sections)
-            refreshed = 0
-            for s in plex.sections():
-                if s["type"] == "show" and (not want or s["key"] in want or s["title"] in want):
-                    plex.refresh_section(s["key"])
-                    refreshed += 1
-            return f"plex refreshed {refreshed} section(s)"
+            secs = self._plex_sections()
+            for s in secs:
+                plex.refresh_section(s["key"])
+            return f"plex refreshed {len(secs)} section(s)"
         except Exception as exc:  # noqa: BLE001 - refresh is a courtesy, never fatal
             return f"plex refresh failed: {exc}"
+
+    # -- Plex deep links and what FansCut put into Plex -------------------------------
+    def _remember_plex(self, kind: str, ref: str, rating_key: str, title: str,
+                       detail: dict[str, Any] | None = None) -> None:
+        self.db.execute(
+            "INSERT OR REPLACE INTO plex_items (kind, ref, rating_key, title, detail,"
+            " created_at) VALUES (?,?,?,?,?,?)",
+            (kind, ref, rating_key, title, dumps(detail or {}),
+             _dt.datetime.now().isoformat(timespec="seconds")))
+
+    def plex_items(self, kind: str) -> list[dict[str, Any]]:
+        return [{**dict(r), "detail": json.loads(r["detail"])} for r in self.db.query(
+            "SELECT * FROM plex_items WHERE kind = ? ORDER BY created_at DESC", (kind,))]
+
+    def _plex_server(self) -> tuple[str, str]:
+        """(Plex URL, server id) for Plex Web links on the user's own server."""
+        pc = self.cfg.library.plex
+        if not (pc.url and pc.token):
+            raise FansCutError("Plex is not set up: add it in Settings")
+        machine = getattr(self, "_plex_machine", None)
+        if not machine:
+            plex = self.library.plex()
+            assert plex is not None
+            machine = self._plex_machine = plex.identity()["machineIdentifier"]
+        return pc.url.rstrip("/"), machine
+
+    def _plex_web(self, rating_key: str) -> str:
+        from urllib.parse import quote
+
+        url, machine = self._plex_server()
+        return (f"{url}/web/index.html#!/server/{machine}/details"
+                f"?key={quote(f'/library/metadata/{rating_key}', safe='')}")
+
+    def movie_plex_url(self, key: str) -> str:
+        """Movie → Play: the film's page in Plex (any copy Plex knows)."""
+        movies, _ = self.library.list_movies()
+        m = next((x for x in movies if x.key == key), None) or self.library.get_movie(key)
+        rk = m.plex_key or next((x.plex_key for x in movies if x.plex_key and (
+            (m.tmdb_id and x.tmdb_id == m.tmdb_id) or (x.title, x.year) == (m.title, m.year))),
+            None)
+        if not rk:
+            raise NotFoundError(f"{m.title} is not in Plex")
+        return self._plex_web(rk)
+
+    def cut_plex_url(self, tid: str) -> str:
+        """My cuts → Open in Plex: the built cut's page, found by its folder name once
+        Plex has scanned it, then remembered."""
+        row = self.db.one("SELECT rating_key FROM plex_items WHERE kind='cut' AND ref=?", (tid,))
+        if row:
+            return self._plex_web(row["rating_key"])
+        from .timeline import render as tl_render
+
+        doc, key, _report = self._timeline_ctx(tid)
+        show = tl_render.show_name(self._timeline_series_title(key, doc), doc["title"])
+        names = [show]
+        for v in doc.get("variants", []):  # a variant build is "<show> (<label>)"
+            names.append(tl_render.with_variant(show, v["label"]))
+        if not (self.cfg.library.plex.url and self.cfg.library.plex.token):
+            raise FansCutError("Plex is not set up: add it in Settings")
+        for name in names:
+            item, _sec = self._plex_find(name)
+            if item:
+                self._remember_plex("cut", tid, str(item["ratingKey"]), name)
+                return self._plex_web(str(item["ratingKey"]))
+        raise NotFoundError(f"“{show}” is not in Plex yet: build it, then let Plex scan")
+
+    def playlist_plex_url(self, pid: str) -> str:
+        from urllib.parse import quote
+
+        if not self.db.one("SELECT 1 FROM plex_items WHERE kind='playlist' AND rating_key=?",
+                           (pid,)):
+            raise NotFoundError("FansCut did not make that playlist")
+        url, machine = self._plex_server()
+        return (f"{url}/web/index.html#!/server/{machine}/playlist"
+                f"?key={quote(f'/playlists/{pid}', safe='')}")
 
     # -- preview clips and stills (sync review, Build, the editor, Health) ---------
     def _episode_file(self, key: str, episode_id: str) -> str:
@@ -1347,10 +1448,14 @@ class Core:
         clean = tl_recipe.validate(doc)
         row = self.db.one("SELECT * FROM installs WHERE repo = ?", (repo.slug,))
         now = _dt.datetime.now().isoformat(timespec="seconds")
-        if row and self.db.one("SELECT id FROM timelines WHERE id = ?", (row["timeline_id"],)):
+        summary = ""
+        old = self.db.one("SELECT doc FROM timelines WHERE id = ?",
+                          (row["timeline_id"],)) if row else None
+        if row and old:
             tid = row["timeline_id"]
             changed = row["sha"] != sha
             if changed:
+                summary = community.change_summary(json.loads(old["doc"]), clean)
                 self.update_timeline(tid, clean)
         else:
             tid = self.create_timeline(self._timeline_key(clean), clean)["id"]
@@ -1363,7 +1468,7 @@ class Core:
             " timeline_id = ?), ?),?)",
             (tid, repo.slug, branch, sha, poster or (row["poster"] if row else ""), tid, now, now))
         return {"id": tid, "title": clean["title"], "repo": repo.url, "ref": branch, "sha": sha,
-                "changed": changed, "poster": bool(poster)}
+                "changed": changed, "poster": bool(poster), "summary": summary}
 
     def _fill_movie_durations(self, doc: Any) -> Any:
         """Movie sources may omit duration; the user's copy supplies it."""
@@ -1411,10 +1516,24 @@ class Core:
                 err = ""
             except community.CommunityError as exc:
                 sha, err = r["sha"], str(exc)
+            summary = ""
+            if sha != r["sha"] and not err:
+                summary = self._update_summary(gh, r["repo"], sha, r["timeline_id"])
             out.append({"id": r["timeline_id"], "repo": f"https://github.com/{r['repo']}",
                         "ref": r["ref"], "installed": r["sha"], "latest": sha,
-                        "update": sha != r["sha"], "error": err})
+                        "update": sha != r["sha"], "error": err, "summary": summary})
         return {"installs": out}
+
+    def _update_summary(self, gh: Any, slug: str, sha: str, tid: str) -> str:
+        """"2 episodes re-timed": the new recipe against the installed one. "" if unknown."""
+        from . import community
+
+        try:
+            new = json.loads(gh.raw(community.Repo(*slug.split("/", 1)), sha, "fanscut.json"))
+            row = self.db.one("SELECT doc FROM timelines WHERE id = ?", (tid,))
+            return community.change_summary(json.loads(row["doc"]), new) if row else ""
+        except (community.CommunityError, ValueError, TypeError, KeyError):
+            return ""
 
     def update_cut(self, tid: str) -> dict[str, Any]:
         row = self.db.one("SELECT * FROM installs WHERE timeline_id = ?", (tid,))
@@ -1648,7 +1767,11 @@ class Core:
             plex = self.library.plex()
             if not plex:
                 raise FansCutError("Plex is not configured")
-            pid = plex.create_playlist(f"{name} — watch order", keys)
+            title = f"{name} — watch order"
+            pid = plex.create_playlist(title, keys)
+            self._remember_plex("playlist", sid, pid, title,
+                                {"films": [m.title for m in movies],
+                                 "keys": [m.key for m in movies]})
             return {"action": "playlist", "playlist_id": pid}
         if kind == "canon":
             job = self.submit_render(ref, None, {"preset": "canon_only"}, "auto")
