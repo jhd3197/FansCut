@@ -67,6 +67,17 @@ def _v1(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _v3(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE custom_segments (
+            series_key TEXT NOT NULL,
+            episode_id TEXT NOT NULL,
+            ranges     TEXT NOT NULL DEFAULT '[]',   -- JSON [[start, end], ...] in seconds
+            PRIMARY KEY (series_key, episode_id)
+        );
+    """)
+
+
 def _v2(conn: sqlite3.Connection) -> None:
     conn.executescript("""
         CREATE TABLE renders (
@@ -83,7 +94,7 @@ def _v2(conn: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2]
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2, _v3]
 
 
 class Database:

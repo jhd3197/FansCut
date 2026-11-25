@@ -210,6 +210,34 @@ class Core:
                 "start": r["start"], "end": r["end"], "source": r["source"]}
         return out
 
+    # -- custom segments ("my own cut") -----------------------------------------
+    def custom_segments(self, key: str) -> dict[str, list[list[float]]]:
+        return {r["episode_id"]: json.loads(r["ranges"]) for r in self.db.query(
+            "SELECT * FROM custom_segments WHERE series_key = ?", (key,))}
+
+    def set_segments(self, key: str, episode_id: str,
+                     ranges: list[list[float]] | None) -> None:
+        """ranges = kept [start, end] pairs in seconds; empty or None clears."""
+        if not ranges:
+            self.db.execute(
+                "DELETE FROM custom_segments WHERE series_key=? AND episode_id=?",
+                (key, episode_id))
+            return
+        clean = []
+        for r in ranges:
+            if not isinstance(r, list | tuple) or len(r) != 2:
+                raise FansCutError("each segment must be [start, end]")
+            s, e = r[0], r[1]
+            if isinstance(s, bool) or isinstance(e, bool) \
+                    or not isinstance(s, int | float) or not isinstance(e, int | float):
+                raise FansCutError("segment bounds must be numbers")
+            if s < 0 or e <= s:
+                raise FansCutError("segment end must be after start, and start not negative")
+            clean.append([float(s), float(e)])
+        self.db.execute(
+            "INSERT OR REPLACE INTO custom_segments (series_key, episode_id, ranges)"
+            " VALUES (?,?,?)", (key, episode_id, dumps(sorted(clean))))
+
     # -- series settings ------------------------------------------------------
     def settings(self, key: str) -> dict[str, Any]:
         defaults = self.cfg.cut.model_dump()
@@ -235,27 +263,31 @@ class Core:
         episodes = self.library.episodes(key)
         labels, sources = self.labels_for(key, episodes)
         overrides, trims = self.overrides(key), self.trims(key)
+        segments = self.custom_segments(key)
         settings = self.settings(key)
         opts = _opts_from(settings, None)
-        plan_eps = self._plan_episodes(episodes, labels, overrides, trims)
+        plan_eps = self._plan_episodes(episodes, labels, overrides, trims, segments)
         from .planner import wants
         rows = []
         for e, pe in zip(episodes, plan_eps, strict=True):
             keep, why = wants(pe, opts)
+            if pe.segments is not None and pe.include is not False:
+                keep, why = True, "custom segments"
             rows.append({
                 "id": e.id, "season": e.season, "number": e.number, "absolute": e.absolute,
                 "title": e.title, "air_date": e.air_date, "duration": e.duration,
                 "has_file": bool(e.file),
                 "label": labels[e.id].label, "label_source": labels[e.id].source,
                 "override": overrides.get(e.id), "include": keep, "include_reason": why,
-                "trims": trims.get(e.id, {}),
+                "trims": trims.get(e.id, {}), "segments": segments.get(e.id),
             })
         return {"series": asdict(series), "settings": settings, "filler_sources": sources,
                 "matches": self.matches(key), "episodes": rows}
 
     def _plan_episodes(self, episodes: list[Episode], labels: dict[str, labelling.LabelResult],
                        overrides: dict[str, dict[str, Any]],
-                       trims: dict[str, dict[str, dict[str, Any]]]) -> list[PlanEpisode]:
+                       trims: dict[str, dict[str, dict[str, Any]]],
+                       segments: dict[str, list[list[float]]]) -> list[PlanEpisode]:
         out = []
         for e in episodes:
             t = {k: (v["start"], v["end"]) for k, v in trims.get(e.id, {}).items()
@@ -263,7 +295,8 @@ class Core:
             out.append(PlanEpisode(
                 id=e.id, number=e.number, season=e.season, file=e.file, duration=e.duration,
                 label=labels[e.id].label, include=(overrides.get(e.id) or {}).get("include"),
-                trims=t, title=e.title))
+                trims=t, title=e.title,
+                segments=[(r[0], r[1]) for r in segments[e.id]] if e.id in segments else None))
         return out
 
     def build_cut(self, key: str, seasons: list[int] | None = None,
@@ -273,7 +306,8 @@ class Core:
             raise NotFoundError("no episodes in that selection")
         labels, _ = self.labels_for(key, episodes)
         opts = _opts_from(self.settings(key), options)
-        plan_eps = self._plan_episodes(episodes, labels, self.overrides(key), self.trims(key))
+        plan_eps = self._plan_episodes(episodes, labels, self.overrides(key), self.trims(key),
+                                       self.custom_segments(key))
         return plan_cut(plan_eps, opts), episodes
 
     # -- rendering ------------------------------------------------------------
@@ -402,7 +436,7 @@ class Core:
                        for k, v in t.items()} for eid, t in self.trims(key).items()}
         return recipe_mod.build(series.title, m["mal_id"] if m else None,
                                 m["anilist_id"] if m else None, self.settings(key),
-                                self.overrides(key), trims)
+                                self.overrides(key), trims, self.custom_segments(key))
 
     def import_recipe(self, key: str, doc: Any) -> dict[str, Any]:
         clean = recipe_mod.validate(doc)
@@ -415,6 +449,8 @@ class Core:
             applied += 1
             if "label" in e or "include" in e:
                 self.set_override(key, eid, e.get("label", UNSET), e.get("include", UNSET))
+            if "segments" in e:
+                self.set_segments(key, eid, e["segments"])
             for kind, rng in e.get("trims", {}).items():
                 self.set_trim(key, eid, kind, *(rng if rng else (None, None)))
         changes = dict(clean["options"])

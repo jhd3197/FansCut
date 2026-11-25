@@ -35,6 +35,9 @@ class PlanEpisode:
     include: bool | None = None  # user override; beats the preset
     trims: dict[str, Range] = field(default_factory=dict)
     title: str = ""
+    # User-chosen ranges to keep, exactly as given: the "my own cut" mode.
+    # When set, they beat the preset and trims (an explicit exclude still wins).
+    segments: list[Range] | None = None
 
 
 @dataclass
@@ -135,6 +138,13 @@ def plan_episode(
     return [(p, reason) for p in pieces]
 
 
+def plan_segments(ep: PlanEpisode) -> list[tuple[Range, str]]:
+    """Custom segments: clamped to the episode, overlaps merged, kept as given."""
+    assert ep.duration is not None
+    ranges = [(max(s, 0.0), min(e, ep.duration)) for s, e in sorted(ep.segments or [])]
+    return [(r, "custom segments") for r in _merge(ranges, 0.0) if r[1] > r[0]]
+
+
 def plan_cut(episodes: list[PlanEpisode], opts: CutOptions) -> CutPlan:
     segments: list[Segment] = []
     kept: list[str] = []
@@ -143,6 +153,8 @@ def plan_cut(episodes: list[PlanEpisode], opts: CutOptions) -> CutPlan:
     first_kept = True
     for ep in episodes:
         keep, why = wants(ep, opts)
+        if ep.segments is not None and ep.include is not False:
+            keep, why = True, "custom segments"
         if ep.duration:
             original += ep.duration
         if not keep:
@@ -151,7 +163,8 @@ def plan_cut(episodes: list[PlanEpisode], opts: CutOptions) -> CutPlan:
         if not ep.file or not ep.duration:
             skipped.append({"episode_id": ep.id, "reason": "no file on disk"})
             continue
-        pieces = plan_episode(ep, opts, first_kept and opts.keep_intro_first_episode)
+        pieces = (plan_segments(ep) if ep.segments is not None
+                  else plan_episode(ep, opts, first_kept and opts.keep_intro_first_episode))
         if not pieces:
             skipped.append({"episode_id": ep.id, "reason": "nothing left after trimming"})
             continue

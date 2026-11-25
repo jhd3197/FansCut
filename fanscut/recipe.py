@@ -1,10 +1,13 @@
 """Cut recipes: a small JSON file with the choices for a series, no video data.
 
-    {"schema": 1, "series": {"title", "mal_id", "anilist_id"}, "preset": "...",
+    {"schema": 2, "series": {"title", "mal_id", "anilist_id"}, "preset": "...",
      "options": {...},
-     "episodes": {"S01E03": {"label", "include", "trims": {"intro": [s, e] | null}}}}
+     "episodes": {"S01E03": {"label", "include", "segments": [[s, e], ...] | null,
+                             "trims": {"intro": [s, e] | null}}}}
 
-Episodes are matched on import by season+episode number.
+Episodes are matched on import by season+episode number. Schema 1 files (no
+`segments`) still import. `segments` are kept ranges in seconds: the "my own
+cut" mode, where the listed pieces are used exactly instead of presets/trims.
 """
 
 from __future__ import annotations
@@ -15,7 +18,8 @@ from .errors import FansCutError
 from .models import LABELS, TRIM_KINDS
 from .planner import PRESETS
 
-SCHEMA = 1
+SCHEMA = 2
+READABLE_SCHEMAS = (1, 2)
 OPTION_KEYS = ("unknown_policy", "keep_intro_first_episode", "pad", "merge_gap", "min_segment",
                "transition")
 
@@ -26,12 +30,15 @@ class RecipeError(FansCutError):
 
 def build(title: str, mal_id: int | None, anilist_id: int | None, settings: dict[str, Any],
           overrides: dict[str, dict[str, Any]],
-          trims: dict[str, dict[str, tuple[float, float] | None]]) -> dict[str, Any]:
+          trims: dict[str, dict[str, tuple[float, float] | None]],
+          segments: dict[str, list[list[float]]] | None = None) -> dict[str, Any]:
     episodes: dict[str, dict[str, Any]] = {}
     for eid, o in overrides.items():
         episodes.setdefault(eid, {}).update({k: v for k, v in o.items() if v is not None})
     for eid, t in trims.items():
         episodes.setdefault(eid, {})["trims"] = {k: list(v) if v else None for k, v in t.items()}
+    for eid, rs in (segments or {}).items():
+        episodes.setdefault(eid, {})["segments"] = [list(r) for r in rs]
     return {
         "schema": SCHEMA,
         "series": {"title": title, "mal_id": mal_id, "anilist_id": anilist_id},
@@ -47,10 +54,27 @@ def _num(v: Any, what: str) -> float:
     return float(v)
 
 
+def _range(v: Any, what: str) -> list[float]:
+    if not isinstance(v, list) or len(v) != 2:
+        raise RecipeError(f"{what}: expected [start, end]")
+    s, t = _num(v[0], what), _num(v[1], what)
+    if t <= s:
+        raise RecipeError(f"{what}: end must be after start")
+    return [s, t]
+
+
+def _segments(v: Any, what: str) -> list[list[float]] | None:
+    if v is None:
+        return None
+    if not isinstance(v, list):
+        raise RecipeError(f"{what}: expected a list of [start, end]")
+    return sorted(_range(r, what) for r in v)
+
+
 def validate(doc: Any) -> dict[str, Any]:
     """Return a cleaned copy or raise RecipeError."""
-    if not isinstance(doc, dict) or doc.get("schema") != SCHEMA:
-        raise RecipeError(f"not a schema {SCHEMA} recipe")
+    if not isinstance(doc, dict) or doc.get("schema") not in READABLE_SCHEMAS:
+        raise RecipeError(f"not a schema {' or '.join(map(str, READABLE_SCHEMAS))} recipe")
     series = doc.get("series", {})
     if not isinstance(series, dict):
         raise RecipeError("series must be an object")
@@ -75,20 +99,14 @@ def validate(doc: Any) -> dict[str, Any]:
             if not isinstance(e["include"], bool):
                 raise RecipeError(f"{eid}: include must be true or false")
             clean["include"] = e["include"]
+        if "segments" in e:
+            clean["segments"] = _segments(e["segments"], f"{eid}.segments")
         if "trims" in e:
             trims: dict[str, list[float] | None] = {}
             for kind, rng in (e["trims"] or {}).items():
                 if kind not in TRIM_KINDS:
                     raise RecipeError(f"{eid}: unknown trim {kind!r}")
-                if rng is None:
-                    trims[kind] = None
-                    continue
-                if not isinstance(rng, list) or len(rng) != 2:
-                    raise RecipeError(f"{eid}.{kind}: expected [start, end]")
-                s, t = _num(rng[0], f"{eid}.{kind}"), _num(rng[1], f"{eid}.{kind}")
-                if t <= s:
-                    raise RecipeError(f"{eid}.{kind}: end must be after start")
-                trims[kind] = [s, t]
+                trims[kind] = None if rng is None else _range(rng, f"{eid}.{kind}")
             clean["trims"] = trims
         episodes[str(eid)] = clean
     return {"series": series, "preset": preset, "options": options, "episodes": episodes}

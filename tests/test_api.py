@@ -331,7 +331,7 @@ def test_recipe_export_import_round_trip(matched):
     matched.put(f"{E}/episodes/S01E01/trims/outro", json={})
     matched.put(f"{E}/settings", json={"preset": "canon_mixed", "pad": 2.0})
     doc = matched.get(f"{E}/recipe").json()
-    assert doc["schema"] == 1 and doc["series"] == {
+    assert doc["schema"] == 2 and doc["series"] == {
         "title": "Harbor Lights", "mal_id": 900001, "anilist_id": 800001}
     assert doc["preset"] == "canon_mixed" and doc["options"]["pad"] == 2.0
     assert doc["episodes"]["S01E01"]["trims"] == {"intro": [60.0, 150.0], "outro": None}
@@ -415,3 +415,38 @@ def test_serves_ui_with_spa_fallback(app_cfg, tmp_path, monkeypatch, sonarr_mock
         assert "shell" not in c.get("/api/nope").text
         assert c.get("/docs").status_code == 200
         assert c.get("/%2e%2e/secret.txt").text == "<html>shell</html>"  # no escaping the dist dir
+
+
+# -- custom segments ------------------------------------------------------------
+def test_custom_segments_api_roundtrip(client):
+    url = f"{E}/episodes/S01E03/segments"
+    r = client.put(url, json={"segments": [[300, 420], [100.5, 200]]})
+    assert r.json()["segments"] == [[100.5, 200.0], [300.0, 420.0]]  # sorted on save
+    eps = episodes(client)
+    assert eps["S01E03"]["segments"] == [[100.5, 200.0], [300.0, 420.0]]
+    assert eps["S01E03"]["include"] is True and eps["S01E03"]["include_reason"] == "custom segments"
+    assert eps["S01E02"]["segments"] is None
+    assert client.put(url, json={"segments": []}).json()["segments"] == []
+    assert episodes(client)["S01E03"]["segments"] is None
+
+
+def test_custom_segments_validated(client):
+    url = f"{E}/episodes/S01E03/segments"
+    assert client.put(url, json={"segments": [[10, 5]]}).status_code == 400
+    assert client.put(url, json={"segments": [[-1, 5]]}).status_code == 400
+    assert client.put(url, json={"segments": [[1]]}).status_code == 400
+
+
+def test_custom_segments_in_cut_and_recipe(matched):
+    matched.put(f"{E}/episodes/S01E02/segments", json={"segments": [[60, 120], [300, 360]]})
+    cut = matched.post(f"{E}/cut", json={}).json()
+    own = [s for s in cut["segments"] if s["episode_id"] == "S01E02"]
+    assert [(s["start"], s["end"]) for s in own] == [(60.0, 120.0), (300.0, 360.0)]
+
+    doc = matched.get(f"{E}/recipe").json()
+    assert doc["schema"] == 2
+    assert doc["episodes"]["S01E02"]["segments"] == [[60.0, 120.0], [300.0, 360.0]]
+    matched.delete(f"{E}/episodes/S01E02/segments")
+    res = matched.post(f"{E}/recipe", json=doc).json()
+    assert res == {"applied": 1, "skipped": []}
+    assert episodes(matched)["S01E02"]["segments"] == [[60.0, 120.0], [300.0, 360.0]]
