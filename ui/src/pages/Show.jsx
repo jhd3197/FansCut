@@ -4,7 +4,6 @@ import { api, seriesPath } from '../lib/api.js';
 import { useAct, useLoad, usePageTitle } from '../lib/hooks.js';
 import { CutTile, Crumbs, KV, PlainPoster, Section, enc } from '../components/kit.jsx';
 import { Dialog, ErrorBox, Loading, Notice } from '../components/ui.jsx';
-import { MatchDialog } from '../components/MatchDialog.jsx';
 import { RecipeDialog, downloadJson, recipeFileName } from '../components/Recipe.jsx';
 import { audioSummary, showFolder, subtitleSummary } from './Episode.jsx';
 import { useApi } from '../lib/store.js';
@@ -83,7 +82,7 @@ export function ShowPage() {
   const first = (eps.find((e) => e.has_file && e.season > 0) || eps.find((e) => e.has_file))?.id;
   const probe = useLoad(() => (first ? api(`${base}/episodes/${enc(first)}/info`).catch(() => null) : Promise.resolve(null)), [key, first]);
   const { act, msg, busy, clear } = useAct();
-  const [dialog, setDialog] = useState(null); // 'match' | 'recipe' | {del: timeline}
+  const [dialog, setDialog] = useState(null); // 'recipe' | {del: timeline}
   const file = useRef(null);
 
   if (view.error && !view.data) return <div className="page"><ErrorBox error={view.error} onRetry={view.reload} /></div>;
@@ -163,7 +162,7 @@ export function ShowPage() {
             ['Catalogue', (
               <span className="row wrap">
                 <span>{matchText || <span className="muted">Not matched. Labels fall back to “unknown”.</span>}</span>
-                <button type="button" className="btn btn-sm" onClick={() => setDialog('match')}>{whole ? 'Change' : 'Match to MAL / AniList'}</button>
+                <Link className="btn btn-sm" to={`${showTo}/match`}>{whole ? 'Change' : 'Match to MAL / AniList'}</Link>
                 <button type="button" className="btn btn-sm btn-ghost" onClick={autoMatch} disabled={busy}>Auto-match</button>
               </span>
             )],
@@ -229,7 +228,6 @@ export function ShowPage() {
         </Section>
       )}
 
-      {dialog === 'match' && <MatchDialog series={series} matches={matches} onClose={() => setDialog(null)} onChanged={view.reload} />}
       {dialog === 'recipe' && <RecipeDialog series={series} onClose={() => setDialog(null)} onImported={view.reload} />}
       {dialog?.del && (
         <Dialog title="Delete timeline" onClose={() => setDialog(null)}>

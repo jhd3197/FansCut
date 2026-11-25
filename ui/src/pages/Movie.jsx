@@ -1,13 +1,12 @@
-import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { ErrorBox, Loading } from '../components/ui.jsx';
 import { Crumbs, KV, Section, enc, hm } from '../components/kit.jsx';
 import { SuggestionTile, TimelineTile } from './Discover.jsx';
 import { FilmTile, ShowTile } from './Collection.jsx';
 import { movieTag } from './LibraryPage.jsx';
-import { TemplateDialog } from '../components/TemplateDialog.jsx';
+import { newCutTo } from './NewCut.jsx';
 import { useApi } from '../lib/store.js';
-import { usePageTitle } from '../lib/hooks.js';
+import { useFrom, usePageTitle } from '../lib/hooks.js';
 
 const CODECS = {
   hevc: 'HEVC', h264: 'H.264', av1: 'AV1', vp9: 'VP9', mpeg2video: 'MPEG-2', mpeg4: 'MPEG-4',
@@ -64,7 +63,7 @@ function Health({ findings }) {
 
 export function MoviePage() {
   const { key } = useParams();
-  const [tpl, setTpl] = useState(false);
+  const from = useFrom();
   const { data: m, error, loading, reload } = useApi(`/library/movies/${encodeURIComponent(key)}`);
   const sugg = useApi('/suggestions', { quiet: true });
   usePageTitle(m?.title);
@@ -117,9 +116,8 @@ export function MoviePage() {
           </div>
           <KV rows={rows} />
           <div className="row wrap">
-            <button type="button" className="btn" onClick={() => setTpl(true)}>New cut with this film</button>
+            <Link className="btn" to={newCutTo({ movies: [m.key], template: 'watch-order' })} state={from}>New cut with this film</Link>
           </div>
-          {tpl && <TemplateDialog movies={[m.key]} template="watch-order" onClose={() => setTpl(false)} />}
         </div>
       </div>
 

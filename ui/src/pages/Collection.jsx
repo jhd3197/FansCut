@@ -1,12 +1,11 @@
-import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, usePageTitle } from '../lib/hooks.js';
+import { useAct, useFrom, usePageTitle } from '../lib/hooks.js';
 import { Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import { Crumbs, MediaTile, Section, enc, hm, palette } from '../components/kit.jsx';
 import { movieTag, quality } from './LibraryPage.jsx';
 import { SuggestionTile, TimelineTile } from './Discover.jsx';
-import { TemplateDialog } from '../components/TemplateDialog.jsx';
+import { newCutTo } from './NewCut.jsx';
 import { useApi } from '../lib/store.js';
 
 // A film on a shelf: its real poster, the facts underneath ("Extended · 1080p").
@@ -34,7 +33,7 @@ export function CollectionPage() {
   const { data, error, loading, reload } = useApi(`/library/collections/${enc(name)}`);
   usePageTitle(name);
   const { act, msg, busy, clear } = useAct();
-  const [tpl, setTpl] = useState(false);
+  const from = useFrom();
 
   if (error && !data) return <div className="page"><Crumbs items={[['Library', '/library'], [name]]} /><ErrorBox error={error} onRetry={reload} /></div>;
   if (loading || !data) return <div className="page"><Loading /></div>;
@@ -67,12 +66,11 @@ export function CollectionPage() {
           <div className="row wrap" style={{ marginTop: 6 }}>
             {order && <button type="button" className="btn btn-primary" onClick={playInOrder} disabled={busy}
               title="Creates a Plex playlist of these films in order">Play in order</button>}
-            <button type="button" className="btn" onClick={() => setTpl(true)}>New cut from this collection</button>
+            <Link className="btn" to={newCutTo({ movies: data.films.filter((f) => f.on_disk).map((f) => f.key) })} state={from}>New cut from this collection</Link>
           </div>
         </div>
       </div>
       <Notice msg={msg} onClose={clear} />
-      {tpl && <TemplateDialog movies={data.films.filter((f) => f.on_disk).map((f) => f.key)} onClose={() => setTpl(false)} />}
 
       <Section id="films-h" title="Films" count={data.films.length}>
         <div className="shelf">

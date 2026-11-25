@@ -13,6 +13,8 @@ import { SeasonPage } from './pages/Season.jsx';
 import { EpisodePage } from './pages/Episode.jsx';
 import { CutDetail } from './pages/CutDetail.jsx';
 import { SuggestionPage } from './pages/Suggestion.jsx';
+import { NewCutPage } from './pages/NewCut.jsx';
+import { MatchPage } from './pages/Match.jsx';
 import { MyCuts } from './pages/MyCuts.jsx';
 import { Jobs } from './pages/Jobs.jsx';
 import { Health } from './pages/Health.jsx';
@@ -172,6 +174,7 @@ export function App() {
           <Route path="/collections/:name" element={<CollectionPage />} />
           <Route path="/movies/:key" element={<MoviePage />} />
           <Route path="/series/:key" element={<ShowPage />} />
+          <Route path="/series/:key/match" element={<MatchPage />} />
           <Route path="/series/:key/season/:season" element={<SeasonPage />} />
           <Route path="/series/:key/episode/:eid" element={<EpisodePage />} />
           <Route path="/series/:key/cut" element={<OldCut />} />
@@ -180,6 +183,7 @@ export function App() {
           <Route path="/cuts/:id/build" element={<Build />} />
           <Route path="/cuts/:id/edit" element={<TimelineEdit />} />
           <Route path="/my-cuts" element={<MyCuts />} />
+          <Route path="/new" element={<NewCutPage />} />
           <Route path="/jobs" element={<Jobs />} />
           <Route path="/health" element={<Health />} />
           <Route path="/settings" element={<Settings />} />

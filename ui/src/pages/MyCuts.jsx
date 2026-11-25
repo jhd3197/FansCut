@@ -4,7 +4,6 @@ import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAct, usePoll, useUrlState } from '../lib/hooks.js';
 import { enc, hm, Poster, Seg } from '../components/kit.jsx';
-import { TemplateDialog } from '../components/TemplateDialog.jsx';
 import { Dialog, Empty, ErrorBox, Loading, MoreMenu, Notice } from '../components/ui.jsx';
 import { useApi } from '../lib/store.js';
 
@@ -33,7 +32,6 @@ export function MyCuts() {
   const jobsQ = useApi('/jobs');
   const [show, setShow] = useUrlState('show', 'all');
   const [doomed, setDoomed] = useState(null);
-  const [tpl, setTpl] = useState(false);
   const [updates, setUpdates] = useState(null);
   const { act, msg, busy, clear } = useAct();
   const jobs = jobsQ.data?.jobs || [];
@@ -82,7 +80,7 @@ export function MyCuts() {
           options={[['all', 'All'], ['updates', nUpd ? `Updates ${nUpd}` : 'Updates'], ['cuts', 'Cuts'], ['playlists', 'Playlists']]} />
         <span className="row wrap">
           <button type="button" className="btn" disabled={busy} onClick={checkUpdates}>Check for updates</button>
-          <button type="button" className="btn" onClick={() => setTpl(true)}>New cut from template</button>
+          <Link className="btn" to="/new" state={{ from: { label: 'My cuts', to: '/my-cuts' } }}>New cut from template</Link>
           <Link className="btn" to="/">Find more cuts</Link>
         </span>
       </div>
@@ -141,7 +139,6 @@ export function MyCuts() {
         </ul>
       )}
 
-      {tpl && <TemplateDialog onClose={() => setTpl(false)} />}
       {doomed && (
         <Dialog title={`Delete ${doomed.title}?`} onClose={() => setDoomed(null)}>
           <p className="muted" style={{ margin: 0 }}>
