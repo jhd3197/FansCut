@@ -121,7 +121,7 @@ export function CutTile({ to, title, sub, tag, kind, meta, status, note, onClick
     </>
   );
   if (to) return <Link className="tile" to={to}>{inner}</Link>;
-  return <button type="button" className="tile" onClick={onClick} style={{ all: 'unset', cursor: 'pointer' }}>{inner}</button>;
+  return <button type="button" className="tile tile-btn" onClick={onClick}>{inner}</button>;
 }
 
 export function MediaTile({ to, tag, short, title, year, meta, note, noteClass = 'muted' }) {

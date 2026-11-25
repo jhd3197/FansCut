@@ -1341,8 +1341,10 @@ class Core:
 
         # (b) Plex collections the user partly or fully owns
         colls: dict[str, list[Any]] = {}
+        from .browse import _collections_of
+
         for m in movies:
-            for c in m.collections:
+            for c in _collections_of(m):  # Plex tags plus known sets (The Hobbit, …)
                 colls.setdefault(c, []).append(m)
         for name, ms in sorted(colls.items()):
             if len(ms) >= 2:
@@ -1428,7 +1430,10 @@ class Core:
 
     def _collection_movies(self, name: str) -> list[Any]:
         movies, _ = self.library.list_movies()
-        return sorted([m for m in movies if name in m.collections], key=lambda m: m.year or 0)
+        from .browse import _collections_of
+
+        return sorted([m for m in movies if name in _collections_of(m)],
+                      key=lambda m: m.year or 0)
 
     def _merge_doc(self, name: str, movies: list[Any]) -> dict[str, Any]:
         sources, segments = {}, []

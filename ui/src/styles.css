@@ -95,6 +95,8 @@ h3 { font-size: 14px; margin: 0; }
 .shelf .tile { flex: 0 0 164px; }
 .tile { display: flex; flex-direction: column; gap: 10px; color: var(--text); text-decoration: none; border-radius: 8px; }
 .tile:hover { color: var(--text); }
+.tile-btn { background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.tile-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .tile:hover .pst { transform: translateY(-3px); box-shadow: 0 14px 28px #00000080; }
 .pst { position: relative; aspect-ratio: 2 / 3; border-radius: 6px; overflow: hidden; transition: transform .2s ease, box-shadow .2s ease; box-shadow: 0 6px 16px #00000059; background: var(--poster); }
 .pst-wide { aspect-ratio: 16 / 9; }

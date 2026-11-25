@@ -86,7 +86,7 @@ export function LibraryPage() {
               <MediaTile key={s.key} to={`/series/${enc(s.key)}`} tag={`TV · ${plural(s.episode_count, 'episode')}`}
                 title={s.title} year={s.year}
                 meta={[s.is_anime ? 'Anime' : null, s.source].filter(Boolean).join(' · ')}
-                note={s.matched ? null : 'Not matched to a catalogue yet'} noteClass="c-warn" />
+                note={s.is_anime && !s.matched ? 'Not matched to a catalogue yet' : null} noteClass="c-warn" />
             ))}
           </div>
         </Section>
