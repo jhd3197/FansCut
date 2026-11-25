@@ -317,7 +317,9 @@ def _merge_series(items: list[Series]) -> list[Series]:
 
 
 def _file_key(path: str) -> str:
-    return os.path.normcase(os.path.normpath(path))
+    # Radarr and Plex may spell one file with different separators (a Windows
+    # server, a path mapping); on Linux normpath leaves backslashes alone.
+    return os.path.normcase(os.path.normpath(path.replace("\\", "/")))
 
 
 def _merge_movies(items: list[Movie]) -> list[Movie]:
