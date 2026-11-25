@@ -197,6 +197,24 @@ def test_refine_merge_and_sweep():
     assert [s["start"] for s in tagger.sweep_candidates(_doc(), max_lines=0)] == [0.0, 200.0, 300.0, 500.0, 600.0]
 
 
+def test_grid_grows_with_the_range():
+    assert tagger.sheet_shape(45) == (3, 2, 240)
+    assert tagger.sheet_shape(77) == (3, 3, 240)
+    assert tagger.sheet_shape(180) == (3, 3, 240)
+    cols, rows, h = tagger.sheet_shape(400)
+    assert (cols, rows) == (4, 3) and cols * (h * 16 // 9) + 12 <= 1568
+
+
+def test_edge_pass_times():
+    times = [2.5, 7.5, 12.5, 17.5, 22.5, 27.5]  # 30 s window, 5 s apart
+    assert tagger.edge_time(times, tagger.EdgeCheck(first_tile=3, last_tile=6), "start") == 10.0
+    assert tagger.edge_time(times, tagger.EdgeCheck(first_tile=1, last_tile=4), "end") == 20.0
+    assert tagger.edge_time(times, tagger.EdgeCheck(first_tile=5, last_tile=2), "end") is None
+    assert tagger.edge_time(times, tagger.EdgeCheck(first_tile=0, last_tile=9), "start") is None
+    assert tagger.edge_window(5, 100) == (0.0, 20.0)
+    assert tagger.edge_window(95, 100) == (80.0, 100)
+
+
 # -- end to end: a generated film with a sidecar SRT -------------------------------
 def _film(path: Path) -> None:
     argv = ["ffmpeg", "-v", "error", "-y"]
@@ -266,6 +284,9 @@ def test_scene_api_end_to_end(sc, monkeypatch):
             return tagger.WindowHits(matches=[tagger.WindowHit(window=0, start="0:20", end="0:29",
                                                                people=["Ron"], confidence=0.8)])
         assert images and images[0][:2] == b"\xff\xd8"
+        if schema is tagger.EdgeCheck:
+            # around the start (20 s) the blue shot begins at tile 4; at the end it runs out
+            return tagger.EdgeCheck(first_tile=4 if "starts" in prompt else 1, last_tile=6)
         return tagger.SheetCheck(match=True, first_tile=1, last_tile=6, summary="practice", people=["Ron"],
                                  confidence=0.6)
 

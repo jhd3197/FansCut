@@ -399,15 +399,29 @@ class SceneService:
             if payload.get("verify", True):
                 from prompture.media.understand import contact_sheet, sample_times
 
-                cols, rows = tagger.SHEET
+                cols, rows, tile_h = tagger.sheet_shape(c["end"] - c["start"])
                 times = sample_times(c["start"], c["end"], cols * rows)
-                sheet = contact_sheet(path, times=times, cols=cols, rows=rows)
+                sheet = contact_sheet(path, times=times, cols=cols, rows=rows, tile_height=tile_h)
                 check = tagger.look(cfg, sheet, title, tag, desc, cast)
                 if not check.match:
                     dropped += 1
                     continue
                 c["start"], c["end"] = tagger.refine(c, check, times)
                 summary = check.summary or summary
+                # Edge pass: frames 5 s apart around each edge pin it down.
+                ecols, erows = tagger.EDGE_GRID
+                for which in ("start", "end"):
+                    lo, hi = tagger.edge_window(c[which], doc.get("duration"))
+                    etimes = sample_times(lo, hi, ecols * erows)
+                    esheet = contact_sheet(path, times=etimes, cols=ecols, rows=erows)
+                    t = tagger.edge_time(
+                        etimes, tagger.edge(cfg, esheet, title, tag, desc, which, summary), which
+                    )
+                    if t is not None:
+                        c[which] = t
+                if c["end"] - c["start"] < 3:
+                    dropped += 1
+                    continue
                 people = list(dict.fromkeys([*check.people, *people]))
                 conf = (conf + check.confidence) / 2
             a, b = idx.snap(doc, c["start"]), idx.snap(doc, c["end"])

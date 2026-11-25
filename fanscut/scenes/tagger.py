@@ -27,7 +27,22 @@ from . import index as idx
 
 WINDOW = 300.0  # seconds of film per subtitle window
 BATCH_CHARS = 14_000  # subtitle text per request
-SHEET = (3, 2)
+SHEET = (3, 2)  # the smallest grid; see sheet_shape
+EDGE_SPAN = 15.0  # seconds either side of an edge that the edge pass looks at
+EDGE_GRID = (3, 2)  # six frames over 30 s: one every 5 s
+
+
+def sheet_shape(seconds: float) -> tuple[int, int, int]:
+    """(cols, rows, tile height) for a range: about one frame every 10-15 s.
+
+    Claude reads an image up to about 1568 px wide at full size, so the 4x3
+    grid uses smaller tiles to stay under it (4 x 384 px plus gaps).
+    """
+    if seconds < 60:
+        return 3, 2, 240
+    if seconds <= 180:
+        return 3, 3, 240
+    return 4, 3, 216
 
 
 class WindowHit(BaseModel):
@@ -175,6 +190,49 @@ def look(
         f"Cast: {cast_hint(cast)}\nTiles: {sheet.legend()}"
     )
     return ai.ask_json(cfg, SheetCheck, LOOK_SYSTEM, prompt, images=[sheet.data])
+
+
+class EdgeCheck(BaseModel):
+    first_tile: int = Field(description="first tile where the tagged scene is on screen")
+    last_tile: int = Field(description="last tile where the tagged scene is on screen")
+
+
+EDGE_SYSTEM = """\
+You set where a tagged scene starts or ends. The contact sheet shows frames a few
+seconds apart around one edge, numbered in reading order with their times. Give the
+first and the last tile that belong to the tagged scene. When every tile belongs to
+it, answer first 1 and last = the number of tiles.
+"""
+
+
+def edge_window(t: float, duration: float | None) -> tuple[float, float]:
+    lo = max(0.0, t - EDGE_SPAN)
+    hi = t + EDGE_SPAN if not duration else min(duration, t + EDGE_SPAN)
+    return lo, hi
+
+
+def edge(
+    cfg: AICfg, sheet: Any, title: str, tag: str, description: str, which: str, summary: str
+) -> EdgeCheck:
+    prompt = (
+        f"Film: {title}\nTag: {tag}\nMeaning: {description or tag}\n"
+        f"The scene: {summary or tag}\nThis sheet is around where the scene "
+        f"{'starts' if which == 'start' else 'ends'}.\nTiles: {sheet.legend()}"
+    )
+    return ai.ask_json(cfg, EdgeCheck, EDGE_SYSTEM, prompt, images=[sheet.data])
+
+
+def edge_time(times: list[float], check: EdgeCheck, which: str) -> float | None:
+    """The edge from an edge check: half a slot before the first matching tile (start)
+    or after the last (end). None when the answer makes no sense."""
+    if len(times) < 2:
+        return None
+    n = len(times)
+    first, last = check.first_tile, check.last_tile
+    if not (1 <= first <= last <= n):
+        return None
+    half = (times[1] - times[0]) / 2
+    return times[first - 1] - half if which == "start" else times[last - 1] + half
 
 
 def refine(cand: dict[str, Any], check: SheetCheck, times: list[float]) -> tuple[float, float]:

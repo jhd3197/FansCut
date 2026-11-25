@@ -49,12 +49,15 @@ Hogwarts: snow, presents, the feast"). The job:
 
 1. sends the dialogue, a few minutes at a time, to `ai.model`, which names the
    stretches where the tag applies (a whole film is about 25k tokens);
-2. shows each stretch to `ai.vision_model` (or `ai.model`) as a labelled 3x2
-   grid of frames, which confirms it, narrows it to the matching tiles and
-   names who is on screen;
-3. optionally (**Also look at scenes with no dialogue**) shows every
+2. shows each stretch to `ai.vision_model` (or `ai.model`) as a labelled grid
+   of frames, about one every 10-15 seconds (3x2 under a minute, 3x3 up to
+   three minutes, 4x3 beyond), which confirms it, narrows it to the matching
+   tiles and names who is on screen;
+3. checks each edge on a second grid of frames 5 seconds apart around it, so
+   the start and end land within a few seconds;
+4. optionally (**Also look at scenes with no dialogue**) shows every
    near-silent scene too, one grid each, for scenes the dialogue can't reveal;
-4. snaps the edges to camera cuts and leaves proposals. A stretch already
+5. snaps the edges to camera cuts and leaves proposals. A stretch already
    tagged with the same tag is skipped, so running it again is safe.
 
 Any [Prompture](https://github.com/jhd3197/prompture) model works:
