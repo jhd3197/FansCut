@@ -398,6 +398,46 @@ class Core:
                 removed.append(r["path"])
         return {"removed": removed}
 
+    # -- Sonarr webhook (auto-render on new episodes) ---------------------------
+    def handle_sonarr_webhook(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Sonarr 'Download'/'Upgrade' -> detect trims + render the affected seasons.
+
+        Never raises: Sonarr retries on non-2xx, so problems come back in the body.
+        """
+        event = payload.get("eventType", "")
+        if event == "Test":
+            return {"ok": True, "action": "test"}
+        if not self.cfg.automation.sonarr_webhook:
+            return {"ok": True, "action": "ignored",
+                    "reason": "automation.sonarr_webhook is off"}
+        if event not in ("Download", "Upgrade"):
+            return {"ok": True, "action": "ignored", "reason": f"event {event or 'unknown'}"}
+        sid = (payload.get("series") or {}).get("id")
+        if sid is None:
+            return {"ok": True, "action": "ignored", "reason": "no series id in payload"}
+        key = f"sonarr:{sid}"
+        self.library.refresh()  # the new file just landed; don't trust the 30s cache
+        try:
+            series = self.library.get_series(key)
+        except NotFoundError:
+            return {"ok": True, "action": "ignored", "reason": f"{key} not in the library"}
+        seasons = sorted({e["seasonNumber"] for e in payload.get("episodes") or []
+                          if isinstance(e.get("seasonNumber"), int)}) or None
+        jobs = []
+        try:
+            if self.cfg.automation.auto_detect:
+                for s in seasons or []:
+                    with_files = [e for e in self.library.episodes(key)
+                                  if e.season == s and e.file and e.duration]
+                    if len(with_files) >= 2:
+                        jobs.append(self.submit_detect(key, s))
+            jobs.append(self.submit_render(key, seasons, None, "auto",
+                                           keep=self.cfg.automation.keep))
+        except FansCutError as exc:
+            return {"ok": False, "action": "error", "reason": str(exc)}
+        return {"ok": True, "action": "queued", "series": series.title, "seasons": seasons,
+                "jobs": [j["id"] for j in jobs]}
+
     # -- OP/ED detection ------------------------------------------------------
     def submit_detect(self, key: str, season: int) -> dict[str, Any]:
         series = self.library.get_series(key)

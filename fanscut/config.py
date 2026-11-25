@@ -112,6 +112,12 @@ class RenderCfg(BaseModel):
     ephemeral_days: int = 7  # sweep deletes non-kept renders older than this; 0 = never
 
 
+class AutomationCfg(BaseModel):
+    sonarr_webhook: bool = False  # accept POST /api/webhooks/sonarr (no auth: keep local)
+    auto_detect: bool = True  # run OP/ED detection on affected seasons before rendering
+    keep: bool = True  # keep flag for webhook-triggered renders
+
+
 class Config(BaseModel):
     server: ServerCfg = Field(default_factory=ServerCfg)
     paths: PathsCfg = Field(default_factory=PathsCfg)
@@ -122,6 +128,7 @@ class Config(BaseModel):
     ffmpeg: FFmpegCfg = Field(default_factory=FFmpegCfg)
     cut: CutCfg = Field(default_factory=CutCfg)
     render: RenderCfg = Field(default_factory=RenderCfg)
+    automation: AutomationCfg = Field(default_factory=AutomationCfg)
 
     @property
     def data_dir(self) -> Path:
