@@ -23,7 +23,7 @@ from .catalogues import match as catalogue_match
 from .catalogues.http import CachedHttp
 from .config import Config
 from .db import Database, dumps
-from .errors import FansCutError, NotFoundError
+from .errors import ClientError, FansCutError, NotFoundError
 from .fillers import anifiller, jikan_flags
 from .fillers import labels as labelling
 from .fingerprint import detect
@@ -326,7 +326,8 @@ class Core:
         stem = plan.safe_name(f"{series.title}{suffix} - fan cut")
         titles = {e.id: f"{e.id} {e.title}".strip() for e in episodes}
         provisional = self.cfg.output_dir / f"{stem}.{self.cfg.ffmpeg.container}"
-        rp = plan.build_plan(cut, self.cfg.ffmpeg, provisional, workdir, self.prober, titles, mode)
+        rp = plan.build_plan(cut, self.cfg.ffmpeg, provisional, workdir, self.prober, titles, mode,
+                             hdr_params=self._hdr_params)
         # The output is named after a hash of everything that shapes its bytes, so
         # re-rendering an unchanged cut finds the file already there (cache hit).
         h = render_hash(key, cut, rp.mode, self.cfg.ffmpeg, rp.chapters)
@@ -656,7 +657,10 @@ class Core:
     def _source_files(self, key: str, doc: dict[str, Any]
                       ) -> dict[str, tuple[str | None, float | None]]:
         """Every source in the recipe -> (file, duration) of the user's copy, or None."""
-        episodes = {e.id: e for e in self.library.episodes(key)}
+        try:
+            episodes = {e.id: e for e in self.library.episodes(key)}
+        except (NotFoundError, ClientError):
+            episodes = {}  # movie-only timeline: no series attached
         out: dict[str, tuple[str | None, float | None]] = {}
         for src, s in doc["sources"].items():
             if s.get("kind") == "movie":
@@ -700,18 +704,69 @@ class Core:
                 amap[f] = idx
         return amap, warnings
 
-    def timeline_dry_run(self, tid: str, mode: plan.Mode = "auto") -> dict[str, Any]:
+    def _through_effectcraft(self, cut: Any, workdir: Path, ctx: JobContext, pi: int) -> Any:
+        """Grade segments through EffectCraft when it's configured; others untouched."""
+        from dataclasses import replace
+
+        from .render import effectcraft
+
+        cli = self.cfg.render.effectcraft_cli
+        if not cli or not self.cfg.render.effectcraft_grade:
+            return cut
+        todo = [i for i, s in enumerate(cut.segments)
+                if ((s.fx or {}).get("video") or {}).get("grade") and not s.fx.get("speed")]
+        if not todo:
+            return cut
+        segs = list(cut.segments)
+        for n, i in enumerate(todo, start=1):
+            ctx.progress(0.0, f"part {pi + 1}: EffectCraft grade {n}/{len(todo)}")
+            segs[i] = effectcraft.render_segment(cli, self.cfg.ffmpeg, segs[i],
+                                                 self.prober(segs[i].file), workdir, f"ec{i}")
+        return replace(cut, segments=segs)
+
+    def _hdr_params(self, path: str) -> str:
+        return ffmpeg.hdr10_params(self.cfg.ffmpeg, path)
+
+    def _timeline_series_title(self, key: str, doc: dict[str, Any]) -> str:
+        try:
+            return self.library.get_series(key).title
+        except NotFoundError:
+            return doc["series"].get("title", "Timeline")  # movie-only timeline
+
+    def _toggle_state(self, doc: dict[str, Any],
+                      files: dict[str, tuple[str | None, float | None]],
+                      variant: str | None, toggles: dict[str, bool] | None
+                      ) -> tuple[set[tuple[int, int]], list[dict[str, Any]], str]:
+        """(segments switched off, toggle view, variant label) for one render."""
+        from .timeline import toggles as tg
+
+        available = {k for k, (f, _d) in files.items() if f}
+        values, view = tg.resolve(doc, available, variant, toggles)
+        return tg.off_set(doc, values), view, tg.variant_label(doc, variant)
+
+    def timeline_variants(self, tid: str) -> dict[str, Any]:
+        """Toggles (enabled or not, and why) and every variant's runtime."""
+        from .timeline import toggles as tg
+
+        doc, key, report = self._timeline_ctx(tid)
+        files = self._source_files(key, doc)
+        available = {k for k, (f, _d) in files.items() if f}
+        return tg.variants_view(doc, available, self._skip_set(report))
+
+    def timeline_dry_run(self, tid: str, mode: plan.Mode = "auto", variant: str | None = None,
+                         toggles: dict[str, bool] | None = None) -> dict[str, Any]:
         from .timeline import render as tl_render
 
         doc, key, report = self._timeline_ctx(tid)
         files = self._source_files(key, doc)
-        series = self.library.get_series(key)
         corr = tl_render.corrected_map(report)
         skip = self._skip_set(report)
-        show = tl_render.show_name(series.title, doc["title"])
+        off, tview, vlabel = self._toggle_state(doc, files, variant, toggles)
+        show = tl_render.show_name(self._timeline_series_title(key, doc), doc["title"])
+        show = tl_render.with_variant(show, vlabel)
         parts = []
         for pi, part in enumerate(doc["parts"]):
-            cut, warns = tl_render.part_cut(doc, pi, files, corr, skip)
+            cut, warns = tl_render.part_cut(doc, pi, files, corr, skip, off)
             if not cut.segments:
                 parts.append({"part": pi + 1, "title": part["title"], "skipped": True,
                               "warnings": warns})
@@ -727,7 +782,9 @@ class Core:
                                        for s in cut.segments],
                           "command": rp.command, "files": rp.files,
                           "warnings": warns + awarn + rp.warnings})
-        return {"show": show, "synced": bool(report),
+        return {"show": show, "synced": bool(report), "variant": variant or "",
+                "toggles": tview,
+                "runtime": round(sum(p.get("runtime", 0) for p in parts), 1),
                 "layout": "movie" if len(doc["parts"]) == 1 else "show", "parts": parts}
 
     def _timeline_part_path(self, show: str, doc: dict[str, Any], pi: int,
@@ -741,15 +798,24 @@ class Core:
                 / tl_render.part_filename(show, pi + 1, part_title, ext))
 
     def submit_timeline_render(self, tid: str, mode: str = "auto", keep: bool | None = None,
-                               refresh: bool = False) -> dict[str, Any]:
+                               refresh: bool = False,
+                               require_sync: bool = True, variant: str | None = None,
+                               toggles: dict[str, bool] | None = None) -> dict[str, Any]:
+        from .timeline import toggles as tg
+
         doc, _key, report = self._timeline_ctx(tid)
-        if not report:
+        if require_sync and not report:
             raise FansCutError("run sync first: POST /api/timelines/{id}/sync")
-        return self.worker.submit("timeline_render", f"Render {doc['title']}",
+        tg.resolve(doc, set(), variant, toggles)  # unknown variant/toggle -> 400 now
+        label = tg.variant_label(doc, variant)
+        return self.worker.submit("timeline_render",
+                                  f"Render {doc['title']}" + (f" ({label})" if label else ""),
                                   {"timeline_id": tid, "mode": mode, "keep": keep,
-                                   "refresh": refresh})
+                                   "refresh": refresh, "variant": variant,
+                                   "toggles": toggles})
 
     def _job_timeline_render(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+        from .render import subs
         from .render.cache import render_hash
         from .timeline import render as tl_render
 
@@ -761,10 +827,16 @@ class Core:
         if keep is None:
             keep = self.cfg.render.keep
         episodes_files = self._source_files(key, doc)
-        series = self.library.get_series(key)
+        bad, health = self._files_health([f for f, _d in episodes_files.values() if f])
+        if bad:
+            raise FansCutError("library check failed: " + "; ".join(
+                f"{Path(b['file']).name}: {b['message']} ({b['fix']})" for b in bad))
         corr = tl_render.corrected_map(report)
         skip = self._skip_set(report)
-        show = tl_render.show_name(series.title, doc["title"])
+        off, _tview, vlabel = self._toggle_state(doc, episodes_files, payload.get("variant"),
+                                                 payload.get("toggles"))
+        show = tl_render.show_name(self._timeline_series_title(key, doc), doc["title"])
+        show = tl_render.with_variant(show, vlabel)
         movie_mode = len(doc["parts"]) == 1  # single-part edit -> Plex movie folder
         show_dir = self.cfg.output_dir / show
         show_dir.mkdir(parents=True, exist_ok=True)
@@ -773,11 +845,12 @@ class Core:
         else:
             (show_dir / "tvshow.nfo").write_text(tl_render.nfo_show(show), encoding="utf-8")
 
-        outputs, cached, warnings = [], 0, []
+        outputs, cached, sidecars = [], 0, 0
+        warnings = [f"{Path(h['file']).name}: {h['message']}" for h in health]
         self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="tl-render-", dir=self.cfg.data_dir) as tmp:
             for pi, part in enumerate(doc["parts"]):
-                cut, warns = tl_render.part_cut(doc, pi, episodes_files, corr, skip)
+                cut, warns = tl_render.part_cut(doc, pi, episodes_files, corr, skip, off)
                 warnings += warns
                 if not cut.segments:
                     warnings.append(f"part {pi + 1} ({part['title']}): nothing to render")
@@ -789,7 +862,7 @@ class Core:
                 workdir.mkdir()
                 mode: plan.Mode = payload.get("mode", "auto") or "auto"
                 rp = plan.build_plan(cut, self.cfg.ffmpeg, out, workdir, self.prober,
-                                     mode=mode, audio_map=amap)
+                                     mode=mode, audio_map=amap, hdr_params=self._hdr_params)
                 h = render_hash(f"timeline:{tid}:{pi + 1}", cut, rp.mode, self.cfg.ffmpeg,
                                 rp.chapters)
                 if not payload.get("refresh") and (hit := self.renders.hit(h)):
@@ -798,18 +871,80 @@ class Core:
                 else:
                     ctx.progress(pi / len(doc["parts"]),
                                  f"part {pi + 1}/{len(doc['parts'])}: {part['title']}")
+                    graded = self._through_effectcraft(cut, workdir, ctx, pi)
+                    if graded is not cut:  # the hash stays the recipe's, not the temp files'
+                        rp = plan.build_plan(graded, self.cfg.ffmpeg, out, workdir,
+                                             self.prober, mode=mode, audio_map=amap,
+                                             hdr_params=self._hdr_params)
                     run.execute(rp, workdir, lambda p: None, ctx.cancel)
                     self.renders.drop_path(str(out), except_hash=h)
                     self.renders.add(h, key, f"{doc['title']} · part {pi + 1}", str(out),
                                      rp.mode, bool(keep), job_id=ctx.job_id)
                     outputs.append(str(out))
+                subs_written, subs_warn = subs.write_sidecars(
+                    self.cfg.ffmpeg, cut.segments, Path(outputs[-1]), self.prober)
+                warnings += subs_warn
+                sidecars += len(subs_written)
                 if not movie_mode:
                     nfo = tl_render.nfo_episode(part["title"], pi + 1)
                     out.with_suffix(".nfo").write_text(nfo, encoding="utf-8")
-        plex_note = self._plex_refresh()
+        poster = (self._installed_poster(tid, show_dir)
+                  or (self._write_poster(show_dir, outputs[0]) if outputs else None))
+        plex_note = self._plex_finalize(show, outputs)
         return {"show": show, "parts": len(outputs), "cached": cached, "outputs": outputs,
+                "poster": poster, "subtitles": sidecars,
                 "warnings": warnings, "plex": plex_note,
                 "message": f"wrote {len(outputs)} part(s) to {show_dir} ({cached} cached)"}
+
+    def _installed_poster(self, tid: str, show_dir: Path) -> str | None:
+        """The cut's own poster (downloaded at install) beats a frame grab."""
+        import shutil
+
+        row = self.db.one("SELECT poster FROM installs WHERE timeline_id = ?", (tid,))
+        src = Path(row["poster"]) if row and row["poster"] else None
+        if not src or not src.is_file():
+            return None
+        dst = show_dir / f"poster{src.suffix}"
+        shutil.copyfile(src, dst)
+        return str(dst)
+
+    def _write_poster(self, show_dir: Path, first_output: str) -> str | None:
+        """poster.jpg from the middle of the first part — the user's own footage."""
+        poster = show_dir / "poster.jpg"
+        tmp = poster.with_suffix(".tmp.jpg")
+        try:
+            dur = self.prober(first_output).get("duration") or 60
+            ffmpeg.run_capture([self.cfg.ffmpeg.binary, "-v", "error", "-y",
+                                "-ss", f"{float(dur) / 2:.1f}", "-i", first_output,
+                                "-frames:v", "1", "-q:v", "3", str(tmp)])
+            tmp.replace(poster)
+            return str(poster)
+        except Exception:  # noqa: BLE001 - a poster is a nicety, never fatal
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+            return None
+
+    def _plex_finalize(self, show: str, outputs: list[str]) -> str:
+        """Refresh Plex and add the rendered show/movie to a 'FansCut' collection."""
+        note = self._plex_refresh()
+        if not (self.cfg.library.plex.url and self.cfg.library.plex.token and outputs):
+            return note
+        try:
+            plex = self.library.plex()
+            assert plex is not None
+            want = set(self.cfg.library.plex.sections) | set(self.cfg.library.plex.movie_sections)
+            for s in plex.sections():
+                if want and s["key"] not in want and s["title"] not in want:
+                    continue
+                item = plex.find_in_section(s["key"], show)
+                if not item:
+                    continue
+                cid = plex.collection_id(s["key"], "FansCut", str(item["ratingKey"]))
+                plex.add_to_collection(cid, str(item["ratingKey"]))  # Plex dedups
+                return f"{note}; added “{show}” to the FansCut collection"
+            return f"{note}; “{show}” not found in Plex yet (rescan picks it up)"
+        except Exception as exc:  # noqa: BLE001 - collection add is a courtesy
+            return f"{note}; collection step failed: {exc}"
 
     def _plex_refresh(self) -> str:
         """Ask Plex to rescan show sections after a timeline render. Best effort."""
@@ -895,6 +1030,459 @@ class Core:
         return {"matches": hits,
                 "message": f"{len(hits)} possible repeat(s) of {eid} "
                            f"{payload['start']:.0f}–{payload['end']:.0f}s"}
+
+    # -- library check --------------------------------------------------------
+    @property
+    def checker(self) -> Any:
+        from .library.check import LibraryChecker
+
+        return LibraryChecker(self.cfg, self.db, self.prober, self.library)
+
+    def _all_timeline_sources(self) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+        out = []
+        for r in self.db.query("SELECT series_key, title, doc FROM timelines"):
+            doc = json.loads(r["doc"])
+            try:
+                files = self._source_files(r["series_key"], doc)
+            except Exception:  # noqa: BLE001 - a broken timeline must not stop the check
+                continue
+            out.append((r["title"], doc, {k: v[0] for k, v in files.items()}))
+        return out
+
+    def library_check(self, q: str = "", deep: bool = False) -> dict[str, Any]:
+        result: dict[str, Any] = self.checker.run(q=q, deep=deep,
+                                                  timelines=self._all_timeline_sources())
+        if not q:  # a whole-library run is what the nav badge and library notes show
+            result["checked_at"] = _dt.datetime.now().isoformat(timespec="seconds")
+            self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
+            (self.cfg.data_dir / "library-check.json").write_text(dumps(result),
+                                                                  encoding="utf-8")
+        return result
+
+    def last_check(self) -> dict[str, Any] | None:
+        """The last whole-library check, or None if it never ran."""
+        f = self.cfg.data_dir / "library-check.json"
+        try:
+            data: dict[str, Any] = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data
+
+    def rename_file(self, file: str, to: str) -> dict[str, str]:
+        from .library.check import apply_rename
+
+        proposals = self.checker.run(q="", timelines=[])["renames"]
+        try:
+            done = apply_rename(proposals, file, to)
+        except (ValueError, OSError) as exc:
+            raise FansCutError(str(exc)) from exc
+        self.library.refresh()
+        return done
+
+    def _files_health(self, files: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """(errors, warnings) of the per-file check for the files a render will read."""
+        errors, warns = [], []
+        movies, _ = self.library.list_movies()
+        by_file = {m.file: m for m in movies if m.file}
+        for f in sorted(set(files)):
+            if not Path(f).is_file():
+                continue  # unreachable files are reported by the source resolution itself
+            mv = by_file.get(f)
+            found, _ed, _info = self.checker.check_file(
+                f, mv.title if mv else Path(f).stem, mv.year if mv else None,
+                mv.tmdb_id if mv else None)
+            errors += [x for x in found if x["severity"] == "error"]
+            warns += [x for x in found if x["severity"] == "warn"]
+        return errors, warns
+
+    # -- community catalogue ------------------------------------------------------
+    def _github(self) -> Any:
+        from .community import GitHub
+
+        return GitHub(self.cfg.community.github_token, self.session)
+
+    def _index(self) -> list[dict[str, Any]]:
+        from . import community
+
+        if self.cfg.community.offline or not self.cfg.community.index_url:
+            return []
+        cached = getattr(self, "_index_cache", None)
+        now = _dt.datetime.now().timestamp()
+        if cached and now - cached[0] < 600:
+            return list(cached[1])
+        try:
+            r = (self.session or requests).get(self.cfg.community.index_url, timeout=20,
+                                               headers={"User-Agent": "FansCut"})
+            r.raise_for_status()
+            if len(r.content) > community.MAX_INDEX:
+                raise community.CommunityError("index.json too large")
+            entries = community.validate_index(r.json())
+        except (requests.RequestException, ValueError, community.CommunityError):
+            entries = cached[1] if cached else []
+        self._index_cache = (now, entries)
+        return list(entries)
+
+    def catalogue(self) -> dict[str, Any]:
+        """Every cut in the community index, rated against this library."""
+        from . import community
+
+        movies, _ = self.library.list_movies()
+        series, _ = self.library.list_series()
+        tmdb = {m.tmdb_id for m in movies if m.tmdb_id and m.file}
+        tvdb = {s.tvdb_id for s in series if s.tvdb_id}
+        installed = {r["repo"]: r["timeline_id"] for r in self.db.query(
+            "SELECT repo, timeline_id FROM installs")}
+        out = []
+        for e in self._index():
+            status, missing = community.availability(e, tmdb, tvdb)
+            out.append({"id": f"repo:{e['slug']}", "kind": "community", "poster_kind": e["kind"],
+                        "title": e["name"], "category": e["category"], "tagline": e["tagline"],
+                        "status": status, "missing": missing, "repo": e["repo"],
+                        "poster": e["poster"], "installed": installed.get(e["slug"]),
+                        "detail": {"sources": len(e["sources"]), "variants": e["variants"]}})
+        return {"index": self.cfg.community.index_url, "cuts": out}
+
+    def install_cut(self, url: str, ref: str | None = None) -> dict[str, Any]:
+        """Fetch fanscut.json from a cut repo at its branch head and install or update it."""
+        from . import community
+        from .timeline import recipe as tl_recipe
+
+        repo = community.parse_repo(url)
+        gh = self._github()
+        branch, sha = gh.head(repo, ref)
+        try:
+            doc = json.loads(gh.raw(repo, sha, "fanscut.json"))
+        except ValueError as exc:
+            raise community.CommunityError("fanscut.json is not valid JSON") from exc
+        doc = self._fill_movie_durations(doc)
+        clean = tl_recipe.validate(doc)
+        row = self.db.one("SELECT * FROM installs WHERE repo = ?", (repo.slug,))
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        if row and self.db.one("SELECT id FROM timelines WHERE id = ?", (row["timeline_id"],)):
+            tid = row["timeline_id"]
+            changed = row["sha"] != sha
+            if changed:
+                self.update_timeline(tid, clean)
+        else:
+            tid = self.create_timeline(self._timeline_key(clean), clean)["id"]
+            changed = True
+        poster = self._fetch_poster(repo.slug, clean.get("poster") or next(
+            (e["poster"] for e in self._index() if e["slug"] == repo.slug), ""), tid)
+        self.db.execute(
+            "INSERT OR REPLACE INTO installs (timeline_id, repo, ref, sha, poster, installed_at,"
+            " updated_at) VALUES (?,?,?,?,?,COALESCE((SELECT installed_at FROM installs WHERE"
+            " timeline_id = ?), ?),?)",
+            (tid, repo.slug, branch, sha, poster or (row["poster"] if row else ""), tid, now, now))
+        return {"id": tid, "title": clean["title"], "repo": repo.url, "ref": branch, "sha": sha,
+                "changed": changed, "poster": bool(poster)}
+
+    def _fill_movie_durations(self, doc: Any) -> Any:
+        """Movie sources may omit duration; the user's copy supplies it."""
+        if not isinstance(doc, dict) or not isinstance(doc.get("sources"), dict):
+            return doc
+        for s in doc["sources"].values():
+            if isinstance(s, dict) and s.get("kind") == "movie" and not s.get("duration"):
+                m = self.library.find_movie(s.get("tmdb"), edition=s.get("edition") or "")
+                if m and m.duration:
+                    s["duration"] = round(m.duration, 3)
+        return doc
+
+    def _timeline_key(self, doc: dict[str, Any]) -> str:
+        series_list, _ = self.library.list_series()
+        tvdb = doc["series"].get("tvdb_id")
+        match = next((s for s in series_list if tvdb and s.tvdb_id == tvdb), None) or next(
+            (s for s in series_list if s.title.lower() == doc["series"]["title"].lower()), None)
+        if match:
+            return match.key
+        movie = next((s for s in doc["sources"].values() if s.get("kind") == "movie"), None)
+        if movie:
+            return f"movie:{movie['tmdb']}"
+        raise FansCutError("no series or movie from this cut is in the library")
+
+    def _fetch_poster(self, slug: str, url: str, tid: str) -> str:
+        from . import community
+
+        if not url:
+            return ""
+        try:
+            data, ext = self._github().poster(url)
+        except community.CommunityError:
+            return ""  # a poster is a nicety; the install still counts
+        return community.save_poster(data, ext, self.cfg.data_dir / "posters", tid)
+
+    def cut_updates(self) -> dict[str, Any]:
+        """Installed cuts whose repo moved on since install."""
+        from . import community
+
+        out = []
+        gh = self._github()
+        for r in self.db.query("SELECT * FROM installs"):
+            try:
+                _branch, sha = gh.head(community.Repo(*r["repo"].split("/", 1)), r["ref"])
+                err = ""
+            except community.CommunityError as exc:
+                sha, err = r["sha"], str(exc)
+            out.append({"id": r["timeline_id"], "repo": f"https://github.com/{r['repo']}",
+                        "ref": r["ref"], "installed": r["sha"], "latest": sha,
+                        "update": sha != r["sha"], "error": err})
+        return {"installs": out}
+
+    def update_cut(self, tid: str) -> dict[str, Any]:
+        row = self.db.one("SELECT * FROM installs WHERE timeline_id = ?", (tid,))
+        if row is None:
+            raise NotFoundError(f"{tid} was not installed from a repo")
+        return self.install_cut(f"https://github.com/{row['repo']}", row["ref"])
+
+    # -- templates ----------------------------------------------------------------
+    def template_doc(self, tid: str, params: dict[str, Any]) -> tuple[dict[str, Any], str]:
+        """(recipe, timeline key) a template produces from the user's own library."""
+        from . import templates
+        from .timeline import recipe as tl_recipe
+
+        t = templates.get(tid)
+        title = str(params.get("title") or "").strip()[:tl_recipe.MAX_TITLE]
+        author = str(params.get("author") or "").strip()[:100]
+        if t["needs"] == "movies":
+            movies, _ = self.library.list_movies()
+            by_key = {m.key: m for m in movies}
+            films = []
+            for k in params.get("movies") or []:
+                m = by_key.get(k)
+                if m is None:
+                    raise NotFoundError(f"movie {k} not found")
+                if not m.tmdb_id:
+                    raise FansCutError(f"{m.title}: no TMDB id (add {{tmdb-...}} to its folder)")
+                dur = m.duration or (self.prober(m.file).get("duration") if m.file else None)
+                films.append({"tmdb": m.tmdb_id, "title": m.title, "year": m.year,
+                              "duration": dur, "edition": self._movie_edition(m)})
+            name = title or " + ".join(str(f["title"]) for f in films)[:200]
+            doc = templates.movie_doc(t, name, films, author)
+            key = f"movie:{films[0]['tmdb']}"
+        else:
+            key = str(params.get("series_key") or "")
+            s = self.library.get_series(key)
+            view = self.episode_view(key)
+            eps = [e for e in view["episodes"] if e.get("has_file")]
+            doc = templates.series_doc(t, title or f"{s.title} - {t['label']}", asdict(s),
+                                       eps, author)
+        return tl_recipe.validate(doc), key
+
+    def _movie_edition(self, m: Any) -> str | None:
+        from .library.check import edition_from_name
+
+        return edition_from_name(Path(m.file).name) if m.file else None
+
+    def template_preview(self, tid: str, params: dict[str, Any]) -> dict[str, Any]:
+        from . import templates
+
+        doc, _key = self.template_doc(tid, params)
+        return {"files": templates.files(templates.get(tid), doc)}
+
+    def template_create(self, tid: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Write the repo files locally, add the timeline, optionally push a private repo."""
+        from . import templates
+
+        t = templates.get(tid)
+        doc, key = self.template_doc(tid, params)
+        out_files = templates.files(t, doc)
+        folder = self.cfg.data_dir / "cuts" / templates.slug(doc["title"])
+        folder.mkdir(parents=True, exist_ok=True)
+        for name, text in out_files.items():
+            (folder / name).write_text(text, encoding="utf-8")
+        new_id = self.create_timeline(key, doc)["id"]
+        result: dict[str, Any] = {"id": new_id, "title": doc["title"], "folder": str(folder),
+                                  "files": sorted(out_files)}
+        push = params.get("push") or {}
+        if push.get("name"):
+            gh = self._github()
+            repo = gh.create_repo(templates.slug(str(push["name"])),
+                                  bool(push.get("private", True)), f"FansCut cut: {doc['title']}")
+            sha = ""
+            for fname in ("fanscut.json", "README.md", "outline.md"):
+                sha = gh.put_file(repo, fname, out_files[fname], f"Add {fname}") or sha
+            now = _dt.datetime.now().isoformat(timespec="seconds")
+            self.db.execute(
+                "INSERT OR REPLACE INTO installs (timeline_id, repo, ref, sha, poster,"
+                " installed_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                (new_id, repo.slug, "main", sha or "0" * 40, "", now, now))
+            result["repo"] = repo.url
+        return result
+
+    # -- first-run suggestions ----------------------------------------------------
+    def _lang_ok(self, path: str | None) -> str | None:
+        """None if fine, else the reason this file fails the preferred-language check."""
+        lang = self.cfg.render.language
+        if not lang or not path:
+            return None
+        try:
+            tracks = self.prober(path).get("audio_tracks") or []
+        except OSError:
+            return None  # file not reachable; the missing-file check reports it instead
+        if tracks and not any((t.get("language") or "").lower() == lang.lower()
+                              for t in tracks):
+            return f"no '{lang}' audio track"
+        return None
+
+    def suggestions(self) -> dict[str, Any]:
+        from . import suggest
+        from .timeline import recipe as tl_recipe
+
+        out: list[dict[str, Any]] = []
+        series_list, _ = self.library.list_series()
+        movies, _ = self.library.list_movies()
+        by_tvdb = {s.tvdb_id: s for s in series_list if s.tvdb_id}
+
+        # (a) community recipes dropped into <data_dir>/recipes
+        rdir = self.cfg.data_dir / "recipes"
+        for f in sorted(rdir.glob("*.json")) if rdir.is_dir() else []:
+            try:
+                doc = tl_recipe.validate(json.loads(f.read_text(encoding="utf-8")))
+            except Exception as exc:  # noqa: BLE001 - a bad file must not hide the rest
+                out.append({"id": f"recipe:{f.name}", "kind": "recipe", "title": f.name,
+                            "status": "missing",
+                            "missing": [{"src": "-", "reason": f"invalid recipe: {exc}"}],
+                            "detail": {}})
+                continue
+
+            def resolve(src: str, entry: dict[str, Any], _doc: dict = doc,
+                        ) -> tuple[str | None, float | None, str | None]:
+                if entry.get("kind") == "movie":
+                    m = self.library.find_movie(entry.get("tmdb"),
+                                                edition=entry.get("edition", ""))
+                    if not m or not m.file:
+                        ed = f" ({entry.get('edition')})" if entry.get("edition") else ""
+                        return None, None, f"movie {entry.get('tmdb')}{ed} not in the library"
+                    bad, _w = self._files_health([m.file])
+                    if bad:
+                        return None, None, f"{bad[0]['message']} — {bad[0]['fix']}"
+                    return m.file, m.duration, self._lang_ok(m.file)
+                tvdb = (_doc.get("series") or {}).get("tvdb_id")
+                s = by_tvdb.get(tvdb) if tvdb else None
+                if not s:
+                    titles = [x for x in series_list
+                              if x.title.lower() == (_doc["series"].get("title") or "").lower()]
+                    s = titles[0] if titles else None
+                if not s:
+                    stitle = (_doc.get("series") or {}).get("title")
+                    return None, None, f"series {stitle!r} not in the library"
+                eps = {e.id: e for e in self.library.episodes(s.key)}
+                e = eps.get(src)
+                if not e or not e.file:
+                    return None, None, f"{src} has no file"
+                return e.file, e.duration, self._lang_ok(e.file)
+
+            out.append(suggest.from_recipe(f.name, doc, resolve))
+
+        # (b) Plex collections the user partly or fully owns
+        colls: dict[str, list[Any]] = {}
+        from .browse import _collections_of
+
+        for m in movies:
+            for c in _collections_of(m):  # Plex tags plus known sets (The Hobbit, …)
+                colls.setdefault(c, []).append(m)
+        for name, ms in sorted(colls.items()):
+            if len(ms) >= 2:
+                ms = sorted(ms, key=lambda m: m.year or 0)
+                out += suggest.from_collection(
+                    name, ms, [m.title for m in ms if m.file and self._lang_ok(m.file)])
+
+        # (c) canon cuts for matched shows with known filler
+        for row in self.db.query("SELECT * FROM matches WHERE season = -1"):
+            show = self.fillers.find(row["mal_id"], row["anilist_id"])
+            if not show:
+                continue
+            s = next((x for x in series_list if x.key == row["series_key"]), None)
+            if not s:
+                continue
+            eps = self.library.episodes(s.key)
+            n_filler = sum(1 for v in show.labels.values() if v == "filler")
+            missing_files = [e.id for e in eps if not e.file]
+            lang_missing = [e.id for e in eps if e.file and self._lang_ok(e.file)]
+            sgn = suggest.canon_cut(s.title, s.key, n_filler, len(eps),
+                                    missing_files, lang_missing)
+            if sgn:
+                out.append(sgn)
+        order = {"ready": 0, "partly": 1, "missing": 2}
+        out.sort(key=lambda s: (order.get(s["status"], 3), s["title"]))
+        return {"suggestions": out}
+
+    def install_suggestion(self, sid: str) -> dict[str, Any]:
+        kind, _, ref = sid.partition(":")
+        if kind == "repo":  # a community catalogue entry: owner/name
+            done = self.install_cut(f"https://github.com/{ref}")
+            job = self.submit_timeline_sync(done["id"])
+            return {"action": "install", "timeline": done["id"], "jobs": [job["id"]],
+                    "sha": done["sha"]}
+        if kind == "recipe":
+            from .timeline import recipe as tl_recipe
+
+            f = self.cfg.data_dir / "recipes" / ref
+            if not f.is_file() or f.parent.resolve() != (self.cfg.data_dir / "recipes").resolve():
+                raise NotFoundError(f"recipe file {ref} not found")
+            doc = tl_recipe.validate(json.loads(f.read_text(encoding="utf-8")))
+            series_list, _ = self.library.list_series()
+            tvdb = (doc.get("series") or {}).get("tvdb_id")
+            match = next((s for s in series_list if tvdb and s.tvdb_id == tvdb), None)
+            if not match:
+                title = (doc.get("series") or {}).get("title", "").lower()
+                match = next((s for s in series_list if s.title.lower() == title), None)
+            first_movie = next((s for s in doc["sources"].values()
+                                if s.get("kind") == "movie"), None)
+            if not match and not first_movie:
+                raise FansCutError("no series or movie from this recipe is in the library")
+            key = match.key if match else f"movie:{(first_movie or {}).get('tmdb')}"
+            tid = self.create_timeline(key, doc)["id"]
+            sync = self.submit_timeline_sync(tid)
+            render = self.submit_timeline_render(tid, require_sync=False)  # sync runs first
+            return {"action": "render", "timeline": tid,
+                    "jobs": [sync["id"], render["id"]]}
+        if kind == "merge":
+            movies = self._collection_movies(ref)
+            if len(movies) < 2:
+                raise FansCutError(f"collection {ref!r} has fewer than two owned movies")
+            doc = self._merge_doc(ref, movies)
+            tid = self.create_timeline(f"movie:{movies[0].tmdb_id}", doc)["id"]
+            sync = self.submit_timeline_sync(tid)
+            render = self.submit_timeline_render(tid, require_sync=False)  # sync runs first
+            return {"action": "render", "timeline": tid,
+                    "jobs": [sync["id"], render["id"]]}
+        if kind == "order":
+            movies = self._collection_movies(ref)
+            keys = [m.key.split(":", 1)[1] for m in movies
+                    if m.source == "plex" and m.key.startswith("plexmovie:")]
+            if not keys:
+                raise FansCutError("watch-order playlists need the movies in Plex")
+            plex = self.library.plex()
+            if not plex:
+                raise FansCutError("Plex is not configured")
+            pid = plex.create_playlist(f"{ref} — watch order", keys)
+            return {"action": "playlist", "playlist_id": pid}
+        if kind == "canon":
+            job = self.submit_render(ref, None, {"preset": "canon_only"}, "auto")
+            return {"action": "render", "jobs": [job["id"]]}
+        raise NotFoundError(f"unknown suggestion {sid!r}")
+
+    def _collection_movies(self, name: str) -> list[Any]:
+        movies, _ = self.library.list_movies()
+        from .browse import _collections_of
+
+        return sorted([m for m in movies if name in _collections_of(m)],
+                      key=lambda m: m.year or 0)
+
+    def _merge_doc(self, name: str, movies: list[Any]) -> dict[str, Any]:
+        sources, segments = {}, []
+        for m in movies:
+            if not m.file:
+                continue
+            dur = m.duration or self.prober(m.file).get("duration") or 0
+            src = f"M{m.tmdb_id}"
+            sources[src] = {"kind": "movie", "tmdb": m.tmdb_id, "duration": dur,
+                            "note": m.title}
+            segments.append({"src": src, "start": 0.0, "end": round(float(dur), 3)})
+        return {"schema": 2, "kind": "timeline", "title": f"{name} — merged",
+                "series": {"title": name}, "sources": sources,
+                "parts": [{"title": name, "segments": segments}],
+                "credits": {"author": "FansCut template", "based_on": "Plex collection"}}
 
     # -- AI-assisted recipes ----------------------------------------------------
     def ai_recipe(self, key: str, notes: str, apply: bool = False) -> dict[str, Any]:

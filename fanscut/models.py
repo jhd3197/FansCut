@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 LABELS = ("canon", "mixed", "filler", "unknown")
 TRIM_KINDS = ("intro", "outro", "recap", "preview")
@@ -45,6 +46,7 @@ class Movie:
     tmdb_id: int | None = None
     file: str | None = None  # local path after path mapping; None = not on disk
     duration: float | None = None  # seconds
+    collections: list[str] = field(default_factory=list)  # Plex collection tags
 
 
 @dataclass
@@ -55,7 +57,10 @@ class Segment:
     end: float
     reason: str = ""
     xfade_ms: float = 0.0  # audio crossfade from the previous segment into this one
+    fx: dict[str, Any] = field(default_factory=dict)  # edit operations (timeline/effects.py)
+    audio_file: str | None = None  # music bridge: the file audio comes from instead
 
     @property
     def duration(self) -> float:
-        return self.end - self.start
+        """Seconds in the output (speed and hold included)."""
+        return (self.end - self.start) / self.fx.get("speed", 1.0) + self.fx.get("hold", 0.0)

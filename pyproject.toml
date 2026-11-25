@@ -42,6 +42,9 @@ Issues = "https://github.com/jhd3197/FansCut/issues"
 [tool.setuptools.packages.find]
 include = ["fanscut", "fanscut.*"]
 
+[tool.setuptools.package-data]
+fanscut = ["assets/fonts/*.ttf", "assets/fonts/OFL.txt"]
+
 [tool.setuptools.dynamic]
 version = { attr = "fanscut.__version__" }
 

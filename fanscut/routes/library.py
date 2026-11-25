@@ -30,6 +30,23 @@ def list_series(core: CoreDep, q: str = "", source: str = "") -> dict[str, Any]:
     return {"sources": core.library.sources(), "errors": errors, "series": out}
 
 
+@router.get("/library/check")
+def library_check(core: CoreDep, q: str = "", deep: bool = False) -> dict[str, Any]:
+    """Editions, languages, incomplete files, missing pieces, mismatches, renames."""
+    return core.library_check(q=q, deep=deep)
+
+
+class RenameBody(BaseModel):
+    file: str
+    to: str
+
+
+@router.post("/library/rename")
+def library_rename(core: CoreDep, body: RenameBody) -> dict[str, str]:
+    """Apply one rename the library check proposed (after the user confirmed it)."""
+    return core.rename_file(body.file, body.to)
+
+
 @router.post("/library/refresh")
 def refresh_library(core: CoreDep) -> dict[str, bool]:
     core.library.refresh()

@@ -29,3 +29,4 @@ docs/plans/
 # graphify code-graph output
 graphify-out/
 raw/
+.planning/

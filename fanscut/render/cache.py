@@ -39,8 +39,12 @@ def render_hash(series_key: str, cut: CutPlan, mode: str, ff: FFmpegCfg,
         "series": series_key,
         "mode": mode,
         "ff": {"nvenc": ff.nvenc, "crf": ff.crf, "preset": ff.preset,
-               "audio_bitrate": ff.audio_bitrate},
-        "segments": [[s.episode_id, s.file, s.start, s.end, s.xfade_ms] for s in cut.segments],
+               "audio_bitrate": ff.audio_bitrate, "video_codec": ff.video_codec},
+        # edit operations and music bridges shape the bytes too (only listed when present,
+        # so plain segments hash as before)
+        "segments": [[s.episode_id, s.file, s.start, s.end, s.xfade_ms]
+                     + ([s.fx, s.audio_file] if s.fx or s.audio_file else [])
+                     for s in cut.segments],
         "files": files,
         "chapters": chapters,
         "options": {**cut.options.__dict__, "trim_kinds": list(cut.options.trim_kinds)},

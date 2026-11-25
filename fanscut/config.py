@@ -30,6 +30,7 @@ ENV_FIELDS = {
     "FANSCUT_PLEX_URL": "library.plex.url",
     "FANSCUT_PLEX_TOKEN": "library.plex.token",
     "FANSCUT_AI_API_KEY": "ai.api_key",
+    "FANSCUT_GITHUB_TOKEN": "community.github_token",
 }
 
 
@@ -110,6 +111,8 @@ class FFmpegCfg(BaseModel):
     preset: str = "medium"
     audio_bitrate: str = "192k"
     container: Literal["mkv", "mp4"] = "mkv"
+    # auto: HEVC 10-bit when a source is HDR (keeps PQ/HLG + mastering data), else H.264
+    video_codec: Literal["auto", "h264", "hevc"] = "auto"
 
 
 class CutCfg(BaseModel):
@@ -126,12 +129,20 @@ class RenderCfg(BaseModel):
     keep: bool = True  # default for new renders; False = evict automatically
     ephemeral_days: int = 7  # sweep deletes non-kept renders older than this; 0 = never
     language: str = ""  # preferred audio language tag (e.g. jpn, eng); "" = first track
+    effectcraft_cli: str = ""  # path to effectcraft-cli; "" = grades stay in ffmpeg
+    effectcraft_grade: bool = True  # route segment grades through EffectCraft when it's set
 
 
 class AutomationCfg(BaseModel):
     sonarr_webhook: bool = False  # accept POST /api/webhooks/sonarr (no auth: keep local)
     auto_detect: bool = True  # run OP/ED detection on affected seasons before rendering
     keep: bool = True  # keep flag for webhook-triggered renders
+
+
+class CommunityCfg(BaseModel):
+    index_url: str = "https://raw.githubusercontent.com/jhd3197/fanscut-recipes/main/index.json"
+    github_token: str = ""  # secret, for private cut repos; prefer FANSCUT_GITHUB_TOKEN
+    offline: bool = False
 
 
 class AICfg(BaseModel):
@@ -153,6 +164,7 @@ class Config(BaseModel):
     render: RenderCfg = Field(default_factory=RenderCfg)
     automation: AutomationCfg = Field(default_factory=AutomationCfg)
     ai: AICfg = Field(default_factory=AICfg)
+    community: CommunityCfg = Field(default_factory=CommunityCfg)
 
     @property
     def data_dir(self) -> Path:
@@ -269,6 +281,8 @@ def masked(cfg: Config) -> dict[str, Any]:
         d["library"]["plex"]["token"] = MASK
     if d["ai"]["api_key"]:
         d["ai"]["api_key"] = MASK
+    if d["community"]["github_token"]:
+        d["community"]["github_token"] = MASK
     return d
 
 

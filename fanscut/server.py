@@ -16,7 +16,18 @@ from .config import Config
 from .core import Core
 from .db import Database
 from .errors import ClientError, FansCutError, NotFoundError
-from .routes import cut, fillers, jobs, library, renders, system, timeline, webhooks
+from .routes import (
+    browse,
+    cut,
+    fillers,
+    jobs,
+    library,
+    renders,
+    suggestions,
+    system,
+    timeline,
+    webhooks,
+)
 
 log = logging.getLogger("fanscut.server")
 
@@ -78,7 +89,8 @@ def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
     for r in (system.router, library.router, cut.router, jobs.router, fillers.router,
-              renders.router, webhooks.router, timeline.router):
+              renders.router, webhooks.router, timeline.router, suggestions.router,
+              browse.router):
         app.include_router(r)
 
     ui = ui_dir()

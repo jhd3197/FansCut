@@ -304,6 +304,57 @@ page, or run `fanscut recipe ai --series KEY --notes notes.txt`. The LLM turns
 them into a schema-2 recipe; it's validated before anything is applied, and
 every range stays editable afterwards.
 
+## Discover
+
+Discover (the home page) lists what your library is one click away from:
+community timeline recipes dropped into `<data_dir>/recipes`, a merged film
+and a watch-order playlist for any Plex collection you own two or more films
+of, and a canon cut for every matched show with known filler. Each one is
+*ready*, *partly ready* or *not available*, with the missing sources (or a
+missing audio language) named. Install queues sync + render; watch orders
+become a Plex playlist with nothing rendered. Renders get a poster from your
+own footage and join a "FansCut" collection in Plex.
+
+## Toggles, variants and edit operations
+
+Sources can be `"optional": true`. A **toggle** (`id`, `label`, `default`,
+`needs`) switches segments whose `when` names it on (or off with `"!id"`); a
+**variant** is a named set of toggle values. A toggle whose films aren't in
+your library is disabled and says which film it needs, never an error. Each
+variant shows its runtime, and its name goes into the output name.
+
+Segments take optional edit operations, all applied to your own footage:
+`speed` (0.5–2, pitch kept), `hold`, `video` (`fade_in`, `fade_out`, `crop`,
+`mirror`, `grade`), `transition` (`dissolve`, `dip`, `fade`), `j_cut` /
+`l_cut`, a music bridge (`audio.src` from another source) and `title` cards
+(bundled Inter). Every field has tight bounds; no raw ffmpeg filters or paths
+are accepted. Plain parts keep the stream-copy path. HDR sources re-encode to
+HEVC 10-bit with BT.2020, PQ/HLG and their mastering metadata, and text
+subtitle tracks follow the cut as Plex sidecars (forced tracks stay forced).
+With `render.effectcraft_cli` set, segment grades go through
+[EffectCraft](https://github.com/storytold/effectcraft) instead.
+
+## Templates and community cuts
+
+"New cut from template" (trilogy merge, watch order, chronological, canon)
+writes `README.md`, `fanscut.json` and `outline.md` for a new cut repo and can
+push it to a private GitHub repo (`community.github_token` or
+`FANSCUT_GITHUB_TOKEN`). Discover reads the community index
+(`community.index_url`, an `index.json` that only links to repos) and rates
+each cut ready / partly ready / not available against your library, naming
+what's missing. Cuts install by repo URL at a pinned commit SHA; My cuts
+checks for and pulls updates. A cut's poster is downloaded once and used on
+render.
+
+## Library health
+
+`GET /api/library/check` (the Health page) runs before suggestions and
+renders: edition from runtime, audio and forced-subtitle languages,
+unfinished files (temp names, short runtimes, decode errors at the end),
+missing episodes and extras, codec / frame size / black bars / HDR mismatches
+within a cut, and Plex-style renames applied only after you confirm each one.
+Every finding names the file and the fix.
+
 ## Limits
 
 - Output has the first video and first audio track of each file. Extra audio

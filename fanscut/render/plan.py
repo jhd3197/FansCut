@@ -72,7 +72,7 @@ def _join_adjacent(segs: list[Segment]) -> list[Segment]:
     out: list[Segment] = []
     for s in segs:
         if (out and out[-1].file == s.file and abs(out[-1].end - s.start) < 0.001
-                and s.xfade_ms == 0):
+                and s.xfade_ms == 0 and not s.fx and not out[-1].fx):
             out[-1] = Segment(out[-1].episode_id, s.file, out[-1].start, s.end, out[-1].reason)
         else:
             out.append(s)
@@ -114,7 +114,36 @@ def compatible(infos: list[dict[str, Any]]) -> str | None:
     return None
 
 
-def _encoder_args(ff: FFmpegCfg) -> list[str]:
+def output_format(ff: FFmpegCfg, infos: list[dict[str, Any]]) -> tuple[str, str]:
+    """(codec, transfer): hevc when asked or when a source is HDR; transfer '' = SDR."""
+    hdr = [(i.get("video") or {}).get("color_transfer") for i in infos
+           if (i.get("video") or {}).get("color_transfer") in ("smpte2084", "arib-std-b67")]
+    transfer = str(hdr[0]) if hdr else ""
+    codec = ff.video_codec if ff.video_codec != "auto" else ("hevc" if transfer else "h264")
+    return codec, transfer if codec == "hevc" else ""
+
+
+def _encoder_args(ff: FFmpegCfg, codec: str = "h264", transfer: str = "",
+                  hdr_params: str = "") -> list[str]:
+    color = []
+    if transfer:  # keep HDR: BT.2020 primaries/matrix, PQ or HLG transfer
+        color = ["-color_primaries", "bt2020", "-color_trc", transfer,
+                 "-colorspace", "bt2020nc"]
+    if codec == "hevc":
+        pix = "p010le" if ff.nvenc else "yuv420p10le"
+        if ff.nvenc:
+            v = ["-c:v", "hevc_nvenc", "-preset", "p5", "-profile:v", "main10", "-rc", "vbr",
+                 "-cq", str(ff.crf)]
+        else:
+            params = ["repeat-headers=1"]
+            if transfer:
+                params += ["hdr10=1" if transfer == "smpte2084" else "hdr10=0",
+                           "colorprim=bt2020", f"transfer={transfer}", "colormatrix=bt2020nc"]
+                if hdr_params and transfer == "smpte2084":
+                    params.append(hdr_params)
+            v = ["-c:v", "libx265", "-preset", ff.preset, "-crf", str(ff.crf),
+                 "-x265-params", ":".join(params), "-tag:v", "hvc1"]
+        return [*v, "-pix_fmt", pix, *color, "-c:a", "aac", "-b:a", ff.audio_bitrate]
     if ff.nvenc:
         v = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", str(ff.crf)]
     else:
@@ -124,7 +153,7 @@ def _encoder_args(ff: FFmpegCfg) -> list[str]:
 
 def _filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str, Any],
                    audio: bool, fade: bool, audio_map: dict[str, int] | None = None,
-                   infos: dict[str, Any] | None = None) -> str:
+                   infos: dict[str, Any] | None = None, pix_fmt: str = "yuv420p") -> str:
     w, h = first.get("width") or 1920, first.get("height") or 1080
     fps = round(first.get("fps") or 24, 3) or 24
     lines, vlabels, alabels = [], [], []
@@ -141,7 +170,7 @@ def _filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str,
         a_idx = (audio_map or {}).get(s.file, 0)
         vf = (f"[{n}:v:0]trim=start={s.start:.3f}:end={s.end:.3f},setpts=PTS-STARTPTS,"
               f"fps={fps},scale={w}:{h}:force_original_aspect_ratio=decrease,"
-              f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p")
+              f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format={pix_fmt}")
         af = (f"[{n}:a:{a_idx}]atrim=start={s.start:.3f}:end={s.end + ext[k]:.3f},"
               "asetpts=PTS-STARTPTS,aresample=48000,"
               "aformat=sample_fmts=fltp:channel_layouts=stereo")
@@ -188,11 +217,16 @@ def build_plan(
     titles: dict[str, str] | None = None,
     mode: Mode = "auto",
     audio_map: dict[str, int] | None = None,
+    hdr_params: Callable[[str], str] | None = None,
 ) -> RenderPlan:
     segs = _join_adjacent(cut.segments)
     if not segs:
         raise ValueError("the cut is empty: nothing to render")
     infos = {f: probe(f) for f in dict.fromkeys(s.file for s in segs)}
+    for s in segs:  # music bridges read audio from more files
+        if s.audio_file and s.audio_file not in infos:
+            infos[s.audio_file] = probe(s.audio_file)
+    edited = any(s.fx for s in segs)
     first = infos[segs[0].file].get("video") or {}
     audio = all("audio" in i for i in infos.values())
     warnings = [] if audio else ["a file has no audio stream, so the output has no audio"]
@@ -202,15 +236,17 @@ def build_plan(
     xfade = any(s.xfade_ms > 0 for s in segs)  # audio crossfades need the filter graph
 
     why = compatible(list(infos.values()))
-    if mode == "copy" and (why or fade or track_pick or xfade):
+    if mode == "copy" and (why or fade or track_pick or xfade or edited):
         blockers = [why, "fade needs re-encoding" if fade else None,
                     "audio track selection needs re-encoding" if track_pick else None,
-                    "audio crossfades need re-encoding" if xfade else None]
+                    "audio crossfades need re-encoding" if xfade else None,
+                    "edit operations need re-encoding" if edited else None]
         raise ValueError(f"cannot stream copy: {next(b for b in blockers if b)}")
     if mode == "auto":
         why = why or ("fade transitions need re-encoding" if fade else None)
         why = why or ("audio track selection needs re-encoding" if track_pick else None)
         why = why or ("audio crossfades need re-encoding" if xfade else None)
+        why = why or ("edit operations need re-encoding" if edited else None)
         mode = "encode" if why else "copy"
     elif mode == "encode":
         why = "re-encode requested"
@@ -234,12 +270,33 @@ def build_plan(
                "-map_metadata", "1", "-map_chapters", "1", "-c", "copy", *tail, str(tmp)]
     else:
         inputs = {f: n for n, f in enumerate(infos)}
-        files["filter.txt"] = _filter_script(segs, inputs, first, audio, fade, audio_map, infos)
+        codec, transfer = output_format(ff, list(infos.values()))
+        pix = "yuv420p10le" if codec == "hevc" else "yuv420p"
+        if edited:
+            from .effects import Out, filter_script
+
+            script, extra = filter_script(segs, inputs, first, infos, audio, workdir,
+                                          Out(pix, bool(transfer)), audio_map)
+            files["filter.txt"] = script
+            files.update(extra)
+        else:
+            files["filter.txt"] = _filter_script(segs, inputs, first, audio, fade, audio_map,
+                                                 infos, pix)
+        hdrp = ""
+        if transfer == "smpte2084" and hdr_params:
+            src = next((f for f, i in infos.items()
+                        if (i.get("video") or {}).get("color_transfer") == transfer), "")
+            hdrp = hdr_params(src) if src else ""
+        if transfer:
+            warnings.append(f"keeps HDR ({'PQ' if transfer == 'smpte2084' else 'HLG'}, "
+                            "BT.2020) with HEVC 10-bit"
+                            + ("" if hdrp or transfer != "smpte2084"
+                               else "; no mastering metadata found in the source"))
         cmd = [*base]
         for f in inputs:
             cmd += ["-i", f]
         cmd += [*meta, "-filter_complex_script", str(workdir / "filter.txt"), "-map", "[v]",
                 *(["-map", "[a]"] if audio else []),
                 "-map_metadata", f"{len(inputs)}", "-map_chapters", f"{len(inputs)}",
-                *_encoder_args(ff), *tail, str(tmp)]
+                *_encoder_args(ff, codec, transfer, hdrp), *tail, str(tmp)]
     return RenderPlan(mode, reason, str(output), str(tmp), cmd, files, total, chapters, warnings)

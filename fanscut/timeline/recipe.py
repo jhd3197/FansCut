@@ -23,6 +23,7 @@ import re
 from typing import Any
 
 from ..errors import FansCutError
+from . import effects
 
 SCHEMA = 2
 KIND = "timeline"
@@ -35,7 +36,11 @@ MAX_NOTE = 500
 MAX_XFADE_MS = 10_000
 SRC_RE = re.compile(r"^S\d{2}E\d{2,3}$")
 MOVIE_RE = re.compile(r"^M\d{1,10}$")  # M + TMDB id
+ALIAS_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,15}$")  # short movie alias: AUJ, DOS, BOTFA
 ANCHOR_RE = re.compile(r"^[av]1:[A-Za-z0-9+/]+={0,2}$")
+ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+MAX_TOGGLES = 50
+MAX_VARIANTS = 20
 TOLERANCE = 5.0  # a cut may point up to this far past the stated duration
 
 
@@ -90,6 +95,56 @@ def _anchors(v: Any, what: str) -> dict[str, dict[str, str]]:
     return out
 
 
+def _toggles(raw: Any, sources: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, list) or len(raw) > MAX_TOGGLES:
+        raise TimelineError(f"toggles: expected a list of at most {MAX_TOGGLES}")
+    out: dict[str, dict[str, Any]] = {}
+    for i, t in enumerate(raw, start=1):
+        if not isinstance(t, dict):
+            raise TimelineError(f"toggle {i}: expected an object")
+        tid = t.get("id")
+        if not isinstance(tid, str) or not ID_RE.match(tid):
+            raise TimelineError(f"toggle {i}.id: lowercase letters, digits and '-' only")
+        if tid in out:
+            raise TimelineError(f"toggle {tid}: duplicate id")
+        default = t.get("default", False)
+        if not isinstance(default, bool):
+            raise TimelineError(f"toggle {tid}.default: expected true or false")
+        needs = t.get("needs", [])
+        if not isinstance(needs, list) or any(not isinstance(n, str) or n not in sources
+                                              for n in needs):
+            raise TimelineError(f"toggle {tid}.needs: a list of source keys from sources")
+        out[tid] = {"id": tid, "label": _text(t.get("label"), f"toggle {tid}.label", MAX_TITLE),
+                    "default": default, "needs": list(dict.fromkeys(needs))}
+    return out
+
+
+def _variants(raw: Any, toggles: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or len(raw) > MAX_VARIANTS:
+        raise TimelineError(f"variants: expected a list of at most {MAX_VARIANTS}")
+    out, seen = [], set()
+    for i, v in enumerate(raw, start=1):
+        if not isinstance(v, dict):
+            raise TimelineError(f"variant {i}: expected an object")
+        vid = v.get("id")
+        if not isinstance(vid, str) or not ID_RE.match(vid) or vid in seen:
+            raise TimelineError(f"variant {i}.id: a unique id of lowercase letters, digits, '-'")
+        seen.add(vid)
+        vals = v.get("toggles", {})
+        if not isinstance(vals, dict):
+            raise TimelineError(f"variant {vid}.toggles: expected an object of toggle id: bool")
+        for k, on in vals.items():
+            if k not in toggles or not isinstance(on, bool):
+                raise TimelineError(f"variant {vid}.toggles.{k}: unknown toggle or not a bool")
+        out.append({"id": vid, "label": _text(v.get("label"), f"variant {vid}.label", 60),
+                    "toggles": dict(vals)})
+    return out
+
+
 def validate(doc: Any) -> dict[str, Any]:
     """Return a cleaned timeline recipe or raise TimelineError."""
     if not isinstance(doc, dict):
@@ -115,34 +170,49 @@ def validate(doc: Any) -> dict[str, Any]:
         raise TimelineError(f"over {MAX_SOURCES} sources")
     sources = {}
     for src, s in raw_sources.items():
-        if not isinstance(src, str) or not (SRC_RE.match(src) or MOVIE_RE.match(src)):
-            raise TimelineError(f"bad source key {src!r} (want SxxEyy or M<tmdb id>)")
+        if not isinstance(src, str) or not (SRC_RE.match(src) or MOVIE_RE.match(src)
+                                            or ALIAS_RE.match(src)):
+            raise TimelineError(f"bad source key {src!r} (want SxxEyy, M<tmdb id> or an "
+                                "upper-case movie alias like AUJ)")
         if not isinstance(s, dict):
             raise TimelineError(f"sources.{src}: expected an object")
         kind = s.get("kind", "episode")
         if kind == "movie":
-            if not MOVIE_RE.match(src):
-                raise TimelineError(f"sources.{src}: movie sources key on the TMDB id (M27205)")
+            if SRC_RE.match(src):
+                raise TimelineError(f"sources.{src}: an episode key can't be a movie")
             tmdb = s.get("tmdb")
             if isinstance(tmdb, bool) or not isinstance(tmdb, int) or tmdb <= 0:
                 raise TimelineError(f"sources.{src}.tmdb: expected a positive integer")
-            if src != f"M{tmdb}":
+            if MOVIE_RE.match(src) and src != f"M{tmdb}":
                 raise TimelineError(f"sources.{src}: key and tmdb disagree")
         elif kind != "episode":
             raise TimelineError(f"sources.{src}.kind: want episode | movie")
-        dur = _num(s.get("duration"), f"sources.{src}.duration")
-        if dur <= 0:
-            raise TimelineError(f"sources.{src}.duration: must be positive")
-        entry: dict[str, Any] = {"duration": dur}
+        elif not SRC_RE.match(src):
+            raise TimelineError(f"sources.{src}: episode sources key on SxxEyy")
+        entry: dict[str, Any] = {}
+        if s.get("duration") is not None or kind != "movie":
+            # movies may leave it out: the user's copy supplies it on import
+            dur = _num(s.get("duration"), f"sources.{src}.duration")
+            if dur <= 0:
+                raise TimelineError(f"sources.{src}.duration: must be positive")
+            entry["duration"] = dur
         if kind == "movie":
             entry["kind"] = "movie"
             entry["tmdb"] = s["tmdb"]
             if s.get("edition") is not None:
                 entry["edition"] = _text(s["edition"], f"sources.{src}.edition", 50,
                                          required=False)
-        if s.get("note") is not None:
-            entry["note"] = _text(s["note"], f"sources.{src}.note", MAX_NOTE, required=False)
+        note = s.get("note") if s.get("note") is not None else s.get("title")
+        if note is not None:
+            entry["note"] = _text(note, f"sources.{src}.note", MAX_NOTE, required=False)
+        if s.get("optional") is not None:
+            if not isinstance(s["optional"], bool):
+                raise TimelineError(f"sources.{src}.optional: expected true or false")
+            if s["optional"]:
+                entry["optional"] = True
         sources[src] = entry
+
+    toggles = _toggles(doc.get("toggles"), sources)
 
     parts_raw = doc.get("parts")
     if not isinstance(parts_raw, list):
@@ -172,7 +242,7 @@ def validate(doc: Any) -> dict[str, Any]:
                 raise TimelineError(f"{what}.start: negative")
             if not end > start:
                 raise TimelineError(f"{what}: end must be after start")
-            if end > sources[src]["duration"] + TOLERANCE:
+            if "duration" in sources[src] and end > sources[src]["duration"] + TOLERANCE:
                 raise TimelineError(f"{what}: end past the source duration")
             clean_seg: dict[str, Any] = {"src": src, "start": start, "end": end}
             if seg.get("xfade_ms") is not None:
@@ -184,6 +254,21 @@ def validate(doc: Any) -> dict[str, Any]:
                 clean_seg["anchors"] = _anchors(seg["anchors"], f"{what}.anchors")
             if seg.get("desc") is not None:
                 clean_seg["desc"] = _text(seg["desc"], f"{what}.desc", MAX_NOTE, required=False)
+            try:
+                clean_seg.update(effects.validate(seg, what, sources))
+            except effects.EffectError as exc:
+                raise TimelineError(str(exc)) from exc
+            when = seg.get("when")
+            if when is not None:
+                if not isinstance(when, str) or when.lstrip("!") not in toggles:
+                    raise TimelineError(f"{what}.when: unknown toggle {when!r}")
+                clean_seg["when"] = when
+            if sources[src].get("optional"):
+                if not when or when.startswith("!"):
+                    raise TimelineError(f"{what}: optional source {src} needs a toggle "
+                                        '("when": "<toggle id>")')
+                if src not in toggles[when]["needs"]:
+                    toggles[when]["needs"].append(src)  # a toggle needs what it shows
             segs.append(clean_seg)
         total_segments += len(segs)
         if total_segments > MAX_SEGMENTS:
@@ -199,8 +284,21 @@ def validate(doc: Any) -> dict[str, Any]:
             clean_credits[_text(k, "credits key", 50)] = _text(v, f"credits.{k}", MAX_NOTE)
     out: dict[str, Any] = {"schema": SCHEMA, "kind": KIND, "title": title,
                            "series": clean_series, "sources": sources, "parts": parts}
+    if toggles:
+        out["toggles"] = list(toggles.values())
+    variants = _variants(doc.get("variants"), toggles)
+    if variants:
+        out["variants"] = variants
     if clean_credits:
         out["credits"] = clean_credits
+    if doc.get("poster") is not None:  # a link only; downloaded locally on install
+        poster = _text(doc["poster"], "poster", 500)
+        if not poster.startswith("https://"):
+            raise TimelineError("poster: want an https URL")
+        out["poster"] = poster
+    for k, limit in (("category", 40), ("tagline", 80), ("id", 120), ("version", 40)):
+        if doc.get(k) is not None:
+            out[k] = _text(doc[k], k, limit, required=False)
     return out
 
 

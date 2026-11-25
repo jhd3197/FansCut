@@ -130,7 +130,34 @@ def _v5(conn: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2, _v3, _v4, _v5]
+def _v6(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE file_checks (
+            path   TEXT NOT NULL,
+            kind   TEXT NOT NULL,                  -- tail | crop
+            mtime  REAL NOT NULL,
+            size   INTEGER NOT NULL,
+            result TEXT NOT NULL,                  -- JSON
+            PRIMARY KEY (path, kind)
+        );
+    """)
+
+
+def _v7(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE installs (
+            timeline_id  TEXT PRIMARY KEY,
+            repo         TEXT NOT NULL,            -- owner/name on GitHub
+            ref          TEXT NOT NULL,            -- branch it follows
+            sha          TEXT NOT NULL,            -- commit the timeline came from
+            poster       TEXT NOT NULL DEFAULT '', -- local poster file, '' = none
+            installed_at TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        );
+    """)
+
+
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v1, _v2, _v3, _v4, _v5, _v6, _v7]
 
 
 class Database:
