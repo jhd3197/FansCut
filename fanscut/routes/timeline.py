@@ -70,6 +70,7 @@ class TimelineRenderBody(BaseModel):
     variant: str | None = Field(default=None, max_length=40)
     toggles: dict[str, bool] | None = None
     collection: bool = True  # add the result to Plex's "FansCut" collection
+    quality: Literal["best", "fast"] = "best"  # fast: 1080p SDR H.264, always re-encoded
 
 
 @router.post("/timelines/{tid}/render")
@@ -78,10 +79,10 @@ def render_timeline(core: CoreDep, tid: str, body: TimelineRenderBody | None = N
     """dry_run=true returns the per-part plans; otherwise queues a render job."""
     body = body or TimelineRenderBody()
     if body.dry_run:
-        return core.timeline_dry_run(tid, body.mode, body.variant, body.toggles)
+        return core.timeline_dry_run(tid, body.mode, body.variant, body.toggles, body.quality)
     return core.submit_timeline_render(tid, body.mode, body.keep, body.refresh,
                                        variant=body.variant, toggles=body.toggles,
-                                       collection=body.collection)
+                                       collection=body.collection, quality=body.quality)
 
 
 class CutPointBody(BaseModel):

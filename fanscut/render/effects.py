@@ -33,11 +33,18 @@ FONT = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "Inter-Semi
 DECLICK = 0.01
 
 
+# HDR (PQ / HLG) to SDR BT.709 per segment, for 1080p "fast" builds: linear light,
+# BT.709 primaries, Hable curve. The same chain the frame grabs use.
+TONEMAP = ("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,"
+           "tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
+
+
 @dataclass
 class Out:
     """What the encoder needs to know about the graph's output."""
     pix_fmt: str
     hdr: bool
+    tonemap: frozenset[str] = frozenset()  # files whose HDR goes to SDR (quality "fast")
 
 
 def _q(path: str | Path) -> str:
@@ -111,6 +118,8 @@ def filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str, 
         v = f.get("video") or {}
         src_end = s.end + vext_src[k] * sp
         chain = [f"trim=start={s.start:.3f}:end={src_end:.3f}", "setpts=PTS-STARTPTS"]
+        if s.file in out.tonemap:
+            chain.append(TONEMAP)
         if sp != 1.0:
             chain.append(f"setpts=PTS/{sp:.6f}")
         chain.append(f"fps={fps}")

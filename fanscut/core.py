@@ -916,7 +916,8 @@ class Core:
         return tg.variants_view(doc, available, self._skip_set(report))
 
     def timeline_dry_run(self, tid: str, mode: plan.Mode = "auto", variant: str | None = None,
-                         toggles: dict[str, bool] | None = None) -> dict[str, Any]:
+                         toggles: dict[str, bool] | None = None,
+                         quality: plan.Quality = "best") -> dict[str, Any]:
         from .timeline import render as tl_render
 
         doc, key, report = self._timeline_ctx(tid)
@@ -936,7 +937,7 @@ class Core:
             amap, awarn = self._audio_map(list({s.file for s in cut.segments}))
             out = self._timeline_part_path(show, doc, pi, part["title"])
             rp = plan.build_plan(cut, self.cfg.ffmpeg, out, Path("<workdir>"), self.prober,
-                                 mode=mode, audio_map=amap)
+                                 mode=mode, audio_map=amap, quality=quality)
             parts.append({"part": pi + 1, "title": part["title"], "mode": rp.mode,
                           "reason": rp.reason, "output": rp.output,
                           "runtime": round(cut.final_runtime, 1),
@@ -963,7 +964,8 @@ class Core:
                                refresh: bool = False,
                                require_sync: bool = True, variant: str | None = None,
                                toggles: dict[str, bool] | None = None,
-                               collection: bool = True) -> dict[str, Any]:
+                               collection: bool = True,
+                               quality: plan.Quality = "best") -> dict[str, Any]:
         from .timeline import toggles as tg
 
         doc, _key, report = self._timeline_ctx(tid)
@@ -971,11 +973,13 @@ class Core:
             raise FansCutError("run sync first: POST /api/timelines/{id}/sync")
         tg.resolve(doc, set(), variant, toggles)  # unknown variant/toggle -> 400 now
         label = tg.variant_label(doc, variant)
-        return self.worker.submit("timeline_render",
-                                  f"Render {doc['title']}" + (f" ({label})" if label else ""),
+        name = f"Render {doc['title']}" + (f" ({label})" if label else "")
+        return self.worker.submit("timeline_render", name + (" · fast 1080p" if quality == "fast"
+                                                             else ""),
                                   {"timeline_id": tid, "mode": mode, "keep": keep,
                                    "refresh": refresh, "variant": variant,
-                                   "toggles": toggles, "collection": collection})
+                                   "toggles": toggles, "collection": collection,
+                                   "quality": quality})
 
     def _job_timeline_render(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
         from .render import subs
@@ -1027,10 +1031,14 @@ class Core:
                 workdir = Path(tmp) / f"part{pi + 1}"
                 workdir.mkdir()
                 mode: plan.Mode = payload.get("mode", "auto") or "auto"
+                quality: plan.Quality = "fast" if payload.get("quality") == "fast" else "best"
                 rp = plan.build_plan(cut, self.cfg.ffmpeg, out, workdir, self.prober,
-                                     mode=mode, audio_map=amap, hdr_params=self._hdr_params)
-                h = render_hash(f"timeline:{tid}:{pi + 1}", cut, rp.mode, self.cfg.ffmpeg,
-                                rp.chapters)
+                                     mode=mode, audio_map=amap, hdr_params=self._hdr_params,
+                                     quality=quality)
+                # a fast build never stands in for a best one, nor the other way round
+                h = render_hash(f"timeline:{tid}:{pi + 1}"
+                                + (":fast" if quality == "fast" else ""), cut, rp.mode,
+                                self.cfg.ffmpeg, rp.chapters)
                 n_parts = len(doc["parts"])
                 if not payload.get("refresh") and (hit := self.renders.hit(h)):
                     ctx.phase(3, 5, "Cut and join",
@@ -1044,7 +1052,7 @@ class Core:
                     if graded is not cut:  # the hash stays the recipe's, not the temp files'
                         rp = plan.build_plan(graded, self.cfg.ffmpeg, out, workdir,
                                              self.prober, mode=mode, audio_map=amap,
-                                             hdr_params=self._hdr_params)
+                                             hdr_params=self._hdr_params, quality=quality)
                     ctx.phase(3, 5, "Cut and join", f"part {pi + 1} of {n_parts} · {part['title']}"
                               f" · {'copied' if rp.mode == 'copy' else 're-encoded'}")
                     run.execute(rp, workdir, ctx.part(pi, n_parts), ctx.cancel)
@@ -1276,18 +1284,21 @@ class Core:
                     took += float(st["seconds"])
         return made / took if took else None
 
+    FAST_BITRATE = 8_000_000  # bits/s: 1080p H.264 at the default CRF, about
+
     def timeline_estimate(self, tid: str, variant: str | None = None) -> dict[str, Any]:
-        """CutDetail's "Build on this PC": about how long, and why."""
+        """CutDetail's "Build on this PC" and Build's Best / Fast choice: how long, how big,
+        and why. `fast` is None when it would make the same thing as `best`."""
         dry = self.timeline_dry_run(tid, "auto", variant)
         live = [p for p in dry["parts"] if not p.get("skipped")]
         files = {s["file"] for p in live for s in p["segments"] if s.get("file")}
-        infos = []
+        infos: dict[str, dict[str, Any]] = {}
         for f in files:
             try:
-                infos.append(self.prober(f))
+                infos[f] = self.prober(f)
             except Exception:  # noqa: BLE001 - an unreadable file shows up elsewhere
                 continue
-        videos = [i.get("video") or {} for i in infos]
+        videos = [i.get("video") or {} for i in infos.values()]
         height = max((int(v.get("height") or 0) for v in videos), default=0)
         res = self._res_class(height)
         hdr = any(v.get("hdr") not in (None, "", "SDR") for v in videos)
@@ -1296,23 +1307,42 @@ class Core:
         graded = [s for s in fx if (s["fx"].get("video") or {}).get("grade")
                   and not s["fx"].get("speed")]
         ec = bool(self.cfg.render.effectcraft_cli and self.cfg.render.effectcraft_grade)
-        seconds, basis = 0.0, "measured"
-        for p in live:
-            mode = "copy" if p["mode"] == "copy" else "encode"
-            speed = self._measured_speed(mode, res)
-            if speed is None:
-                basis = "typical"
-                if mode == "copy":
-                    speed = self.TYPICAL_SPEED["copy"]
-                else:
-                    speed = self.TYPICAL_SPEED[("encode", res)]
-                    if self.cfg.ffmpeg.nvenc:
-                        speed *= self.GPU_FACTOR
-                    elif hdr or self.cfg.ffmpeg.video_codec == "hevc":
-                        speed *= self.HEVC_FACTOR
-            seconds += p["runtime"] / speed + 10  # plus opening files and writing the part
-        if ec and graded:
-            seconds += sum(s["duration"] for s in graded) / 0.5
+        # the sources' own bitrate (bits per output second), weighted by what each part uses
+        rate = {}
+        for f, i in infos.items():
+            try:
+                rate[f] = Path(f).stat().st_size * 8 / max(float(i.get("duration") or 0), 1)
+            except OSError:
+                continue
+
+        def option(fast: bool) -> dict[str, Any]:
+            seconds, basis, size = 0.0, "measured", 0.0
+            cls = "hd" if fast and res == "4k" else res
+            for p in live:
+                mode = "encode" if fast or p["mode"] != "copy" else "copy"
+                speed = self._measured_speed(mode, cls)
+                if speed is None:
+                    basis = "typical"
+                    if mode == "copy":
+                        speed = self.TYPICAL_SPEED["copy"]
+                    else:
+                        speed = self.TYPICAL_SPEED[("encode", cls)]
+                        if self.cfg.ffmpeg.nvenc:
+                            speed *= self.GPU_FACTOR
+                        elif not fast and (hdr or self.cfg.ffmpeg.video_codec == "hevc"):
+                            speed *= self.HEVC_FACTOR
+                seconds += p["runtime"] / speed + 10  # plus opening files and writing the part
+                for sg in p["segments"]:
+                    bps = (self.FAST_BITRATE if fast
+                           else rate.get(sg.get("file"), self.FAST_BITRATE)
+                           * (1.0 if mode == "copy" else 0.8))
+                    size += sg.get("duration", 0) * bps / 8
+            if ec and graded:
+                seconds += sum(s["duration"] for s in graded) / 0.5
+            return {"seconds": round(seconds), "bytes": round(size), "basis": basis,
+                    "label": ("Quick build" if seconds < 120 else "Build" if seconds < 1800
+                              else "Long build")}
+
         res_name = {"4k": "4K", "hd": "1080p", "sd": "SD"}[res] if height else "unknown size"
         reasons = [f"{res_name}{' HDR' if hdr else ''}"]
         if any(p["mode"] != "copy" for p in live):
@@ -1325,9 +1355,12 @@ class Core:
         if fx:
             reasons.append(f"{len(fx)} effect segment{'s' if len(fx) != 1 else ''}"
                            + (" through EffectCraft" if ec and graded else ""))
-        label = ("Quick build" if seconds < 120 else "Build" if seconds < 1800 else "Long build")
-        return {"seconds": round(seconds), "label": label, "reasons": reasons, "basis": basis,
-                "parts": len(live), "gpu": self.cfg.ffmpeg.nvenc, "runtime": dry["runtime"]}
+        best = {**option(False), "name": f"Best · {res_name}{' HDR' if hdr else ''}"}
+        fast = ({**option(True), "name": "Fast · 1080p"}
+                if plan.fast_differs(list(infos.values())) else None)
+        return {**{k: best[k] for k in ("seconds", "label", "basis")}, "reasons": reasons,
+                "best": best, "fast": fast, "parts": len(live), "gpu": self.cfg.ffmpeg.nvenc,
+                "runtime": dry["runtime"]}
 
     def set_timeline_options(self, tid: str, auto_rebuild: bool) -> dict[str, Any]:
         if self.db.one("SELECT 1 FROM timelines WHERE id = ?", (tid,)) is None:

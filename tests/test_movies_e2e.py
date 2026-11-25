@@ -130,6 +130,8 @@ def test_movie_source_sync_and_render(movie_client, movie_library, cfg):
     est = movie_client.get(f"/api/timelines/{tid}/estimate").json()
     assert est["basis"] == "typical" and est["label"] == "Quick build" and est["seconds"] > 0
     assert est["reasons"][0] == "SD" and est["reasons"][1].startswith("re-encoded")
+    assert est["fast"] is None  # an SD source: "fast" would make the same thing
+    assert est["best"]["bytes"] > 0 and est["best"]["name"] == "Best · SD"
 
     job = movie_client.post(f"/api/timelines/{tid}/render", json={}).json()
     movie_client.core.worker.run_pending()
