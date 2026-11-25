@@ -2,11 +2,11 @@
 // what's missing, and the button that installs it. Same layout as a cut's page.
 import { Link, useNavigate, useParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useCrumbRoot, useFrom, usePageTitle } from '../lib/hooks.js';
+import { useAct, useCanonical, useCrumbRoot, useFrom, usePageTitle } from '../lib/hooks.js';
 import { ArtPoster, Crumbs, KV, Poster, Section, enc } from '../components/kit.jsx';
 import { ErrorBox, Loading } from '../components/ui.jsx';
 import { useApi } from '../lib/store.js';
-import { KIND_LABEL, POSTER_KIND, STATUS_CLASS, SUGGESTION_ART, SuggestionTile, TimelineTile, suggestionMeta, suggestionStatus, suggestionWhat } from './Discover.jsx';
+import { KIND_LABEL, POSTER_KIND, STATUS_CLASS, SUGGESTION_ART, SuggestionTile, TimelineTile, suggestionMeta, suggestionStatus, suggestionTo, suggestionWhat } from './Discover.jsx';
 
 function UsesList({ s, movies }) {
   const byKey = new Map((movies || []).map((m) => [m.key, m]));
@@ -71,6 +71,7 @@ export function SuggestionPage() {
     || all.find((x) => x.id.startsWith(`${kind}:`) && x.name === ref)
     || (cat.data?.cuts || []).map((c) => ({ ...c, from_catalogue: true })).find((x) => x.id === id);
   usePageTitle(s ? s.name || s.title : null);
+  useCanonical(s && s.id !== id ? suggestionTo(s) : null);
 
   if (sugg.error && !sugg.data) return <div className="page"><ErrorBox error={sugg.error} onRetry={sugg.reload} /></div>;
   if (!s) {

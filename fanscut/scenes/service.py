@@ -45,12 +45,15 @@ class SceneService:
         return m, m.file
 
     def films(self, collection: str | None = None) -> list[dict[str, Any]]:
-        from ..browse import _collections_of
+        from ..browse import _collections_of, resolve_collection
 
         indexed = self.store.indexed()
         tags = self.store.tags()
         out = []
-        for m in self._movies():
+        movies = self._movies()
+        if collection:
+            collection = resolve_collection(movies, collection)
+        for m in movies:
             cols = _collections_of(m)
             if collection and collection not in cols:
                 continue
@@ -78,8 +81,9 @@ class SceneService:
         doc = self.store.index(key)
         if doc and not with_lines:
             doc = {k: v for k, v in doc.items() if k != "lines"}
-        from ..browse import NOT_A_FRANCHISE, _collections_of
+        from ..browse import NOT_A_FRANCHISE, _collections_of, collection_ids
 
+        ids = collection_ids(self._movies())
         return {
             "film": {
                 "key": m.key,
@@ -87,7 +91,11 @@ class SceneService:
                 "year": m.year,
                 "tmdb_id": m.tmdb_id,
                 "duration": m.duration,
-                "collections": [c for c in _collections_of(m) if not NOT_A_FRANCHISE.search(c)],
+                "collections": [
+                    {"id": ids.get(c, c), "name": c}
+                    for c in _collections_of(m)
+                    if not NOT_A_FRANCHISE.search(c)
+                ],
                 "on_disk": bool(m.file),
             },
             "index": doc,
@@ -460,8 +468,12 @@ class SceneService:
         status: str | None = None,
         keys: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Tagged scenes across a collection, or across the films in *keys* (a franchise
-        whose films don't all carry the Plex collection tag)."""
+        """Tagged scenes across a collection (by id, or name for old links), or across
+        the films in *keys* (a franchise whose films don't all carry the Plex tag)."""
+        from ..browse import collection_ids, resolve_collection
+
+        movies = self._movies()
+        name = resolve_collection(movies, name)
         if keys:
             want = set(keys)
             films = [f for f in self.films() if f["key"] in want]
@@ -482,6 +494,7 @@ class SceneService:
                 for t in x["tags"]:
                     counts[t] = counts.get(t, 0) + 1
         return {
+            "id": collection_ids(movies).get(name, name),
             "name": name,
             "tag": tag,
             "films": [{**f, "scenes": by_film[f["key"]]} for f in films],
@@ -497,6 +510,7 @@ class SceneService:
         timeline cut, in film order."""
         t = st.norm_tag(tag)
         col = self.collection(name, t, "accepted", keys)
+        name = col["name"]
         sources: dict[str, Any] = {}
         segments = []
         for f in col["films"]:

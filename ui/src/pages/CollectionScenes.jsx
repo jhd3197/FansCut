@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad } from '../lib/hooks.js';
+import { useAct, useCanonical, useLoad } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
 import { Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import { Crumbs, Section, enc } from '../components/kit.jsx';
@@ -9,16 +9,18 @@ import { frameUrl } from './Scenes.jsx';
 
 // Every tagged scene across a collection, film by film; a tag's accepted scenes become a cut.
 export function CollectionScenesPage() {
-  const { name } = useParams();
+  const { id } = useParams();
   const [params, setParams] = useSearchParams();
   const tag = params.get('tag') || '';
   const { data, error, loading, reload } = useLoad(
-    () => api(`/scenes/collection?${new URLSearchParams({ name, ...(tag ? { tag } : {}) })}`), [name, tag]);
+    () => api(`/scenes/collection?${new URLSearchParams({ name: id, ...(tag ? { tag } : {}) })}`), [id, tag]);
+  const name = data?.name || '';
+  useCanonical(data?.id && data.id !== id ? `/collections/${enc(data.id)}/scenes` : null);
   const { act, msg, busy, clear } = useAct();
   const [title, setTitle] = useState('');
   const nav = useNavigate();
 
-  const crumbs = [['Library', '/library'], [name, `/collections/${enc(name)}`], ['Scenes']];
+  const crumbs = [['Library', '/library'], [name || id, `/collections/${enc(data?.id || id)}`], ['Scenes']];
   if (error && !data) return <div className="page"><Crumbs items={crumbs} /><ErrorBox error={error} onRetry={reload} /></div>;
   if (loading || !data) return <div className="page"><Loading /></div>;
 
@@ -27,7 +29,7 @@ export function CollectionScenesPage() {
   const seconds = accepted.reduce((s, x) => s + (x.end - x.start), 0);
   const notIndexed = data.films.filter((f) => !f.indexed && f.on_disk);
   const makeCut = () => act(async () => {
-    const t = await api('/scenes/to-timeline', { method: 'POST', body: { collection: name, tag, title } });
+    const t = await api('/scenes/to-timeline', { method: 'POST', body: { collection: data?.id || id, tag, title } });
     nav(`/cuts/${enc(t.id)}`);
   });
 

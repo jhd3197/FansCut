@@ -23,7 +23,7 @@ function plural(n, word) {
 
 function CollectionTile({ c }) {
   return (
-    <Link className="tile tile-wide" to={`/collections/${enc(c.name)}`}>
+    <Link className="tile tile-wide" to={`/collections/${enc(c.id || c.name)}`}>
       <Backdrop k={c.backdrops?.[0]} name={c.name} />
       <span className="tiny muted">{[plural(c.films, 'film'), c.shows?.length ? plural(c.shows.length, 'show') : null, plural(c.cuts, 'cut')].filter(Boolean).join(' · ')}</span>
     </Link>

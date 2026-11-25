@@ -223,7 +223,7 @@ export function ShowPage() {
 
       {also.data?.films?.length > 0 && (
         <Section id="s-also" title="Also in your library" count={also.data.films.length}
-          end={<Link to={`/collections/${enc(also.data.name)}`} className="tiny">Open {also.data.name}</Link>}>
+          end={<Link to={`/collections/${enc(also.data.id || also.data.name)}`} className="tiny">Open {also.data.name}</Link>}>
           <div className="shelf">{also.data.films.map((f) => <FilmTile key={f.key} m={f} />)}</div>
         </Section>
       )}

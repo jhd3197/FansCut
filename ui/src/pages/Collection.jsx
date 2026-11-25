@@ -1,6 +1,6 @@
 import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useFrom, usePageTitle } from '../lib/hooks.js';
+import { useAct, useCanonical, useFrom, usePageTitle } from '../lib/hooks.js';
 import { Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import { Crumbs, MediaTile, Section, enc, hm, palette } from '../components/kit.jsx';
 import { movieTag, quality } from './LibraryPage.jsx';
@@ -29,13 +29,14 @@ export function ShowTile({ s }) {
 }
 
 export function CollectionPage() {
-  const { name } = useParams(); // react-router hands params over decoded
-  const { data, error, loading, reload } = useApi(`/library/collections/${enc(name)}`);
-  usePageTitle(name);
+  const { id } = useParams(); // react-router hands params over decoded
+  const { data, error, loading, reload } = useApi(`/library/collections/${enc(id)}`);
+  usePageTitle(data?.name);
+  useCanonical(data?.id && data.id !== id ? `/collections/${enc(data.id)}` : null);
   const { act, msg, busy, clear } = useAct();
   const from = useFrom();
 
-  if (error && !data) return <div className="page"><Crumbs items={[['Library', '/library'], [name]]} /><ErrorBox error={error} onRetry={reload} /></div>;
+  if (error && !data) return <div className="page"><Crumbs items={[['Library', '/library'], [id]]} /><ErrorBox error={error} onRetry={reload} /></div>;
   if (loading || !data) return <div className="page"><Loading /></div>;
 
   const [bg, , acc, fg] = palette(data.name);
@@ -67,7 +68,7 @@ export function CollectionPage() {
             {order && <button type="button" className="btn btn-primary" onClick={playInOrder} disabled={busy}
               title="Creates a Plex playlist of these films in order">Play in order</button>}
             <Link className="btn" to={newCutTo({ movies: data.films.filter((f) => f.on_disk).map((f) => f.key) })} state={from}>New cut from this collection</Link>
-            <Link className="btn" to={`/collections/${enc(data.name)}/scenes`}>Tagged scenes</Link>
+            <Link className="btn" to={`/collections/${enc(data.id)}/scenes`}>Tagged scenes</Link>
           </div>
         </div>
       </div>

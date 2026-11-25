@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad } from '../lib/hooks.js';
+import { useAct, useLoad, useUrlState } from '../lib/hooks.js';
 import { Dialog, ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import { enc, KV } from '../components/kit.jsx';
 import { useApi } from '../lib/store.js';
@@ -96,7 +96,7 @@ export function Health() {
   const [result, setResult] = useState(null); // a fresh run replaces the cached one
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState(null);
-  const [q, setQ] = useState('');
+  const [q, setQ] = useUrlState('q');
   const [deepFor, setDeepFor] = useState({}); // title -> {busy, result, error}
   const [fixed, setFixed] = useState([]);
   const [confirm, setConfirm] = useState(null);

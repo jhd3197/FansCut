@@ -1,8 +1,7 @@
 // A cut (timeline recipe) as a page: what it is, what it needs, what's in it.
-import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useCrumbRoot, useLoad, usePageTitle } from '../lib/hooks.js';
+import { useCrumbRoot, useLoad, usePageTitle, useUrlState } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
 import { ArtPoster, Crumbs, enc, hm, KV, Poster, SRC_COLOURS } from '../components/kit.jsx';
 import { ErrorBox, Loading } from '../components/ui.jsx';
@@ -212,7 +211,7 @@ export function CutDetail() {
   const sync = useApi(`/timelines/${enc(id)}/sync`);
   const hasMovies = Object.values(tl.data?.doc?.sources || {}).some((s) => s.kind === 'movie');
   const movies = useLoad(() => (hasMovies ? api('/library/movies') : Promise.resolve({ movies: [] })), [hasMovies]);
-  const [variant, setVariant] = useState('');
+  const [variant, setVariant] = useUrlState('variant');
   const crumb = useCrumbRoot();
 
   if (tl.error && !tl.data) return <div className="page"><ErrorBox error={tl.error} onRetry={tl.reload} /></div>;

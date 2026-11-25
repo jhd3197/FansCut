@@ -173,8 +173,8 @@ export function App() {
           <Route path="/" element={<Discover />} />
           <Route path="/discover/:id" element={<SuggestionPage />} />
           <Route path="/library" element={<LibraryPage />} />
-          <Route path="/collections/:name" element={<CollectionPage />} />
-          <Route path="/collections/:name/scenes" element={<CollectionScenesPage />} />
+          <Route path="/collections/:id" element={<CollectionPage />} />
+          <Route path="/collections/:id/scenes" element={<CollectionScenesPage />} />
           <Route path="/movies/:key" element={<MoviePage />} />
           <Route path="/movies/:key/scenes" element={<ScenesPage />} />
           <Route path="/series/:key" element={<ShowPage />} />
