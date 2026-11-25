@@ -143,7 +143,7 @@ def _secret_for(posted_url: str | None, saved_url: str, posted: str | None, save
     new URL needs its key typed in again, so a test cannot leak the stored one."""
     if posted not in (None, "", config.MASK):
         return posted or ""
-    if posted_url not in (None, "") and posted_url.rstrip("/") != saved_url.rstrip("/"):
+    if posted_url and posted_url.rstrip("/") != saved_url.rstrip("/"):
         raise ValueError("enter the key again to test a different URL")
     return saved
 
