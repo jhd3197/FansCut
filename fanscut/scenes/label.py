@@ -69,12 +69,12 @@ def schemas(ids: list[str]) -> tuple[type[BaseModel], type[BaseModel]]:
         window=(int, Field(description="window number as given")),
         start=(str, Field(description="where it starts, h:mm:ss of the film")),
         end=(str, Field(description="where it ends, h:mm:ss of the film")),
-        tags=(list[tag_id], Field(description="tag ids from the list that apply")),
+        tags=(list[tag_id], Field(description="tag ids from the list that apply")),  # type: ignore[valid-type]
         people=(list[str], Field(default_factory=list, description="characters in it")),
         why=(str, Field(default="", description="a few words on what happens")),
         confidence=(float, Field(default=0.5, ge=0, le=1)),
     )
-    moments = create_model("Moments", moments=(list[moment], Field(default_factory=list)))
+    moments = create_model("Moments", moments=(list[moment], Field(default_factory=list)))  # type: ignore[valid-type]
     look = create_model(
         "LookCheck",
         match=(
@@ -84,7 +84,7 @@ def schemas(ids: list[str]) -> tuple[type[BaseModel], type[BaseModel]]:
                 "or is only logos or credits"
             ),
         ),
-        tags=(list[tag_id], Field(description="tag ids you can confirm on the sheet")),
+        tags=(list[tag_id], Field(description="tag ids you can confirm on the sheet")),  # type: ignore[valid-type]
         first_tile=(int, Field(default=1, description="first tile that belongs")),
         last_tile=(int, Field(default=6, description="last tile that belongs")),
         summary=(str, Field(default="", description="one plain sentence on what happens")),

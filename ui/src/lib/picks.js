@@ -101,6 +101,7 @@ export function topPeople(rows, max = 8) {
 }
 
 // Tag counts across rows: [{ tag, n }], most used first. `shown` filters out hidden ids.
+/** @param {any[]} rows @param {(tag: string) => boolean} [shown] */
 export function tagCounts(rows, shown = () => true) {
   const n = new Map();
   for (const r of rows) for (const t of new Set(r.tags || [])) if (shown(t)) n.set(t, (n.get(t) || 0) + 1);
