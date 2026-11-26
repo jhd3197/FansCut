@@ -653,6 +653,8 @@ class SceneService:
             stats["looks"] += 1
             check = label_mod.look(cfg, sheet, title, c, allowed, cast)
             keep = list(dict.fromkeys(check.tags))[: label_mod.MAX_KEEP]
+            # an occasion (or any tag with cues) needs one of its cues actually seen
+            keep = [t for t in keep if t not in by_id or label_mod.cue_seen(by_id[t], check.seen)]
             if not check.match or not keep:
                 stats["rejected_by_look"] += 1
                 return
@@ -719,18 +721,13 @@ class SceneService:
                     continue
                 look_and_propose(c, [t])
         if every_scene and not ctx.cancel.is_set():
-            wanted = [by_id[t] for t in every_scene]
-            tagged = [
-                (x["start"], x["end"])
-                for x in self.store.tags([key])
-                if x["status"] != "rejected" and set(x["tags"]) & set(every_scene)
-            ]
-            scenes = label_mod.scenes_to_look(doc, tagged)
+            rows = [x for x in self.store.tags([key]) if x["status"] != "rejected"]
+            scenes = label_mod.scenes_to_look(doc, every_scene, rows)
             for i, c in enumerate(scenes):
                 if ctx.cancel.is_set():
                     break
                 ctx.progress(0.9 + 0.1 * i / max(1, len(scenes)), f"Looking closely {i + 1}")
-                look_and_propose(c, wanted)
+                look_and_propose(c, [by_id[t] for t in c["look_for"]])
         tidied = self.tidy(key)
         return {
             "key": key,

@@ -360,15 +360,41 @@ def around_hits(
     return out
 
 
-def scenes_to_look(doc: dict[str, Any], tagged: list[tuple[float, float]]) -> list[dict[str, Any]]:
-    """Every automatic scene of at least SCENE_MIN seconds that no range in *tagged* covers."""
+def scenes_to_look(
+    doc: dict[str, Any], wanted: list[str], rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Every automatic scene of at least SCENE_MIN seconds with the *wanted* tags it
+    still lacks ("tags"): a scene tagged christmas is still looked at for snow."""
     out = []
     for sc in doc.get("scenes") or []:
         a, b = sc["start"], sc["end"]
-        if b - a < SCENE_MIN or any(x < b and y > a for x, y in tagged):
+        if b - a < SCENE_MIN:
             continue
-        out.append({"start": a, "end": b, "tags": [], "people": [], "why": "", "confidence": 0.3})
+        have = {t for r in rows if r["start"] < b and r["end"] > a for t in r["tags"]}
+        missing = [t for t in wanted if t not in have]
+        if missing:
+            out.append(
+                {
+                    "start": a,
+                    "end": b,
+                    "tags": [],
+                    "people": [],
+                    "why": "",
+                    "confidence": 0.3,
+                    "look_for": missing,
+                }
+            )
     return out
+
+
+def cue_seen(tag: dict[str, Any], seen: list[str]) -> bool:
+    """Whether what the look step saw names one of the tag's ``see`` cues ("pumpkins"
+    in "carved pumpkins on the tables"). Tags without cues always pass."""
+    cues = [c.lower() for c in (tag.get("cues") or {}).get("see") or []]
+    if not cues:
+        return True
+    words = [s.lower() for s in seen]
+    return any(c in w or w in c for c in cues for w in words if len(w) > 2)
 
 
 def keyword_tags(keywords: list[str], tags: list[dict[str, Any]]) -> list[str]:

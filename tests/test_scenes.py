@@ -528,7 +528,7 @@ def test_signals_and_label_jobs(sc, monkeypatch):
         allowed = [t for t in ("christmas", "snow", "halloween") if f"{t}:" in prompt]
         return schema(match=True, tags=allowed[:2], first_tile=1, last_tile=6,
                       summary="presents", people=["Harry"], confidence=0.6,
-                      seen=["wrapped presents"])
+                      seen=["wrapped presents", "snow falling", "pumpkins"])
 
     monkeypatch.setattr(ai, "ask_json", fake)
     fams = [f for f in label.vocab.families() if f != "content"]
@@ -540,7 +540,7 @@ def test_signals_and_label_jobs(sc, monkeypatch):
     row = next(t for t in sc.get("/api/scenes/tags", params={"key": key}).json()["tags"]
                if t["source"] == "ai:ollama/test")
     assert row["tags"] == ["christmas", "snow"] and row["status"] == "proposed"
-    assert row["evidence"] == ["wrapped presents"]
+    assert row["evidence"] == ["wrapped presents", "snow falling", "pumpkins"]
     assert res["result"]["searched_closely"] == ["christmas"]  # "Happy Christmas" was said
 
     # Searching closely: halloween is picked in Settings, so every untagged scene is looked at.
@@ -612,9 +612,15 @@ def test_cues_mark_what_is_said_and_seen():
     assert label.heard_in(hits, 0, 60) == "halloween ('Halloween'), birthday ('Make a wish')"
     assert "see: pumpkins" in label.list_text([halloween])
     assert label.keyword_tags(["christmas", "boarding school"], occasions) == ["christmas"]
-    got = label.scenes_to_look({"scenes": [{"start": 0, "end": 5}, {"start": 5, "end": 40},
-                                           {"start": 40, "end": 90}]}, [(50, 60)])
-    assert [(c["start"], c["end"]) for c in got] == [(5, 40)]
+    scenes = {"scenes": [{"start": 0, "end": 5}, {"start": 5, "end": 40}, {"start": 40, "end": 90}]}
+    got = label.scenes_to_look(scenes, ["halloween", "snow"],
+                               [{"start": 50, "end": 60, "tags": ["halloween", "snow"]},
+                                {"start": 10, "end": 20, "tags": ["christmas", "halloween"]}])
+    # a scene tagged halloween is still looked at for snow; a scene with both is done
+    assert [(c["start"], c["end"], c["look_for"]) for c in got] == [(5, 40, ["snow"])]
+    assert label.cue_seen(halloween, ["carved pumpkins on the tables"])
+    assert not label.cue_seen(halloween, ["Halloween feast", "night"])
+    assert label.cue_seen(vocab.get("castle"), [])  # no cues: nothing to prove
 
 
 def test_tidy_accepts_sure_ai_moments_and_merges_twins(db):
