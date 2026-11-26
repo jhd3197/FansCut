@@ -1,0 +1,38 @@
+/* Sets: one per tag. Mosaic cards, facts, rule chip, moments grid. */
+.set-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(calc(var(--tile) * 1.9), 100%), 1fr)); gap: 24px var(--tile-gap); }
+.set-card { display: flex; flex-direction: column; gap: 10px; color: var(--text); text-decoration: none; }
+.set-card:hover { color: var(--text); }
+.shelf > .set-card { flex: 0 0 calc(var(--tile) * 1.9); scroll-snap-align: start; }
+.mosaic { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: var(--poster); box-shadow: var(--shadow); transition: transform .2s ease, box-shadow .2s ease; }
+.mosaic[data-n="1"] > * { grid-column: 1 / -1; grid-row: 1 / -1; }
+.mosaic[data-n="2"] > * { grid-row: 1 / -1; }
+.mosaic[data-n="3"] > :first-child { grid-row: 1 / -1; }
+.mosaic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.set-card:hover .mosaic { transform: translateY(-3px); box-shadow: var(--shadow-hover); }
+
+.facts { display: flex; flex-wrap: wrap; gap: 28px; margin: 0; padding: 0; list-style: none; }
+.facts li { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 13px; }
+.facts b { font: 700 24px/1.1 var(--display); color: var(--text); font-variant-numeric: tabular-nums; }
+
+.rule-chip { display: inline-flex; gap: 6px; align-items: baseline; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 13px; }
+.rule-chip span { color: var(--muted); }
+
+.moments { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px 14px; }
+.moment { display: flex; flex-direction: column; gap: 4px; color: var(--text); text-decoration: none; min-width: 0; }
+.moment:hover { color: var(--text); }
+.moment img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: var(--poster); }
+.moment .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.cast-thumb { width: 32px; height: 48px; object-fit: cover; border-radius: 4px; background: var(--panel2); border: 1px solid var(--line); display: inline-flex; align-items: center; justify-content: center; color: var(--dim); font-size: 14px; flex: none; }
+.tag-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.tag-links-sm { display: flex; flex-wrap: wrap; gap: 4px; }
+.tag-chip { display: inline-flex; gap: 6px; align-items: baseline; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text); font: 13px/1.3 var(--font); text-decoration: none; white-space: nowrap; }
+.tag-chip:hover { color: var(--text); border-color: var(--accent); }
+.tag-links-sm .tag-chip { padding: 1px 8px; font-size: 12px; }
+.tag-chip .n { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+
+/* Library tags: one table per family; a tag's moments grouped by collection, then film. */
+.moment .moment-link { display: flex; flex-direction: column; gap: 4px; color: var(--text); text-decoration: none; min-width: 0; }
+.moment .moment-link:hover { color: var(--text); }
+.moment .moment-link:hover img { border-color: var(--accent); }
+.moment-people { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

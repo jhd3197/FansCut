@@ -134,6 +134,36 @@ def test_tag_cleaning():
         st.clean_range(10, 500, duration=100)
 
 
+def test_cut_tags_keep_their_prefix():
+    assert st.norm_tag("fc:Filler") == "fc:filler"
+    assert st.clean_tags(["fc:recap", "Snow"]) == ["fc:recap", "snow"]
+    with pytest.raises(Exception, match="bad tag"):
+        st.norm_tag("fc:")
+
+
+def test_vocab_ships_with_the_package():
+    from fanscut.scenes import vocab
+
+    data = vocab.load()
+    assert data["version"] == 1 and len(data["tags"]) == 130
+    assert len(vocab.families()) == 10
+    assert {t["id"] for t in vocab.content_tags() if t["family"] == "element"} == {"fire", "water"}
+    from fanscut.config import FAMILIES
+
+    assert list(FAMILIES) == vocab.families()  # Settings validates against the same list
+    assert {t["family"] for t in vocab.content_tags(["mood", "content"])} ==         set(vocab.families()) - {"mood", "content"}
+    assert all(vocab.is_smart(t["id"]) for t in vocab.cut_tags())
+    assert vocab.name("fc:filler") == "Filler" and vocab.name("fc:made-up") == "Made up"
+    signals = {t["id"] for t in vocab.public()["signals"]}
+    assert {"no-face", "dialogue", "long-take"} <= signals  # measured: not tags
+    assert not any(t["id"].removeprefix("fc:") in signals for t in vocab.cut_tags())
+    assert vocab.name("great-hall") == "Great hall"
+    assert {t["id"] for t in vocab.cut_tags("person")} == {"fc:filler", "fc:spoiler"}
+    # every id is a valid stored tag
+    for t in [*data["tags"], *data["cut_tags"]]:
+        assert st.norm_tag(t["id"]) == t["id"]
+
+
 def test_store_round_trip(db):
     s = st.SceneStore(db)
     a = s.add_tag("radarr:1", 671, 10, 40, ["christmas"], [], "presents", source="ai:x")
@@ -261,7 +291,9 @@ def sc(cfg, tmp_path, film_dir, monkeypatch):
     monkeypatch.setattr("fanscut.browse._collections_of", lambda m: ["Snow Saga"])
     with TestClient(create_app(cfg, tmp_path / "config.yaml", start_worker=False)) as c:
         c.core = c.app.state.core  # type: ignore[attr-defined]
-        c.key = c.get("/api/scenes/films").json()["films"][0]["key"]
+        film = c.get("/api/scenes/films").json()["films"][0]
+        assert film["franchises"] == ["Snow Saga"]
+        c.key = film["key"]
         yield c
 
 
@@ -269,6 +301,7 @@ def sc(cfg, tmp_path, film_dir, monkeypatch):
 @needs_prompture_video
 def test_scene_api_end_to_end(sc, monkeypatch):
     key = sc.key
+    sc.core.cfg.scenes.signals = False  # signals have their own test
     assert sc.get("/api/scenes/film", params={"key": key}).json()["index"] is None
     assert sc.post("/api/scenes/ai", json={"key": key, "tag": "christmas"}).status_code == 400  # no index
 
@@ -345,3 +378,280 @@ def test_scene_api_end_to_end(sc, monkeypatch):
 
     gone = sc.delete(f"/api/scenes/tags/{t['id']}")
     assert gone.status_code == 204
+
+
+def test_vocab_api_and_cut_tag_counts(cfg, tmp_path):
+    with TestClient(create_app(cfg, tmp_path / "config.yaml", start_worker=False)) as c:
+        v = c.get("/api/scenes/vocab").json()
+        assert v["version"] == 1 and len(v["families"]) == 10
+        assert {t["detect"] for t in v["cut_tags"]} == {"auto", "ai", "person"}
+        store = c.app.state.core.scenes.store
+        store.add_tag("radarr:1", 671, 10, 40, ["christmas", "fc:filler"], [], source="user")
+        counts = {t["tag"]: t for t in c.get("/api/scenes/tag-counts").json()["tags"]}
+        assert counts["fc:filler"]["smart"] and counts["fc:filler"]["name"] == "Filler"
+        assert not counts["christmas"]["smart"] and counts["christmas"]["family"] == "occasion"
+
+
+def test_face_names_need_a_looser_match_for_people_in_the_moment():
+    from fanscut.scenes import faces
+
+    scores = [(0.35, "Rupert Grint"), (0.33, "Daniel Radcliffe")]
+    assert faces.pick(scores, set()) is None
+    assert faces.pick(scores, {"Daniel Radcliffe"}) == ("Daniel Radcliffe", 0.33)
+    assert faces.pick([(0.45, "Tom Felton")], set()) == ("Tom Felton", 0.45)
+
+    class Engine:  # two faces: one matches Harry, one nobody
+        def detect(self, img):
+            return [[10, 20, 50, 60, *[0] * 10, 0.9], [200, 20, 40, 40, *[0] * 10, 0.8]]
+
+        def feature(self, img, f):
+            return f[0]
+
+        def match(self, a, b):
+            return 0.38 if a == 10 and b == "h" else 0.1
+
+    class Img:
+        shape = (100, 400, 3)
+
+    refs = {"Daniel Radcliffe": {"character": "Harry Potter", "photo": "h.jpg", "feature": "h"}}
+    got = faces.name_faces(Engine(), Img(), refs, {"Daniel Radcliffe"})
+    assert got[0]["name"] == "Daniel Radcliffe" and got[0]["character"] == "Harry Potter"
+    assert got[0]["sure"] is False and got[0]["match"] == 0.38  # below SURE: "Harry Potter?"
+    assert got[0]["box"] == [0.025, 0.2, 0.125, 0.6]
+    assert got[1]["name"] is None
+
+    class Twins(Engine):  # both faces look like Hermione: only the closer one is her
+        def match(self, a, b):
+            return {10: 0.6, 200: 0.5}[a]
+
+    refs = {"Emma Watson": {"character": "Hermione Granger", "photo": "", "feature": "e"}}
+    got = faces.name_faces(Twins(), Img(), refs, set())
+    assert [g["name"] for g in got] == ["Emma Watson", None]
+
+
+def test_face_models_download_once(tmp_path):
+    from fanscut.scenes import faces
+
+    class Resp:
+        content = b"onnx"
+
+        def raise_for_status(self):
+            pass
+
+    calls = []
+
+    class Session:
+        def get(self, url, timeout):
+            calls.append(url)
+            return Resp()
+
+    d, r = faces.ensure_models(tmp_path, Session())
+    assert d.name == "face_detection_yunet_2023mar.onnx" and r.read_bytes() == b"onnx"
+    faces.ensure_models(tmp_path, Session())
+    assert len(calls) == 2
+
+
+# -- signals (measured, never tags) --------------------------------------------------------
+def test_signals_from_numbers():
+    import numpy as np
+
+    from fanscut.scenes import signals as smart
+
+    shots = [[0, 10], [10, 11], [11, 12], [12, 13], [13, 14], [14, 15], [15, 16], [16, 40]]
+    lines = [{"start": 16.0, "end": 19.0, "text": "Happy Christmas."},
+             {"start": 20.0, "end": 24.0, "text": "Me?"},
+             {"start": 30.0, "end": 31.0, "text": "[CAT MEOWS]"}]
+    doc = {"duration": 40.0, "shots": shots, "lines": lines}
+    flat = np.zeros((36, 64), np.float32)
+    samples = []
+    for t in range(40):
+        if t < 10:  # a dark, still, empty opening
+            samples.append(smart.Sample(t, 13.0, flat, 0, 0.0))
+        elif t < 16:  # quick shots with a crowd
+            samples.append(smart.Sample(t, 120.0, flat + t * 10, 4, 0.2))
+        else:  # a long close-up
+            samples.append(smart.Sample(t, 120.0, flat + (t % 2) * 40, 1, 0.5))
+    loud = np.full(80, -30.0, np.float32)
+    loud[0:10] = -70  # silent first 5 s
+    loud[50] = -5  # one bang at 25 s
+    got = smart.label(doc, samples, loud)
+    assert got["no-face"] == [(0.0, 10.0)]
+    assert got["dark"] == [(0.0, 10.0)] and got["still"] == [(0.0, 10.0)]
+    assert got["group"] == [(10.0, 16.0)]
+    assert got["close-up"] == [(16.0, 40.0)]
+    assert got["long-take"] == [(16.0, 40.0)]
+    assert got["fast-cutting"] and got["fast-cutting"][0][0] <= 11
+    assert got["dialogue"] == [(16.0, 24.0)]  # the cat isn't dialogue
+    assert got["silence"] == [(0.0, 5.0)]
+    assert got["loud"] == [(23.5, 27.0)]
+    assert smart.speech("- Me?") and not smart.speech("♪ Hedwig's theme ♪")
+
+
+@needs_ffmpeg
+@needs_prompture_video
+def test_signals_and_label_jobs(sc, monkeypatch):
+    from fanscut.scenes import faces, label
+
+    key = sc.key
+    monkeypatch.setattr(faces, "available", lambda: False)  # no face models in tests
+    sc.post("/api/scenes/index", json={"key": key})
+    sc.core.worker.run_pending()  # indexing queues the signals pass (signals on)
+    sc.core.worker.run_pending()
+    sig = sc.get("/api/scenes/signals", params={"key": key}).json()
+    # three flat colour shots of 10 s: each barely moves
+    assert sig["signals"]["still"] and sig["version"] == 1 and sig["measured_at"]
+    # signals are never tags, and an old measured tag row is cleared on the next run
+    assert all(t["source"] != "auto" for t in
+               sc.get("/api/scenes/tags", params={"key": key}).json()["tags"])
+    sc.core.scenes.store.add_tag(key, 671, 1, 5, ["fc:filler"], [], source="auto")
+    job = sc.post("/api/scenes/signals", json={"key": key}).json()
+    sc.core.worker.run_pending()
+    res = sc.get(f"/api/jobs/{job['id']}").json()
+    assert res["status"] == "done" and res["result"]["old_tags_removed"] == 1
+    assert "signals" not in sc.get("/api/scenes/film", params={"key": key}).json()["index"]
+
+    assert sc.post("/api/scenes/label", json={"key": key}).status_code == 400  # no model
+    sc.core.cfg.ai.model = "ollama/test"
+    assert sc.post("/api/scenes/label", json={"key": key, "families": ["nope"]}).status_code == 400
+
+    sc.core.cfg.scenes.search_closely = []  # the close search has its own check below
+
+    def fake(cfg_, schema, system, prompt, images=None, **kw):
+        if schema is tagger.WindowHits:  # the one-tag pass of the close search
+            return tagger.WindowHits(matches=[])
+        if schema.__name__ == "Moments":
+            assert "christmas:" in prompt and "gore:" not in prompt  # content family off
+            return schema(moments=[{"window": 0, "start": "0:01", "end": "0:09",
+                                    "tags": ["christmas", "happy"], "people": ["Harry"],
+                                    "why": "presents", "confidence": 0.8}])
+        assert images
+        allowed = [t for t in ("christmas", "snow", "halloween") if f"{t}:" in prompt]
+        return schema(match=True, tags=allowed[:2], first_tile=1, last_tile=6,
+                      summary="presents", people=["Harry"], confidence=0.6,
+                      seen=["wrapped presents", "snow falling", "pumpkins"])
+
+    monkeypatch.setattr(ai, "ask_json", fake)
+    fams = [f for f in label.vocab.families() if f != "content"]
+    job = sc.post("/api/scenes/label", json={"key": key, "families": fams}).json()
+    sc.core.worker.run_pending()
+    res = sc.get(f"/api/jobs/{job['id']}").json()
+    assert res["status"] == "done", res
+    assert res["result"]["proposed"] == 1 and res["result"]["tags"] == {"christmas": 1, "snow": 1}
+    row = next(t for t in sc.get("/api/scenes/tags", params={"key": key}).json()["tags"]
+               if t["source"] == "ai:ollama/test")
+    assert row["tags"] == ["christmas", "snow"] and row["status"] == "proposed"
+    assert row["evidence"] == ["wrapped presents", "snow falling", "pumpkins"]
+    assert res["result"]["searched_closely"] == ["christmas"]  # "Happy Christmas" was said
+
+    # Searching closely: halloween is picked in Settings, so every untagged scene is looked at.
+    sc.core.cfg.scenes.search_closely = ["halloween"]
+    job = sc.post("/api/scenes/label", json={"key": key, "families": fams, "mode": "focused"}).json()
+    sc.core.worker.run_pending()
+    res = sc.get(f"/api/jobs/{job['id']}").json()
+    assert res["status"] == "done", res
+    assert res["result"]["every_scene_for"] == ["halloween"] and res["result"]["candidates"] == 0
+    assert res["result"]["tags"].get("halloween", 0) >= 1
+    # the schema refuses ids outside the list
+    moments, _ = label.schemas(["christmas"])
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        moments.model_validate({"moments": [{"window": 0, "start": "0", "end": "1",
+                                             "tags": ["quidditch"]}]})
+
+
+def test_label_fits_stretches_to_their_dialogue():
+    from fanscut.scenes import label
+
+    doc = {"scenes": [{"start": 0, "end": 60}, {"start": 60, "end": 140}, {"start": 140, "end": 300}],
+           "lines": [{"start": 78, "end": 80, "text": "Professor McGonagall."},
+                     {"start": 150, "end": 152, "text": "Up. Get up!"},
+                     {"start": 200, "end": 202, "text": "[OWL HOOTS]"}]}
+    # the model gave the window's start (a studio logo): the stretch moves to the first line's scene
+    assert label.fit(doc, 0, 60, 300) == (60, 140)
+    # a stretch spilling over is cut back to the scenes its lines sit in
+    assert label.fit(doc, 30, 280, 300) == (60, 280)
+    # no speech at all in reach (a sound description isn't speech): left alone
+    assert label.fit(doc, 190, 230, 240) == (190, 230)
+
+
+def test_label_sweep_covers_gaps_and_faceless_stretches():
+    from fanscut.scenes import label
+
+    doc = {"scenes": [{"start": 0, "end": 30}, {"start": 30, "end": 40}, {"start": 40, "end": 100}],
+           "lines": [{"start": t, "end": t + 1, "text": "Talk."} for t in (1, 20, 31, 34, 41, 80)]}
+    cands = [{"start": 40, "end": 100, "tags": ["snow"], "people": [], "why": "", "confidence": 0.5}]
+    sig = {"signals": {"no-face": [[33.0, 39.0], [90.0, 95.0]]}}
+    got = [(c["start"], c["end"]) for c in label.sweep(doc, cands, sig)]
+    assert (0, 30) in got and (30, 40) not in got  # uncovered scenes of 15 s or more
+    assert (33.0, 39.0) in got  # a long enough no-face stretch nobody covers
+    assert (90.0, 95.0) not in got  # covered by the dialogue pass
+    assert all(c["tags"] == [] for c in label.sweep(doc, cands, None))
+
+
+def test_look_can_turn_a_stretch_down():
+    from fanscut.scenes import label
+
+    _, look = label.schemas(["snow"])
+    assert look.model_validate({"match": False, "tags": []}).match is False
+
+
+def test_cues_mark_what_is_said_and_seen():
+    from fanscut.scenes import label, vocab
+
+    halloween = vocab.get("halloween")
+    assert "pumpkins" in halloween["cues"]["see"] and "trick or treat" in halloween["cues"]["hear"]
+    occasions = [t for t in vocab.content_tags() if t["family"] == "occasion"]
+    assert all(t.get("cues", {}).get("see") and t["cues"].get("hear") for t in occasions)
+    doc = {"lines": [{"start": 10, "end": 12, "text": "Happy Halloween, everyone!"},
+                     {"start": 50, "end": 52, "text": "Make a wish, Harry."},
+                     {"start": 90, "end": 92, "text": "Halloweens past were dull."}]}
+    hits = label.cue_hits(doc, occasions)
+    assert [t for t, _ in hits["halloween"]] == [10]  # whole words only
+    assert hits["birthday"] == [(50, "Make a wish")]
+    assert label.heard_in(hits, 0, 60) == "halloween ('Halloween'), birthday ('Make a wish')"
+    assert "see: pumpkins" in label.list_text([halloween])
+    assert label.keyword_tags(["christmas", "boarding school"], occasions) == ["christmas"]
+    scenes = {"scenes": [{"start": 0, "end": 5}, {"start": 5, "end": 40}, {"start": 40, "end": 90}]}
+    got = label.scenes_to_look(scenes, ["halloween", "snow"],
+                               [{"start": 50, "end": 60, "tags": ["halloween", "snow"]},
+                                {"start": 10, "end": 20, "tags": ["christmas", "halloween"]}])
+    # a scene tagged halloween is still looked at for snow; a scene with both is done
+    assert [(c["start"], c["end"], c["look_for"]) for c in got] == [(5, 40, ["snow"])]
+    assert label.cue_seen(halloween, ["carved pumpkins on the tables"])
+    assert not label.cue_seen(halloween, ["Halloween feast", "night"])
+    assert label.cue_seen(vocab.get("castle"), [])  # no cues: nothing to prove
+
+
+def test_tidy_accepts_sure_ai_moments_and_merges_twins(db):
+    s = st.SceneStore(db)
+    human = s.add_tag("radarr:1", 671, 100, 200, ["christmas", "snow"], [{"name": "A"}],
+                      source="user", status="accepted")
+    twin = s.add_tag("radarr:1", 671, 120, 210, ["christmas", "magic"], [{"name": "B"}],
+                     source="ai:x", confidence=0.9, evidence=["wrapped presents"])
+    sure = s.add_tag("radarr:1", 671, 400, 460, ["halloween"], [], source="ai:x", confidence=0.8)
+    unsure = s.add_tag("radarr:1", 671, 500, 560, ["fight"], [], source="ai:x", confidence=0.5)
+    other = s.add_tag("radarr:1", 671, 410, 450, ["fight"], [], source="ai:y", confidence=0.95)
+    got = s.tidy("radarr:1", 0.75)
+    assert got == {"auto_accepted": 3, "merged": 1}
+    ids = {r["id"]: r for r in s.tags(["radarr:1"])}
+    assert twin["id"] not in ids  # the person's moment stays and takes the AI's extras
+    kept = ids[human["id"]]
+    assert kept["tags"] == ["christmas", "snow", "magic"] and kept["evidence"] == ["wrapped presents"]
+    assert {p["name"] for p in kept["people"]} == {"A", "B"}
+    assert ids[sure["id"]]["status"] == "accepted" and ids[unsure["id"]]["status"] == "proposed"
+    assert other["id"] in ids  # different tags: not the same moment
+    assert s.tidy("radarr:1", 0.75) == {"auto_accepted": 0, "merged": 0}
+    assert not st.same_moment({"start": 0, "end": 10, "tags": ["a"]}, {"start": 8, "end": 20, "tags": ["a"]})
+
+
+def test_transcript_can_keep_only_speech(cfg, tmp_path):
+    with TestClient(create_app(cfg, tmp_path / "config.yaml", start_worker=False)) as c:
+        lines = [{"start": 1, "end": 2, "text": "[door slams]"},
+                 {"start": 3, "end": 5, "text": "Happy Christmas, Ron."},
+                 {"start": 6, "end": 8, "text": "♪ carol ♪"}]
+        c.app.state.core.scenes.store.save_index("radarr:9", {"lines": lines, "shots": []})
+        q = {"key": "radarr:9"}
+        assert len(c.get("/api/scenes/transcript", params=q).json()["lines"]) == 3
+        said = c.get("/api/scenes/transcript", params={**q, "speech": "true"}).json()["lines"]
+        assert [x["text"] for x in said] == ["Happy Christmas, Ron."]

@@ -1,0 +1,79 @@
+/* Editor step 2, Arrange (the "v2 Cut" board). Full screen, no app sidebar. */
+.arr { min-height: 100vh; display: flex; flex-direction: column; background: var(--page); font-size: 13px; margin: -12px -14px -24px; }
+.arr-fill { flex: 1; }
+
+.arr-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; padding: 9px 20px; background: var(--deep); border-bottom: 1px solid var(--deep-line); }
+.arr-head img { display: block; height: 22px; width: auto; }
+.arr-sep { width: 1px; height: 20px; background: var(--border); }
+.arr-kind { font-size: 12px; color: var(--faint); }
+.arr-title { font-size: 16px; font-weight: 600; color: var(--porcelain); }
+.arr-title:hover { color: var(--sky-text); text-decoration: none; }
+.arr-unsaved { color: var(--apricot); }
+
+.arr-top { display: flex; flex-wrap: wrap; gap: 16px; padding: 14px 20px 0; }
+.arr-preview { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.arr-stage { position: relative; }
+.arr-stage .cp-stage { max-height: 46vh; border: 0; border-radius: 8px; }
+.arr-badge { position: absolute; top: 12px; right: 12px; z-index: 3; pointer-events: none; }
+
+.arr-sum { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 24px; }
+.arr-total { font-size: 20px; color: var(--porcelain); }
+.arr-films { flex: 1 1 360px; min-width: 0; display: flex; gap: 3px; }
+.arr-films > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.arr-films i { display: block; height: 6px; border-radius: 2px; background: var(--film); }
+.arr-films span { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.arr-order { flex: 1 1 372px; min-width: 0; display: flex; flex-direction: column; background: var(--panel); border: 1px solid #19333F; border-radius: 8px; padding: 12px 8px 10px; }
+.arr-order-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 6px 6px; }
+.arr-order-head .lab { color: var(--soft); }
+.arr-order-head .tiny { color: var(--faint); }
+.arr-rows { flex: 1; overflow-y: auto; max-height: 52vh; }
+.arr-row { padding: 0 8px 0 6px; }
+.arr-row.is-over { box-shadow: inset 0 2px 0 var(--sky); }
+.arr-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.arr-pick .n { color: var(--faint); }
+.arr-row.is-on .arr-pick .n { color: var(--sky); }
+.arr-pick img { flex: none; width: 40px; height: 22px; object-fit: cover; border-radius: 3px; background: var(--raised); }
+.arr-name { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; white-space: nowrap; }
+.arr-name > span:first-child { flex: 0 1 auto; min-width: 48px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; box-shadow: inset 0 -2px 0 var(--film); }
+.arr-name .mono { flex: 1 9 0; min-width: 0; font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; }
+.arr-len { flex: none; font-size: 12px; color: var(--dim); }
+.arr-join { width: 100%; gap: 7px; padding: 0 8px 0 12px; border: 0; background: transparent; cursor: pointer; font: 600 11px var(--font); }
+.arr-join .join { font-size: 11px; white-space: nowrap; }
+.arr-join i { flex: 1; height: 1px; background: var(--deep-line); }
+.arr-join.is-on i { background: var(--border-hover); }
+.arr-legend { display: flex; flex-direction: column; gap: 6px; padding: 10px 6px 0; margin-top: 6px; border-top: 1px solid #19333F; }
+.arr-legend .join { font-size: 11px; }
+
+.arr-trim { margin: 14px 20px 0; padding: 8px 10px 8px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.arr-trim .mono { font-size: 13px; }
+.arr-jtext { flex: 1 1 260px; min-width: 0; }
+.arr-jtext .join { font-size: 13px; font-weight: 400; }
+.arr-jtext.is-check .join b { color: var(--coral); }
+
+.arr-lanes { margin-top: auto; padding: 14px 20px 18px; display: flex; gap: 12px; }
+.arr-lane-names { width: 112px; flex: none; display: flex; flex-direction: column; gap: 5px; }
+.arr-lane-names > span:first-child { height: 14px; }
+.arr-lane-names .lab { display: flex; align-items: center; height: 22px; }
+.arr-lane-names .arr-ln-scenes { height: 99px; color: var(--soft); }
+.arr-lane-body { flex: 1; min-width: 0; position: relative; display: flex; flex-direction: column; gap: 5px; cursor: pointer; }
+.arr-ruler { position: relative; height: 14px; }
+.arr-ruler span { position: absolute; top: 0; font-size: 10px; color: var(--faint); transform: translateX(-50%); }
+.arr-ruler span:first-child { transform: none; }
+.arr-tabs { position: relative; height: 20px; }
+.arr-tabs button { position: absolute; top: 0; height: 20px; padding: 0 6px; border: 0; border-radius: 5px 5px 0 0; font: 600 11px var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; cursor: pointer; background: var(--raised); color: var(--soft); box-shadow: inset 0 2px 0 var(--film); }
+.arr-tabs button[aria-pressed="true"] { background: var(--sky); color: var(--on-sky); box-shadow: none; }
+.arr-blocks { position: relative; height: 56px; margin-top: -5px; }
+.arr-blocks button { position: absolute; top: 0; bottom: 0; padding: 0; border: 0; border-radius: 0 0 4px 4px; overflow: hidden; cursor: pointer; background: #000 center / cover no-repeat; color: #fff; }
+.arr-blocks button.is-on { outline: 2px solid var(--sky); outline-offset: -2px; }
+.arr-blocks button span { position: absolute; left: 6px; bottom: 4px; font-size: 11px; text-shadow: 0 1px 2px #000; }
+.arr-seams { position: relative; height: 18px; }
+.arr-seams button { position: absolute; top: 0; width: 18px; height: 18px; margin-left: -10px; padding: 0; border: 0; border-radius: 5px; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.arr-seams button.is-on { background: var(--border); }
+.arr-seams .join { gap: 0; }
+.arr-speech { position: relative; height: 22px; background: var(--well); border-radius: 3px; overflow: hidden; }
+.arr-speech i { position: absolute; top: 5px; bottom: 5px; border-radius: 2px; background: var(--dim); }
+.arr-nodata { position: absolute; top: 0; bottom: 0; border: 1px dashed var(--border); border-radius: 3px; box-sizing: border-box; background: repeating-linear-gradient(135deg, var(--raised) 0 3px, transparent 3px 9px); }
+.arr-music { height: 22px; }
+.arr-music button { width: 100%; height: 100%; border: 1px dashed var(--border); border-radius: 3px; background: var(--well); color: var(--faint); font: 600 11px var(--font); }
+.arr-music button:disabled { cursor: not-allowed; }

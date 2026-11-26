@@ -7,13 +7,16 @@ import logoWhite from './brand/logo-white.svg';
 import { Discover } from './pages/Discover.jsx';
 import { LibraryPage } from './pages/LibraryPage.jsx';
 import { CollectionPage } from './pages/Collection.jsx';
-import { MoviePage } from './pages/Movie.jsx';
+import { MovieCastRedirect, MoviePage } from './pages/Movie.jsx';
 import { ScenesPage } from './pages/Scenes.jsx';
+import { SetDetail, Sets } from './pages/Sets.jsx';
 import { CollectionScenesPage } from './pages/CollectionScenes.jsx';
 import { ShowPage } from './pages/Show.jsx';
 import { SeasonPage } from './pages/Season.jsx';
 import { EpisodePage } from './pages/Episode.jsx';
-import { CutDetail } from './pages/CutDetail.jsx';
+import { CutDetail, CutPosterRedirect } from './pages/CutDetail.jsx';
+import { CutScenes } from './pages/CutScenes.jsx';
+import { LibraryTag, LibraryTags } from './pages/LibraryTags.jsx';
 import { SuggestionPage } from './pages/Suggestion.jsx';
 import { NewCutPage } from './pages/NewCut.jsx';
 import { MatchPage } from './pages/Match.jsx';
@@ -28,12 +31,14 @@ import { t } from './i18n/index.js';
 
 // The two editors are the heaviest pages: load them only when opened.
 const Build = lazy(() => import('./pages/Build.jsx').then((m) => ({ default: m.Build })));
+const Arrange = lazy(() => import('./pages/Arrange.jsx').then((m) => ({ default: m.Arrange })));
 const TimelineEdit = lazy(() => import('./pages/TimelineEdit.jsx').then((m) => ({ default: m.TimelineEdit })));
+const Find = lazy(() => import('./pages/Find.jsx').then((m) => ({ default: m.Find })));
 import { useApi } from './lib/store.js';
 
-// The Framehouse logo (brand kit: white horizontal logo, for the Deep Teal sidebar).
+// The white horizontal logo on the dark sidebar.
 function Logo() {
-  return <img src={logoWhite} alt="FansCut" width="160" height="39" />;
+  return <img src={logoWhite} alt="FansCut" width="107" height="26" />;
 }
 
 // Nav counts: ready suggestions, cuts, running jobs, open health findings.
@@ -57,6 +62,7 @@ function navItems(n) {
   return [
     ['/', t('nav.discover'), n.discover, true],
     ['/library', t('nav.library')],
+    ['/sets', t('nav.sets')],
     ['/my-cuts', t('nav.myCuts'), n.cuts],
     ['/jobs', t('nav.jobs'), n.jobs],
     ['/health', t('nav.health'), n.health],
@@ -97,7 +103,12 @@ function OldCut() {
 }
 function OldTimeline() {
   const { tid } = useParams();
-  return <Navigate to={`/cuts/${encodeURIComponent(tid)}/edit`} replace />;
+  return <Navigate to={`/cuts/${encodeURIComponent(tid)}/arrange`} replace />;
+}
+// The old timeline editor's URL: Arrange is the editor now.
+function OldEdit() {
+  const { id } = useParams();
+  return <Navigate to={`/cuts/${encodeURIComponent(id)}/arrange`} replace />;
 }
 
 // server.auth = "api_key": ask for the key once; the server keeps it in a cookie.
@@ -139,13 +150,13 @@ export function App() {
   const where = useLocation().pathname;
   useEffect(() => {
     // detail pages set their own (the movie or show name); these are the fixed ones
-    const fixed = { '/': 'Discover', '/library': 'Library', '/my-cuts': 'My cuts', '/jobs': 'Jobs',
+    const fixed = { '/': 'Discover', '/library': 'Library', '/sets': 'Sets', '/my-cuts': 'My cuts', '/jobs': 'Jobs',
       '/health': 'Health', '/settings': 'Settings', '/logs': 'Logs' };
     if (fixed[where]) document.title = `${fixed[where]} · FansCut`;
   }, [where]);
   if (locked) return <KeyGate />;
   // The editor is full screen, like an NLE: no app sidebar (its bar has a Home link).
-  if (/^\/cuts\/[^/]+\/edit\/?$/.test(where)) {
+  if (/^\/cuts\/[^/]+\/(arrange|find|advanced)\/?$/.test(where)) {
     return (
       <div className="shell-full">
         <LoadingBar />
@@ -153,7 +164,7 @@ export function App() {
           <StatusChecker />
           <ErrorBoundary resetKey={where}>
             <Suspense fallback={<div className="page"><Loading /></div>}>
-              <Routes><Route path="/cuts/:id/edit" element={<TimelineEdit />} /></Routes>
+              <Routes><Route path="/cuts/:id/arrange" element={<Arrange />} /><Route path="/cuts/:id/find" element={<Find />} /><Route path="/cuts/:id/advanced" element={<TimelineEdit />} /></Routes>
             </Suspense>
           </ErrorBoundary>
         </main>
@@ -173,10 +184,15 @@ export function App() {
           <Route path="/" element={<Discover />} />
           <Route path="/discover/:id" element={<SuggestionPage />} />
           <Route path="/library" element={<LibraryPage />} />
+          <Route path="/library/tags" element={<LibraryTags />} />
+          <Route path="/library/tags/:tag" element={<LibraryTag />} />
           <Route path="/collections/:id" element={<CollectionPage />} />
           <Route path="/collections/:id/scenes" element={<CollectionScenesPage />} />
           <Route path="/movies/:key" element={<MoviePage />} />
           <Route path="/movies/:key/scenes" element={<ScenesPage />} />
+          <Route path="/movies/:key/cast" element={<MovieCastRedirect />} />
+          <Route path="/sets" element={<Sets />} />
+          <Route path="/sets/:tag" element={<SetDetail />} />
           <Route path="/series/:key" element={<ShowPage />} />
           <Route path="/series/:key/match" element={<MatchPage />} />
           <Route path="/series/:key/season/:season" element={<SeasonPage />} />
@@ -185,7 +201,9 @@ export function App() {
           <Route path="/series/:key/timelines/:tid" element={<OldTimeline />} />
           <Route path="/cuts/:id" element={<CutDetail />} />
           <Route path="/cuts/:id/build" element={<Build />} />
-          <Route path="/cuts/:id/edit" element={<TimelineEdit />} />
+          <Route path="/cuts/:id/poster" element={<CutPosterRedirect />} />
+          <Route path="/cuts/:id/scenes" element={<CutScenes />} />
+          <Route path="/cuts/:id/edit" element={<OldEdit />} />
           <Route path="/my-cuts" element={<MyCuts />} />
           <Route path="/new" element={<NewCutPage />} />
           <Route path="/jobs" element={<Jobs />} />
@@ -197,7 +215,7 @@ export function App() {
         </Suspense>
         </ErrorBoundary>
       </main>
-      <MobileNav items={items.slice(0, 5)} />
+      <MobileNav items={items.filter(([to]) => to !== '/sets').slice(0, 5)} />
       <Toasts />
     </div>
   );

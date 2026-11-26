@@ -176,7 +176,46 @@ def _encoder_args(ff: FFmpegCfg, codec: str = "h264", transfer: str = "",
     return [*v, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", ff.audio_bitrate]
 
 
-def _filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str, Any],
+# Seeked inputs (.planning/seek-inputs.md): a re-encode opens a file once per cluster of
+# nearby segments, seeked to just before the first, instead of decoding from 0:00.
+SEEK_GAP = 120.0  # a segment this far past the previous one of its file starts a new input
+SEEK_MARGIN = 15.0  # seek this much early: J-cut lead audio, keyframe-accurate seeking
+MAX_INPUTS = 48  # more clusters than this: one input per file, to bound open decoders
+
+At = tuple[int, float]  # (input index, the input's start time in the file)
+
+
+def input_clusters(segs: list[Segment]) -> tuple[list[tuple[str, float]], list[At],
+                                                 list[At | None]]:
+    """(inputs [(file, seek offset)], each segment's input, each music bridge's input)."""
+    def clusters(per_file: bool) -> tuple[list[tuple[str, float]], list[At], list[At | None]]:
+        inputs: list[tuple[str, float]] = []
+        last_end: dict[str, tuple[int, float]] = {}  # file -> (input index, latest end)
+        at: list[At] = [(0, 0.0)] * len(segs)
+        order = sorted(range(len(segs)), key=lambda k: (segs[k].file, segs[k].start))
+        for k in order:
+            s = segs[k]
+            cur = last_end.get(s.file)
+            if cur is None or (not per_file and s.start - cur[1] > SEEK_GAP):
+                inputs.append((s.file, max(0.0, s.start - SEEK_MARGIN)))
+                cur = (len(inputs) - 1, s.end)
+            last_end[s.file] = (cur[0], max(cur[1], s.end))
+            at[k] = (cur[0], inputs[cur[0]][1])
+        bridge: list[At | None] = []
+        for s in segs:
+            a = (s.fx or {}).get("audio") or {}
+            if s.audio_file and a.get("src"):
+                inputs.append((s.audio_file, max(0.0, float(a.get("start", 0.0)) - SEEK_MARGIN)))
+                bridge.append((len(inputs) - 1, inputs[-1][1]))
+            else:
+                bridge.append(None)
+        return inputs, at, bridge
+
+    found = clusters(per_file=False)
+    return found if len(found[0]) <= MAX_INPUTS else clusters(per_file=True)
+
+
+def _filter_script(segs: list[Segment], at: list[At], first: dict[str, Any],
                    audio: bool, fade: bool, audio_map: dict[str, int] | None = None,
                    infos: dict[str, Any] | None = None, pix_fmt: str = "yuv420p",
                    tonemap: frozenset[str] = frozenset()) -> str:
@@ -192,13 +231,14 @@ def _filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str,
             room = (infos[prev.file].get("duration") or prev.end) - prev.end
             ext[k - 1] = min(segs[k].xfade_ms / 1000, max(room, 0.0))
     for k, s in enumerate(segs):
-        n = inputs[s.file]
+        n, off = at[k]  # the segment's (seeked) input: its times are file time - off
         a_idx = (audio_map or {}).get(s.file, 0)
         tm = f"{TONEMAP}," if s.file in tonemap else ""
-        vf = (f"[{n}:v:0]trim=start={s.start:.3f}:end={s.end:.3f},setpts=PTS-STARTPTS,{tm}"
+        vf = (f"[{n}:v:0]trim=start={s.start - off:.3f}:end={s.end - off:.3f},"
+              f"setpts=PTS-STARTPTS,{tm}"
               f"fps={fps},scale={w}:{h}:force_original_aspect_ratio=decrease,"
               f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format={pix_fmt}")
-        af = (f"[{n}:a:{a_idx}]atrim=start={s.start:.3f}:end={s.end + ext[k]:.3f},"
+        af = (f"[{n}:a:{a_idx}]atrim=start={s.start - off:.3f}:end={s.end + ext[k] - off:.3f},"
               "asetpts=PTS-STARTPTS,aresample=48000,"
               "aformat=sample_fmts=fltp:channel_layouts=stereo")
         if fade:
@@ -303,7 +343,7 @@ def build_plan(
                "-map", "0:v:0", *(["-map", "0:a:0"] if audio else []),
                "-map_metadata", "1", "-map_chapters", "1", "-c", "copy", *tail, str(tmp)]
     else:
-        inputs = {f: n for n, f in enumerate(infos)}
+        inputs, at, bridge = input_clusters(segs)
         codec, transfer = output_format(ff, list(infos.values()))
         tonemap: frozenset[str] = frozenset()
         if fast:
@@ -315,12 +355,12 @@ def build_plan(
         if edited:
             from .effects import Out, filter_script
 
-            script, extra = filter_script(segs, inputs, first, infos, audio, workdir,
+            script, extra = filter_script(segs, at, bridge, first, infos, audio, workdir,
                                           Out(pix, bool(transfer), tonemap), audio_map)
             files["filter.txt"] = script
             files.update(extra)
         else:
-            files["filter.txt"] = _filter_script(segs, inputs, first, audio, fade, audio_map,
+            files["filter.txt"] = _filter_script(segs, at, first, audio, fade, audio_map,
                                                  infos, pix, tonemap)
         if fast:
             warnings.append(f"fast quality: {first['width']}x{first['height']} H.264"
@@ -336,8 +376,8 @@ def build_plan(
                             + ("" if hdrp or transfer != "smpte2084"
                                else "; no mastering metadata found in the source"))
         cmd = [*base]
-        for f in inputs:
-            cmd += ["-i", f]
+        for f, off in inputs:  # seeked: decoding starts near the segment, not at 0:00
+            cmd += [*(["-ss", f"{off:.3f}"] if off > 0 else []), "-i", f]
         cmd += [*meta, "-filter_complex_script", str(workdir / "filter.txt"), "-map", "[v]",
                 *(["-map", "[a]"] if audio else []),
                 "-map_metadata", f"{len(inputs)}", "-map_chapters", f"{len(inputs)}",

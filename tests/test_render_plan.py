@@ -196,3 +196,31 @@ def test_fast_quality_tone_maps_edited_segments_too():
     fast = build(segs=[seg, Segment("S01E01", "/m/a.mkv", 50, 90)], probe=probe, quality="fast")
     assert fast.files["filter.txt"].count("tonemap=hable") == 2
     assert "scale=1920:800" in fast.files["filter.txt"] and "libx264" in fast.command
+
+
+def test_input_clusters_seek_near_segments_and_cap_the_count():
+    near = [Segment("A", "/m/a.mkv", 600, 610), Segment("A", "/m/a.mkv", 650, 660)]
+    far = Segment("A", "/m/a.mkv", 3000, 3010)
+    other = Segment("B", "/m/b.mkv", 5, 9)
+    inputs, at, bridge = rp.input_clusters([*near, far, other])
+    assert inputs == [("/m/a.mkv", 585.0), ("/m/a.mkv", 2985.0), ("/m/b.mkv", 0.0)]
+    assert at == [(0, 585.0), (0, 585.0), (1, 2985.0), (2, 0.0)] and bridge == [None] * 4
+
+    music = Segment("A", "/m/a.mkv", 600, 610)
+    music.audio_file, music.fx = "/m/score.mkv", {"audio": {"src": "S", "start": 120.0}}
+    inputs, _at, bridge = rp.input_clusters([music])
+    assert inputs[-1] == ("/m/score.mkv", 105.0) and bridge == [(1, 105.0)]
+
+    many = [Segment("A", "/m/a.mkv", k * 500, k * 500 + 5) for k in range(60)]
+    inputs, at, _b = rp.input_clusters(many)
+    assert inputs == [("/m/a.mkv", 0.0)]  # past MAX_INPUTS: one input per file
+
+
+def test_encode_command_seeks_and_trims_relative_to_the_seek():
+    segs = [Segment("S01E01", "/m/a.mkv", 1200, 1230), Segment("S01E02", "/m/b.mkv", 5, 95)]
+    plan = build(segs=segs, probe=lambda f: info(video={"codec": "hevc"}) if f == "/m/a.mkv" else info())
+    cmd = plan.command
+    i = cmd.index("/m/a.mkv")
+    assert cmd[i - 3:i] == ["-ss", "1185.000", "-i"]
+    assert "trim=start=15.000:end=45.000" in plan.files["filter.txt"]
+    assert "trim=start=5.000:end=95.000" in plan.files["filter.txt"]  # b.mkv: no seek

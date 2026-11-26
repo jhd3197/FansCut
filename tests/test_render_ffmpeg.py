@@ -4,6 +4,7 @@ import json
 import subprocess
 import threading
 import wave
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -170,3 +171,43 @@ def test_detects_shared_intro_in_real_files(tmp_path):
     for (eid, _, _), off in zip(files, offsets, strict=True):
         s, e = found[eid]["intro"]
         assert abs(s - off) < 1.0 and abs(e - (off + 12)) < 1.0
+
+
+def _frame(path, t):
+    """One grey 32x24 frame at t, as raw bytes (for comparing content, not codecs)."""
+    return subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(path),
+                           "-frames:v", "1", "-vf", "scale=32:24,format=gray", "-f", "rawvideo",
+                           "-"], capture_output=True, check=True).stdout
+
+
+def _diff(a, b):
+    return sum(abs(x - y) for x, y in zip(a, b, strict=True)) / len(a)
+
+
+def test_seeked_inputs_cut_the_same_frames(tmp_path):
+    """A segment far into a file is read from a seeked input; the frames must still be the
+    ones at those times (testsrc draws a moving pattern, so a wrong offset shows)."""
+    src = make_video(tmp_path / "long.mkv", seconds=170)
+    segs = [Segment("S01E01", str(src), 150.0, 153.0), Segment("S01E01", str(src), 2.0, 4.0)]
+    plan, _ = render(tmp_path, segs, mode="encode")
+    seeks = [plan.command[i + 1] for i, x in enumerate(plan.command) if x == "-ss"]
+    assert seeks == ["135.000"]  # 150 s - 15 s margin; the 2 s segment needs no seek
+    out = Path(plan.output)
+    assert abs(float(probe_out(out)["format"]["duration"]) - 5.0) < 0.3
+    hit = _diff(_frame(out, 1.0), _frame(src, 151.0))
+    assert hit < 6 and _diff(_frame(out, 1.0), _frame(src, 136.0)) > hit  # the right frames
+    assert _diff(_frame(out, 4.0), _frame(src, 3.0)) < 6
+
+
+def test_seeked_inputs_work_through_the_effects_chain(tmp_path):
+    src = make_video(tmp_path / "long.mkv", seconds=170)
+    far = Segment("S01E01", str(src), 150.0, 153.0)
+    far.fx = {"hold": 1.0}  # an effect: the part goes through effects.filter_script
+    near = Segment("S01E01", str(src), 2.0, 4.0)
+    near.fx = {"j_cut": 0.5}  # its audio starts early, under the far segment
+    plan, _ = render(tmp_path, [far, near], mode="encode")
+    assert [plan.command[i + 1] for i, x in enumerate(plan.command) if x == "-ss"] == ["135.000"]
+    out = Path(plan.output)
+    assert abs(float(probe_out(out)["format"]["duration"]) - 6.0) < 0.3  # 3 + 1 held + 2
+    assert _diff(_frame(out, 1.0), _frame(src, 151.0)) < 6
+    assert _diff(_frame(out, 5.0), _frame(src, 3.0)) < 6

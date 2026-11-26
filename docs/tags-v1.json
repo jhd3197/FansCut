@@ -1,0 +1,1254 @@
+{
+ "schema": 3,
+ "kind": "fanscut-tags",
+ "version": 1,
+ "families": [
+  "occasion",
+  "weather",
+  "place",
+  "action",
+  "beat",
+  "people",
+  "mood",
+  "creature",
+  "element",
+  "content"
+ ],
+ "tags": [
+  {
+   "id": "christmas",
+   "name": "Christmas",
+   "family": "occasion",
+   "hint": "Christmas decorations, trees, presents, carols, a Christmas feast or Christmas Day",
+   "cues": {
+    "see": [
+     "Christmas tree",
+     "wrapped presents",
+     "stockings",
+     "wreaths",
+     "Santa",
+     "snow",
+     "Christmas crackers",
+     "fairy lights",
+     "holly",
+     "a Christmas feast"
+    ],
+    "hear": [
+     "Christmas",
+     "Merry Christmas",
+     "Happy Christmas",
+     "Christmas Eve",
+     "presents",
+     "Santa",
+     "carol"
+    ]
+   }
+  },
+  {
+   "id": "halloween",
+   "name": "Halloween",
+   "family": "occasion",
+   "hint": "Halloween costumes, pumpkins, trick-or-treating or a Halloween feast",
+   "cues": {
+    "see": [
+     "pumpkins",
+     "jack-o'-lanterns",
+     "costumes",
+     "bats",
+     "black cats",
+     "skeletons",
+     "candles in pumpkins",
+     "witch hats",
+     "trick-or-treaters",
+     "cobwebs"
+    ],
+    "hear": [
+     "Halloween",
+     "trick or treat",
+     "All Hallows"
+    ]
+   }
+  },
+  {
+   "id": "thanksgiving",
+   "name": "Thanksgiving",
+   "family": "occasion",
+   "hint": "a Thanksgiving dinner or holiday gathering",
+   "cues": {
+    "see": [
+     "roast turkey",
+     "a family dinner table",
+     "pilgrims",
+     "pumpkin pie",
+     "cornucopia",
+     "autumn leaves"
+    ],
+    "hear": [
+     "Thanksgiving",
+     "grateful",
+     "give thanks",
+     "turkey"
+    ]
+   }
+  },
+  {
+   "id": "new-year",
+   "name": "New Year",
+   "family": "occasion",
+   "hint": "New Year's Eve, a countdown, fireworks at midnight",
+   "cues": {
+    "see": [
+     "fireworks",
+     "a countdown clock",
+     "champagne",
+     "party hats",
+     "confetti",
+     "a midnight crowd"
+    ],
+    "hear": [
+     "Happy New Year",
+     "New Year's",
+     "midnight",
+     "countdown",
+     "resolution"
+    ]
+   }
+  },
+  {
+   "id": "easter",
+   "name": "Easter",
+   "family": "occasion",
+   "hint": "Easter eggs, an egg hunt or an Easter gathering",
+   "cues": {
+    "see": [
+     "painted eggs",
+     "an egg hunt",
+     "Easter baskets",
+     "bunny ears",
+     "spring flowers",
+     "chocolate eggs"
+    ],
+    "hear": [
+     "Easter",
+     "Easter egg",
+     "Easter bunny"
+    ]
+   }
+  },
+  {
+   "id": "valentines-day",
+   "name": "Valentine's Day",
+   "family": "occasion",
+   "hint": "Valentine's Day cards, gifts or dates",
+   "cues": {
+    "see": [
+     "heart decorations",
+     "red roses",
+     "Valentine cards",
+     "boxes of chocolates",
+     "a candlelit dinner for two"
+    ],
+    "hear": [
+     "Valentine",
+     "Valentine's Day",
+     "be my valentine"
+    ]
+   }
+  },
+  {
+   "id": "birthday",
+   "name": "Birthday",
+   "family": "occasion",
+   "hint": "a birthday party, cake with candles or birthday presents",
+   "cues": {
+    "see": [
+     "a cake with candles",
+     "blowing out candles",
+     "birthday presents",
+     "balloons",
+     "party hats",
+     "a birthday banner"
+    ],
+    "hear": [
+     "happy birthday",
+     "birthday",
+     "make a wish",
+     "years old"
+    ]
+   }
+  },
+  {
+   "id": "wedding",
+   "name": "Wedding",
+   "family": "occasion",
+   "hint": "a wedding ceremony or reception",
+   "cues": {
+    "see": [
+     "a wedding dress",
+     "a veil",
+     "an altar",
+     "wedding rings",
+     "a wedding cake",
+     "bouquets",
+     "rows of guests"
+    ],
+    "hear": [
+     "wedding",
+     "I do",
+     "husband and wife",
+     "dearly beloved",
+     "bride",
+     "groom"
+    ]
+   }
+  },
+  {
+   "id": "funeral",
+   "name": "Funeral",
+   "family": "occasion",
+   "hint": "a funeral, wake or burial",
+   "cues": {
+    "see": [
+     "a coffin",
+     "a grave",
+     "mourners in black",
+     "a hearse",
+     "flowers on a grave",
+     "a headstone"
+    ],
+    "hear": [
+     "funeral",
+     "rest in peace",
+     "we are gathered",
+     "buried",
+     "eulogy"
+    ]
+   }
+  },
+  {
+   "id": "graduation",
+   "name": "Graduation",
+   "family": "occasion",
+   "hint": "a graduation ceremony or end-of-school celebration",
+   "cues": {
+    "see": [
+     "caps and gowns",
+     "diplomas",
+     "throwing caps",
+     "a stage with a podium"
+    ],
+    "hear": [
+     "graduation",
+     "graduate",
+     "class of",
+     "diploma",
+     "commencement"
+    ]
+   }
+  },
+  {
+   "id": "school-dance",
+   "name": "School dance",
+   "family": "occasion",
+   "hint": "a prom, ball or formal school dance",
+   "cues": {
+    "see": [
+     "a ballroom",
+     "formal dresses",
+     "suits",
+     "a dance floor",
+     "a band or DJ",
+     "corsages",
+     "a decorated hall"
+    ],
+    "hear": [
+     "prom",
+     "the ball",
+     "dance with me",
+     "date to the dance",
+     "Yule Ball"
+    ]
+   }
+  },
+  {
+   "id": "party",
+   "name": "Party",
+   "family": "occasion",
+   "hint": "a party that is not one of the occasions above",
+   "cues": {
+    "see": [
+     "balloons",
+     "a crowded room with music",
+     "drinks",
+     "decorations",
+     "dancing"
+    ],
+    "hear": [
+     "party",
+     "celebrate",
+     "cheers"
+    ]
+   }
+  },
+  {
+   "id": "festival",
+   "name": "Festival or fair",
+   "family": "occasion",
+   "hint": "a festival, fair, carnival or parade",
+   "cues": {
+    "see": [
+     "fairground rides",
+     "stalls",
+     "a parade",
+     "lanterns",
+     "flags and bunting",
+     "a crowd in costume"
+    ],
+    "hear": [
+     "festival",
+     "fair",
+     "carnival",
+     "parade"
+    ]
+   }
+  },
+  {
+   "id": "summer-holiday",
+   "name": "Summer holiday",
+   "family": "occasion",
+   "hint": "a summer trip or holiday away from home",
+   "cues": {
+    "see": [
+     "suitcases",
+     "a beach or pool",
+     "sunglasses",
+     "a holiday home",
+     "a road trip"
+    ],
+    "hear": [
+     "holiday",
+     "vacation",
+     "summer",
+     "trip"
+    ]
+   }
+  },
+  {
+   "id": "snow",
+   "name": "Snow",
+   "family": "weather",
+   "hint": "snow falling or lying on the ground",
+   "cues": {
+    "see": [
+     "snow falling",
+     "snow on the ground",
+     "snowy roofs",
+     "frost",
+     "snowmen",
+     "breath in cold air"
+    ],
+    "hear": [
+     "snow",
+     "snowing",
+     "freezing"
+    ]
+   }
+  },
+  {
+   "id": "rain",
+   "name": "Rain",
+   "family": "weather",
+   "hint": "visible rain"
+  },
+  {
+   "id": "thunderstorm",
+   "name": "Thunderstorm",
+   "family": "weather",
+   "hint": "thunder, lightning or a violent storm"
+  },
+  {
+   "id": "fog",
+   "name": "Fog",
+   "family": "weather",
+   "hint": "fog or mist that limits what you can see"
+  },
+  {
+   "id": "sunrise",
+   "name": "Sunrise",
+   "family": "weather",
+   "hint": "dawn or the sun coming up"
+  },
+  {
+   "id": "sunset",
+   "name": "Sunset",
+   "family": "weather",
+   "hint": "dusk or the sun going down"
+  },
+  {
+   "id": "night",
+   "name": "Night",
+   "family": "weather",
+   "hint": "takes place at night, outdoors or by a window"
+  },
+  {
+   "id": "full-moon",
+   "name": "Full moon",
+   "family": "weather",
+   "hint": "a full moon is visible or matters to the scene"
+  },
+  {
+   "id": "heat",
+   "name": "Heat",
+   "family": "weather",
+   "hint": "scorching heat, a heatwave or blazing sun"
+  },
+  {
+   "id": "wind",
+   "name": "Wind",
+   "family": "weather",
+   "hint": "strong wind, a gale or a sandstorm"
+  },
+  {
+   "id": "castle",
+   "name": "Castle",
+   "family": "place",
+   "hint": "inside or outside a castle or palace"
+  },
+  {
+   "id": "school",
+   "name": "School",
+   "family": "place",
+   "hint": "a school, classroom, dormitory or school grounds"
+  },
+  {
+   "id": "hospital",
+   "name": "Hospital",
+   "family": "place",
+   "hint": "a hospital, infirmary or sickroom"
+  },
+  {
+   "id": "prison",
+   "name": "Prison",
+   "family": "place",
+   "hint": "a prison, cell or dungeon"
+  },
+  {
+   "id": "church",
+   "name": "Church",
+   "family": "place",
+   "hint": "a church, temple or other place of worship"
+  },
+  {
+   "id": "courtroom",
+   "name": "Courtroom",
+   "family": "place",
+   "hint": "a courtroom, trial or hearing"
+  },
+  {
+   "id": "office",
+   "name": "Office",
+   "family": "place",
+   "hint": "an office or workplace with desks"
+  },
+  {
+   "id": "bar",
+   "name": "Bar or pub",
+   "family": "place",
+   "hint": "a bar, pub, tavern or inn"
+  },
+  {
+   "id": "restaurant",
+   "name": "Restaurant",
+   "family": "place",
+   "hint": "a restaurant, cafe or diner"
+  },
+  {
+   "id": "kitchen",
+   "name": "Kitchen",
+   "family": "place",
+   "hint": "a kitchen, with cooking or food preparation"
+  },
+  {
+   "id": "bedroom",
+   "name": "Bedroom",
+   "family": "place",
+   "hint": "a bedroom"
+  },
+  {
+   "id": "forest",
+   "name": "Forest",
+   "family": "place",
+   "hint": "a forest or woods"
+  },
+  {
+   "id": "beach",
+   "name": "Beach",
+   "family": "place",
+   "hint": "a beach or seashore"
+  },
+  {
+   "id": "ocean",
+   "name": "Ocean",
+   "family": "place",
+   "hint": "on or by the open sea, a ship at sea"
+  },
+  {
+   "id": "desert",
+   "name": "Desert",
+   "family": "place",
+   "hint": "a desert"
+  },
+  {
+   "id": "mountains",
+   "name": "Mountains",
+   "family": "place",
+   "hint": "mountains, cliffs or high peaks"
+  },
+  {
+   "id": "city-streets",
+   "name": "City streets",
+   "family": "place",
+   "hint": "streets of a town or city"
+  },
+  {
+   "id": "village",
+   "name": "Village",
+   "family": "place",
+   "hint": "a village or small rural settlement"
+  },
+  {
+   "id": "train",
+   "name": "Train",
+   "family": "place",
+   "hint": "on or around a train or a station platform"
+  },
+  {
+   "id": "airplane",
+   "name": "Airplane",
+   "family": "place",
+   "hint": "on board a plane or at an airport"
+  },
+  {
+   "id": "spaceship",
+   "name": "Spaceship",
+   "family": "place",
+   "hint": "on board a spacecraft or in outer space"
+  },
+  {
+   "id": "underwater",
+   "name": "Underwater",
+   "family": "place",
+   "hint": "under water"
+  },
+  {
+   "id": "cave",
+   "name": "Cave",
+   "family": "place",
+   "hint": "a cave, tunnel or underground passage"
+  },
+  {
+   "id": "graveyard",
+   "name": "Graveyard",
+   "family": "place",
+   "hint": "a graveyard, cemetery or tomb",
+   "cues": {
+    "see": [
+     "gravestones",
+     "tombs",
+     "a cemetery gate",
+     "a crypt",
+     "a freshly dug grave"
+    ],
+    "hear": [
+     "graveyard",
+     "cemetery",
+     "grave",
+     "tomb"
+    ]
+   }
+  },
+  {
+   "id": "fight",
+   "name": "Fight",
+   "family": "action",
+   "hint": "a hand-to-hand fight or brawl"
+  },
+  {
+   "id": "sword-fight",
+   "name": "Sword fight",
+   "family": "action",
+   "hint": "a fight with swords or blades"
+  },
+  {
+   "id": "gunfight",
+   "name": "Gunfight",
+   "family": "action",
+   "hint": "a shootout"
+  },
+  {
+   "id": "magic-duel",
+   "name": "Magic duel",
+   "family": "action",
+   "hint": "a duel or fight with magic or superpowers"
+  },
+  {
+   "id": "chase",
+   "name": "Chase",
+   "family": "action",
+   "hint": "a chase on foot or by animal"
+  },
+  {
+   "id": "car-chase",
+   "name": "Car chase",
+   "family": "action",
+   "hint": "a chase in cars or other vehicles"
+  },
+  {
+   "id": "battle",
+   "name": "Battle",
+   "family": "action",
+   "hint": "a battle between groups or armies"
+  },
+  {
+   "id": "explosion",
+   "name": "Explosion",
+   "family": "action",
+   "hint": "an explosion"
+  },
+  {
+   "id": "escape",
+   "name": "Escape",
+   "family": "action",
+   "hint": "someone escapes a place or a captor"
+  },
+  {
+   "id": "heist",
+   "name": "Heist",
+   "family": "action",
+   "hint": "a robbery, break-in or heist"
+  },
+  {
+   "id": "rescue",
+   "name": "Rescue",
+   "family": "action",
+   "hint": "someone is rescued from danger"
+  },
+  {
+   "id": "sports-match",
+   "name": "Sports match",
+   "family": "action",
+   "hint": "a match or game of a sport, real or invented"
+  },
+  {
+   "id": "race",
+   "name": "Race",
+   "family": "action",
+   "hint": "a race of any kind"
+  },
+  {
+   "id": "flying",
+   "name": "Flying",
+   "family": "action",
+   "hint": "someone flies: broom, wings, plane cockpit, superhero"
+  },
+  {
+   "id": "swimming",
+   "name": "Swimming",
+   "family": "action",
+   "hint": "someone swims"
+  },
+  {
+   "id": "training",
+   "name": "Training",
+   "family": "action",
+   "hint": "practice, lessons or a training montage"
+  },
+  {
+   "id": "dancing",
+   "name": "Dancing",
+   "family": "action",
+   "hint": "people dance"
+  },
+  {
+   "id": "singing",
+   "name": "Singing",
+   "family": "action",
+   "hint": "someone sings on screen"
+  },
+  {
+   "id": "sneaking",
+   "name": "Sneaking",
+   "family": "action",
+   "hint": "someone sneaks, hides or spies"
+  },
+  {
+   "id": "transformation",
+   "name": "Transformation",
+   "family": "action",
+   "hint": "a person or thing changes form"
+  },
+  {
+   "id": "kidnapping",
+   "name": "Kidnapping",
+   "family": "action",
+   "hint": "someone is taken against their will"
+  },
+  {
+   "id": "interrogation",
+   "name": "Interrogation",
+   "family": "action",
+   "hint": "someone is questioned under pressure"
+  },
+  {
+   "id": "arrival",
+   "name": "Arrival",
+   "family": "beat",
+   "hint": "someone arrives at a new place for the first time"
+  },
+  {
+   "id": "goodbye",
+   "name": "Goodbye",
+   "family": "beat",
+   "hint": "a farewell or departure"
+  },
+  {
+   "id": "reunion",
+   "name": "Reunion",
+   "family": "beat",
+   "hint": "people who were apart meet again"
+  },
+  {
+   "id": "first-meeting",
+   "name": "First meeting",
+   "family": "beat",
+   "hint": "two characters meet for the first time"
+  },
+  {
+   "id": "confession",
+   "name": "Confession",
+   "family": "beat",
+   "hint": "a character admits a secret or feeling"
+  },
+  {
+   "id": "proposal",
+   "name": "Proposal",
+   "family": "beat",
+   "hint": "a marriage proposal"
+  },
+  {
+   "id": "kiss",
+   "name": "Kiss",
+   "family": "beat",
+   "hint": "a kiss"
+  },
+  {
+   "id": "breakup",
+   "name": "Breakup",
+   "family": "beat",
+   "hint": "a couple or friends split up"
+  },
+  {
+   "id": "death",
+   "name": "Death",
+   "family": "beat",
+   "hint": "a character dies on screen"
+  },
+  {
+   "id": "sacrifice",
+   "name": "Sacrifice",
+   "family": "beat",
+   "hint": "a character gives something up to save others"
+  },
+  {
+   "id": "betrayal",
+   "name": "Betrayal",
+   "family": "beat",
+   "hint": "a character betrays another"
+  },
+  {
+   "id": "plan",
+   "name": "Planning",
+   "family": "beat",
+   "hint": "characters lay out a plan or briefing"
+  },
+  {
+   "id": "flashback",
+   "name": "Flashback",
+   "family": "beat",
+   "hint": "a scene set earlier than the main story"
+  },
+  {
+   "id": "dream",
+   "name": "Dream or vision",
+   "family": "beat",
+   "hint": "a dream, nightmare or vision"
+  },
+  {
+   "id": "montage",
+   "name": "Montage",
+   "family": "beat",
+   "hint": "a montage of short shots set to music"
+  },
+  {
+   "id": "speech",
+   "name": "Speech",
+   "family": "beat",
+   "hint": "a character gives a speech to a group"
+  },
+  {
+   "id": "revelation",
+   "name": "Revelation",
+   "family": "beat",
+   "hint": "a twist or key secret is revealed"
+  },
+  {
+   "id": "celebration",
+   "name": "Celebration",
+   "family": "beat",
+   "hint": "a victory or celebration after an event"
+  },
+  {
+   "id": "meal",
+   "name": "Meal",
+   "family": "beat",
+   "hint": "people eat together"
+  },
+  {
+   "id": "journey",
+   "name": "Journey",
+   "family": "beat",
+   "hint": "characters travel from one place to another"
+  },
+  {
+   "id": "family",
+   "name": "Family",
+   "family": "people",
+   "hint": "a family together"
+  },
+  {
+   "id": "friendship",
+   "name": "Friendship",
+   "family": "people",
+   "hint": "friends spending time together"
+  },
+  {
+   "id": "romance",
+   "name": "Romance",
+   "family": "people",
+   "hint": "a romantic moment between two characters"
+  },
+  {
+   "id": "rivalry",
+   "name": "Rivalry",
+   "family": "people",
+   "hint": "rivals clash or compete"
+  },
+  {
+   "id": "mentor",
+   "name": "Mentor",
+   "family": "people",
+   "hint": "a mentor guides or teaches a younger character"
+  },
+  {
+   "id": "siblings",
+   "name": "Siblings",
+   "family": "people",
+   "hint": "brothers or sisters together"
+  },
+  {
+   "id": "parent-child",
+   "name": "Parent and child",
+   "family": "people",
+   "hint": "a parent and child together"
+  },
+  {
+   "id": "children",
+   "name": "Children",
+   "family": "people",
+   "hint": "young children are the focus"
+  },
+  {
+   "id": "crowd",
+   "name": "Crowd",
+   "family": "people",
+   "hint": "a large crowd or gathering"
+  },
+  {
+   "id": "alone",
+   "name": "Alone",
+   "family": "people",
+   "hint": "a character alone"
+  },
+  {
+   "id": "happy",
+   "name": "Happy",
+   "family": "mood",
+   "hint": "cheerful, joyful",
+   "subjective": true
+  },
+  {
+   "id": "funny",
+   "name": "Funny",
+   "family": "mood",
+   "hint": "played for laughs",
+   "subjective": true
+  },
+  {
+   "id": "heartwarming",
+   "name": "Heartwarming",
+   "family": "mood",
+   "hint": "warm, touching",
+   "subjective": true
+  },
+  {
+   "id": "romantic",
+   "name": "Romantic",
+   "family": "mood",
+   "hint": "tender, romantic",
+   "subjective": true
+  },
+  {
+   "id": "sad",
+   "name": "Sad",
+   "family": "mood",
+   "hint": "sad, grieving",
+   "subjective": true
+  },
+  {
+   "id": "tense",
+   "name": "Tense",
+   "family": "mood",
+   "hint": "suspenseful, on edge",
+   "subjective": true
+  },
+  {
+   "id": "scary",
+   "name": "Scary",
+   "family": "mood",
+   "hint": "frightening",
+   "subjective": true
+  },
+  {
+   "id": "creepy",
+   "name": "Creepy",
+   "family": "mood",
+   "hint": "eerie, unsettling",
+   "subjective": true
+  },
+  {
+   "id": "epic",
+   "name": "Epic",
+   "family": "mood",
+   "hint": "grand, large in scale",
+   "subjective": true
+  },
+  {
+   "id": "triumphant",
+   "name": "Triumphant",
+   "family": "mood",
+   "hint": "a win, a moment of glory",
+   "subjective": true
+  },
+  {
+   "id": "peaceful",
+   "name": "Peaceful",
+   "family": "mood",
+   "hint": "calm, quiet",
+   "subjective": true
+  },
+  {
+   "id": "nostalgic",
+   "name": "Nostalgic",
+   "family": "mood",
+   "hint": "looking back fondly",
+   "subjective": true
+  },
+  {
+   "id": "angry",
+   "name": "Angry",
+   "family": "mood",
+   "hint": "anger, an argument",
+   "subjective": true
+  },
+  {
+   "id": "awkward",
+   "name": "Awkward",
+   "family": "mood",
+   "hint": "embarrassing or awkward",
+   "subjective": true
+  },
+  {
+   "id": "mysterious",
+   "name": "Mysterious",
+   "family": "mood",
+   "hint": "puzzling, secretive",
+   "subjective": true
+  },
+  {
+   "id": "bittersweet",
+   "name": "Bittersweet",
+   "family": "mood",
+   "hint": "happy and sad at once",
+   "subjective": true
+  },
+  {
+   "id": "animal",
+   "name": "Animal",
+   "family": "creature",
+   "hint": "an animal plays a part in the scene"
+  },
+  {
+   "id": "dog",
+   "name": "Dog",
+   "family": "creature",
+   "hint": "a dog"
+  },
+  {
+   "id": "cat",
+   "name": "Cat",
+   "family": "creature",
+   "hint": "a cat"
+  },
+  {
+   "id": "horse",
+   "name": "Horse",
+   "family": "creature",
+   "hint": "a horse"
+  },
+  {
+   "id": "monster",
+   "name": "Monster",
+   "family": "creature",
+   "hint": "a monster, beast or creature"
+  },
+  {
+   "id": "ghost",
+   "name": "Ghost",
+   "family": "creature",
+   "hint": "a ghost or spirit"
+  },
+  {
+   "id": "robot",
+   "name": "Robot",
+   "family": "creature",
+   "hint": "a robot or android"
+  },
+  {
+   "id": "magic",
+   "name": "Magic",
+   "family": "creature",
+   "hint": "spells, potions or visible magic (not a duel)"
+  },
+  {
+   "id": "fire",
+   "name": "Fire",
+   "family": "element",
+   "hint": "fire that matters in the scene: a fireplace, a bonfire, something burning, a fire spell (not candles or torches in the background)",
+   "cues": {
+    "see": [
+     "flames that matter to the scene",
+     "a lit fireplace",
+     "a bonfire",
+     "something burning",
+     "smoke from a blaze"
+    ],
+    "hear": [
+     "fire",
+     "burning",
+     "flames"
+    ]
+   }
+  },
+  {
+   "id": "water",
+   "name": "Water",
+   "family": "element",
+   "hint": "water matters in the scene: a lake, river, pool, waterfall or flood (not just rain or the open sea)",
+   "cues": {
+    "see": [
+     "a lake",
+     "a river",
+     "a pool",
+     "a waterfall",
+     "a flood",
+     "boats"
+    ],
+    "hear": [
+     "water",
+     "lake",
+     "river",
+     "drown"
+    ]
+   }
+  },
+  {
+   "id": "gore",
+   "name": "Blood and gore",
+   "family": "content",
+   "hint": "graphic blood or injury"
+  },
+  {
+   "id": "nudity",
+   "name": "Nudity",
+   "family": "content",
+   "hint": "nudity"
+  },
+  {
+   "id": "drugs",
+   "name": "Drug use",
+   "family": "content",
+   "hint": "drug or heavy alcohol use"
+  },
+  {
+   "id": "strong-language",
+   "name": "Strong language",
+   "family": "content",
+   "hint": "strong swearing"
+  }
+ ],
+ "cut_tags": [
+  {
+   "id": "fc:recap",
+   "name": "Recap",
+   "hint": "repeats footage seen earlier",
+   "detect": "auto",
+   "how": "audio fingerprint matches earlier in the film or series"
+  },
+  {
+   "id": "fc:theme",
+   "name": "Theme music",
+   "hint": "a known theme plays (tag it once, FansCut finds the rest)",
+   "detect": "auto",
+   "how": "audio fingerprint of a clip you tagged"
+  },
+  {
+   "id": "fc:titles",
+   "name": "Titles or credits",
+   "hint": "opening titles, credits or a title card",
+   "detect": "auto",
+   "how": "position in the film + text on screen"
+  },
+  {
+   "id": "fc:establishing",
+   "name": "Establishing shot",
+   "hint": "a wide shot that sets up a place",
+   "detect": "ai",
+   "how": "vision model, starting from stretches with no face that barely move"
+  },
+  {
+   "id": "fc:transition",
+   "name": "Transition",
+   "hint": "travel or a bridge between two places",
+   "detect": "ai",
+   "how": "vision model on the shots between two scenes"
+  },
+  {
+   "id": "fc:montage",
+   "name": "Montage",
+   "hint": "short shots set to music",
+   "detect": "ai",
+   "how": "vision model, starting from fast cutting under music"
+  },
+  {
+   "id": "fc:extendable",
+   "name": "Extendable",
+   "hint": "calm and steady enough to hold longer or loop",
+   "detect": "ai",
+   "how": "vision model, starting from still stretches with ambient sound or music"
+  },
+  {
+   "id": "fc:filler",
+   "name": "Filler",
+   "hint": "can be dropped without losing the story",
+   "detect": "person",
+   "how": "the text model proposes from dialogue, a person decides"
+  },
+  {
+   "id": "fc:spoiler",
+   "name": "Spoiler",
+   "hint": "gives away a twist or the ending",
+   "detect": "person",
+   "how": "a person marks it"
+  }
+ ],
+ "signals": [
+  {
+   "id": "no-face",
+   "name": "No face",
+   "hint": "no face on screen: scenery, objects, backs of heads",
+   "how": "face detector finds nobody"
+  },
+  {
+   "id": "close-up",
+   "name": "Close-up",
+   "hint": "one face fills the frame",
+   "how": "face detector: one large face"
+  },
+  {
+   "id": "group",
+   "name": "Group",
+   "hint": "three or more faces",
+   "how": "face detector: 3+ faces"
+  },
+  {
+   "id": "dialogue",
+   "name": "Dialogue",
+   "hint": "people talking is the main sound",
+   "how": "subtitle lines + speech detector"
+  },
+  {
+   "id": "silence",
+   "name": "Silence",
+   "hint": "near silence",
+   "how": "loudness"
+  },
+  {
+   "id": "music-only",
+   "name": "Music only",
+   "hint": "score or song with no speech",
+   "how": "sound classifier says music, speech detector says nobody talks"
+  },
+  {
+   "id": "ambient",
+   "name": "Ambient sound",
+   "hint": "only background sound (wind, rain, crowd, fire)",
+   "how": "sound classifier: not speech, not music"
+  },
+  {
+   "id": "loud",
+   "name": "Loud",
+   "hint": "sudden peaks: explosions, crashes, shouting",
+   "how": "loudness peaks"
+  },
+  {
+   "id": "fast-cutting",
+   "name": "Fast cutting",
+   "hint": "many shots per minute",
+   "how": "shot index"
+  },
+  {
+   "id": "long-take",
+   "name": "Long take",
+   "hint": "one shot runs 20 seconds or more",
+   "how": "shot index"
+  },
+  {
+   "id": "still",
+   "name": "Still",
+   "hint": "the picture barely moves",
+   "how": "frame difference"
+  },
+  {
+   "id": "dark",
+   "name": "Dark",
+   "hint": "very dark picture",
+   "how": "brightness"
+  },
+  {
+   "id": "fade",
+   "name": "Fade",
+   "hint": "fade to or from black",
+   "how": "black frames at a shot edge"
+  }
+ ]
+}

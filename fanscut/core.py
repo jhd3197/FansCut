@@ -113,7 +113,15 @@ class Core:
         from .scenes.service import SceneService
 
         self.scenes = SceneService(self)
-        handlers.update({"scene_index": self.scenes.job_index, "scene_tag": self.scenes.job_ai})
+        from .posters import Posters
+
+        self.posters = Posters(self)
+        handlers.update({
+            "scene_index": self.scenes.job_index,
+            "scene_tag": self.scenes.job_ai,
+            "scene_signals": self.scenes.job_signals,
+            "scene_label": self.scenes.job_label,
+        })
         self.worker = Worker(self.jobs, {k: self._pin(fn) for k, fn in handlers.items()},
                              on_finish=self._job_finished)
         self._apply_lock = threading.Lock()
@@ -1073,7 +1081,8 @@ class Core:
                     out.with_suffix(".nfo").write_text(nfo, encoding="utf-8")
         poster = None
         if self.cfg.render.poster:
-            poster = (self._installed_poster(tid, show_dir)
+            poster = (self.posters.write_for_build(tid, show_dir)
+                      or self._installed_poster(tid, show_dir)
                       or (self._write_poster(show_dir, outputs[0]) if outputs else None))
         ctx.phase(5, 5, "Add to Plex", "rescan and collection" if self.cfg.library.plex.url
                   else "no Plex set up: the files are in the output folder")
