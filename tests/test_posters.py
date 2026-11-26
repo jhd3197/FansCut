@@ -106,11 +106,14 @@ def test_take_keep_discard_and_build(pc, tmp_path):
     assert pc.get("/api/timelines/t1/poster").status_code == 200
     out = tmp_path / "show"
     out.mkdir()
-    assert pc.core.posters.write_for_build("t1", out) == str(out / "poster.jpg")
+    written = pc.core.posters.write_for_build("t1", out)
+    assert written == str(out / "poster.jpg")
     assert Image.open(out / "poster.jpg").format == "JPEG"
 
-    assert pc.delete("/api/timelines/t1/poster").json()["chosen"] is None
-    assert pc.core.posters.write_for_build("t1", out) is None  # back to the usual poster
+    cleared = pc.delete("/api/timelines/t1/poster").json()
+    assert cleared["chosen"] is None
+    written = pc.core.posters.write_for_build("t1", out)
+    assert written is None  # back to the usual poster
     st = pc.delete(f"/api/timelines/t1/poster/ai/{take['name']}").json()
     assert st["takes"] == []
     assert pc.get("/api/timelines/t1/poster/ai/../../config.yaml").status_code == 404
