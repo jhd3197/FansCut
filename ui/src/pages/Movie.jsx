@@ -15,6 +15,7 @@ import { Label } from '../components/v2.jsx';
 import { useApi } from '../lib/store.js';
 import { useAct, useLoad, usePageTitle, usePoll } from '../lib/hooks.js';
 import { api, openInPlex } from '../lib/api.js';
+import { createTrailer } from './Trailer.jsx';
 import './Film.css';
 
 const CODECS = {
@@ -211,14 +212,17 @@ function useMakeCut(film) {
 
 function MakeSection({ film, castTop, tagTop, names }) {
   const { make, busy, why } = useMakeCut(film);
-  const off = busy || Boolean(why);
+  const nav = useNavigate();
+  const { act, busy: making } = useAct();
+  const off = busy || making || Boolean(why);
   return (
     <section id="make" className="film-section" aria-labelledby="make-h">
       <h2 id="make-h">Make something from this film</h2>
       <div className="film-make">
         <div className="film-make-card is-ai">
           <div><Label className="lab film-ai">Made by AI</Label><h3 className="hd">A trailer</h3></div>
-          <div><button type="button" className="btn" disabled title="Not yet: FansCut has no trailer maker yet">Make a trailer</button></div>
+          <div><button type="button" className="btn" disabled={off} title={why}
+            onClick={() => act(async () => { const r = await createTrailer({ ...film, franchises: film.franchises || (film.collections || []).map((c) => c.name) }); nav(`/cuts/${enc(r.id)}/find`); })}>Make a trailer</button></div>
         </div>
         <div className="film-make-card">
           <h3 className="hd">Every scene with one person</h3>

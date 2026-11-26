@@ -198,6 +198,7 @@ export function Arrange() {
         <span className="arr-fill" />
         <EditorSteps cut={id} step="arrange" />
         <span className="arr-fill" />
+        <Link className="btn btn-quiet btn-sm" to={`/cuts/${enc(id)}/advanced`} title="Effects, variants, sync report, import and export">Advanced</Link>
         {dirty && <span className="tiny arr-unsaved">Unsaved</span>}
         <button type="button" className="btn" onClick={save} disabled={!dirty || busy}>Save</button>
         {dirty
