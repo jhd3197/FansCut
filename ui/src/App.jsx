@@ -17,6 +17,8 @@ import { ShowPage } from './pages/Show.jsx';
 import { SeasonPage } from './pages/Season.jsx';
 import { EpisodePage } from './pages/Episode.jsx';
 import { CutDetail } from './pages/CutDetail.jsx';
+import { CutScenes } from './pages/CutScenes.jsx';
+import { LibraryTag, LibraryTags } from './pages/LibraryTags.jsx';
 import { SuggestionPage } from './pages/Suggestion.jsx';
 import { NewCutPage } from './pages/NewCut.jsx';
 import { MatchPage } from './pages/Match.jsx';
@@ -177,6 +179,8 @@ export function App() {
           <Route path="/" element={<Discover />} />
           <Route path="/discover/:id" element={<SuggestionPage />} />
           <Route path="/library" element={<LibraryPage />} />
+          <Route path="/library/tags" element={<LibraryTags />} />
+          <Route path="/library/tags/:tag" element={<LibraryTag />} />
           <Route path="/collections/:id" element={<CollectionPage />} />
           <Route path="/collections/:id/scenes" element={<CollectionScenesPage />} />
           <Route path="/movies/:key" element={<MoviePage />} />
@@ -193,6 +197,7 @@ export function App() {
           <Route path="/cuts/:id" element={<CutDetail />} />
           <Route path="/cuts/:id/build" element={<Build />} />
           <Route path="/cuts/:id/poster" element={<CutPoster />} />
+          <Route path="/cuts/:id/scenes" element={<CutScenes />} />
           <Route path="/cuts/:id/edit" element={<TimelineEdit />} />
           <Route path="/my-cuts" element={<MyCuts />} />
           <Route path="/new" element={<NewCutPage />} />
