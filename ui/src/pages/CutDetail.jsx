@@ -1,8 +1,13 @@
-// A cut (timeline recipe) as a page: what it is, what it needs, what's in it.
+// A cut (timeline recipe) as a page: what it is, what it needs, what's in it, and its
+// reel: a still per scene, each scene's stills, faces, tags and cut points, and a poster
+// made from the best stills.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useCrumbRoot, useLoad, usePageTitle, useUrlState } from '../lib/hooks.js';
+import { useAct, useCrumbRoot, useLoad, usePageTitle, useUrlState } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
+import { flatSegments, nudge } from '../lib/timeline.js';
+import { cleanWeights, drawPoster, measureStill, posterStills, rankStills, scoreStill, stillTimes } from '../lib/stills.js';
 import { ArtPoster, Crumbs, enc, hm, KV, Poster, SRC_COLOURS } from '../components/kit.jsx';
 import { ErrorBox, Loading } from '../components/ui.jsx';
 import { useApi } from '../lib/store.js';
@@ -203,6 +208,323 @@ function Variants({ view, value, onChange }) {
   );
 }
 
+// -- reel: stills, scoring and the poster (shared with CutPoster.jsx) -------------------
+
+export const frameUrl = (id, src, t) => `/api/timelines/${enc(id)}/sources/${enc(src)}/frame?t=${t}`;
+
+// "1:05:09.5": always with hours, a tenth of a second.
+export function tc(sec) {
+  const t = Math.round(Math.max(0, sec) * 10) / 10;
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  return `${h}:${String(m).padStart(2, '0')}:${(t % 60).toFixed(1).padStart(4, '0')}`;
+}
+
+// The stills of every scene (`perScene` evenly spaced in each segment), for picking.
+export function cutStills(id, doc, perScene) {
+  if (!doc) return [];
+  return flatSegments(doc).segs.flatMap((s) => stillTimes(s.seg.start, s.seg.end, perScene)
+    .map((t, j) => ({ src: frameUrl(id, s.seg.src, t), t, j, scene: s.n, source: s.seg.src })));
+}
+
+// Measure each still in the browser, a few at a time; failures (a busy server) get
+// one more try later. Returns { src: metrics } as they come in.
+export function useStillMetrics(stills) {
+  const [metrics, setMetrics] = useState({});
+  const key = stills.map((s) => s.src).join('|');
+  useEffect(() => {
+    let alive = true;
+    const todo = key ? key.split('|') : [];
+    const retry = [];
+    let pending = {};
+    let timer = null;
+    const flush = () => {
+      timer = null;
+      const add = pending;
+      pending = {};
+      if (alive) setMetrics((m) => ({ ...m, ...add }));
+    };
+    const worker = async () => {
+      while (alive && todo.length) {
+        const src = todo.shift();
+        const m = await measureStill(src);
+        if (m) { pending[src] = m; timer ??= setTimeout(flush, 200); } else retry.push(src);
+      }
+    };
+    let again = null;
+    Promise.all([worker(), worker(), worker()]).then(() => {
+      if (!alive || !retry.length) return;
+      again = setTimeout(() => { todo.push(...retry.splice(0)); worker(); worker(); }, 15000);
+    });
+    return () => { alive = false; clearTimeout(timer); clearTimeout(again); };
+  }, [key]);
+  return metrics;
+}
+
+// This cut's poster choices, kept in this browser (localStorage), over the defaults
+// from Settings > Posters.
+const prefKey = (id) => `fanscut.poster.${id}`;
+function readPrefs(id) {
+  try { return JSON.parse(localStorage.getItem(prefKey(id))) || {}; } catch { return {}; }
+}
+export function usePosterPrefs(id) {
+  const settings = useApi('/settings', { quiet: true });
+  const p = settings.data?.posters || {};
+  const [mine, setMine] = useState({});
+  const own = mine[id] ?? readPrefs(id);
+  const prefs = {
+    layout: own.layout || p.layout || 'frame',
+    title: own.title ?? p.title ?? true,
+    weights: cleanWeights({ ...p.weights, ...own.weights }),
+    picks: own.picks || [],
+    perScene: Number(p.stills) || 4,
+  };
+  const set = (patch) => {
+    const next = { ...own, ...patch };
+    try { localStorage.setItem(prefKey(id), JSON.stringify(next)); } catch { /* private mode: keep it for this visit */ }
+    setMine((m) => ({ ...m, [id]: next }));
+  };
+  return [prefs, set];
+}
+
+// Everything the reel and the poster need: the stills, their measures, the ranking.
+export function useReel(id, doc) {
+  const [prefs, setPrefs] = usePosterPrefs(id);
+  const stills = useMemo(() => cutStills(id, doc, prefs.perScene), [id, doc, prefs.perScene]);
+  const metrics = useStillMetrics(stills);
+  const w = prefs.weights;
+  const wKey = `${w.exposure},${w.contrast},${w.color},${w.detail}`;
+  const ranked = useMemo(() => {
+    const [exposure, contrast, color, detail] = wKey.split(',').map(Number);
+    return rankStills(stills, metrics, { exposure, contrast, color, detail });
+  }, [stills, metrics, wKey]);
+  const used = posterStills(ranked, prefs.layout, prefs.picks);
+  return { prefs, setPrefs, stills, metrics, ranked, used };
+}
+
+export function PosterCanvas({ srcs, layout, title, sub, label = 'Poster' }) {
+  const ref = useRef(null);
+  const seq = useRef(0);
+  const key = srcs.join('|');
+  useEffect(() => {
+    const mine = ++seq.current;
+    drawPoster(ref.current, key ? key.split('|') : [], { layout, title, sub, stale: () => mine !== seq.current });
+  }, [key, layout, title, sub]);
+  return <canvas ref={ref} className="reel-poster" width={600} height={900} role="img" aria-label={label} />;
+}
+
+// A tag's vocab name; else its id without the "fc:" prefix, dashes as spaces.
+const tagLabel = (names, id) => names[id] || String(id).replace(/^fc:/, '').replace(/[-_]/g, ' ');
+
+// Is the element on screen yet? (once true, stays true)
+function useSeen() {
+  const ref = useRef(null);
+  const [seen, setSeen] = useState(() => typeof IntersectionObserver === 'undefined');
+  useEffect(() => {
+    if (seen || !ref.current) return undefined;
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) setSeen(true); }, { rootMargin: '300px' });
+    io.observe(ref.current);
+    return () => io.disconnect();
+  }, [seen]);
+  return [ref, seen];
+}
+
+function FaceBoxes({ film, t, seen }) {
+  const path = seen && film?.indexed ? `/scenes/faces?key=${enc(film.key)}&t=${t}` : null;
+  const { data } = useApi(path, { quiet: true });
+  return (data?.faces || []).map((f, i) => {
+    const [x, y, w, h] = f.box || [];
+    if (w == null) return null;
+    const who = f.character || f.name;
+    const style = { left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${h * 100}%` };
+    if (!who) return <span key={i} className="reel-fb reel-fb-faint" style={style} />;
+    return (
+      <span key={i} className={`reel-fb ${f.sure ? 'reel-fb-sure' : 'reel-fb-maybe'}`} style={style}>
+        <em>{f.sure ? who : `${who}?`}</em>
+      </span>
+    );
+  });
+}
+
+// Tag names and the people (with cast photos) of the tags overlapping this scene.
+function SceneTags({ film, seg, seen, names }) {
+  const tags = useApi(seen && film?.indexed ? `/scenes/tags?key=${enc(film.key)}` : null, { quiet: true });
+  const hits = (tags.data?.tags || []).filter((x) => x.status !== 'rejected' && x.start < seg.end && x.end > seg.start);
+  const people = [];
+  for (const x of hits) {
+    for (const p of x.people || []) {
+      const person = typeof p === 'string' ? { name: p } : p;
+      const k = (person.character || person.name || '').toLowerCase();
+      if (k && !people.some((q) => (q.character || q.name || '').toLowerCase() === k)) people.push(person);
+    }
+  }
+  const cast = useApi(people.length ? `/scenes/cast?key=${enc(film.key)}` : null, { quiet: true });
+  if (!film?.indexed) return <p className="muted tiny reel-note">Not analysed</p>;
+  if (!tags.data) return null;
+  if (!hits.length) return <p className="muted tiny reel-note">No tags here</p>;
+  const labels = [...new Set(hits.flatMap((x) => x.tags || []).map((t) => tagLabel(names, t)))];
+  const low = (v) => (v || '').toLowerCase();
+  const castOf = (p) => (cast.data?.cast || []).find((c) => (p.name && low(c.name) === low(p.name))
+    || (p.character && low(c.character).includes(low(p.character)))
+    || (!p.character && p.name && low(c.character).includes(low(p.name))));
+  return (
+    <>
+      <div className="reel-tags">{labels.map((l) => <span key={l} className="chip">{l}</span>)}</div>
+      {people.length > 0 && (
+        <ul className="reel-people">
+          {people.map((p) => {
+            const c = castOf(p);
+            const label = p.character || c?.character || p.name;
+            const actor = c?.name || (p.character ? p.name : null);
+            return (
+              <li key={label}>
+                {c?.photo ? <img src={c.photo} alt="" loading="lazy" /> : <span className="reel-noface">{(label || '?').slice(0, 1)}</span>}
+                <span><b>{label}</b>{actor && actor !== label && <span className="muted"> · {actor}</span>}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
+  );
+}
+
+function SceneRow({ s, cur, moved, film, name, stills, metrics, weights, poster, names, onNudge, onReset }) {
+  const [ref, seen] = useSeen();
+  const [pick, setPick] = useState(null);
+  let best = -1;
+  stills.forEach((x, j) => {
+    if (metrics[x.src] && (best < 0 || scoreStill(metrics[x.src], weights) > scoreStill(metrics[stills[best].src], weights))) best = j;
+  });
+  const main = stills[pick ?? (best >= 0 ? best : Math.floor(stills.length / 2))];
+  const field = (edge, label) => (
+    <span className="reel-tf">
+      <span className="muted tiny">{label}</span>
+      <button type="button" className="btn btn-sm" onClick={() => onNudge(edge, -0.5)} aria-label={`${label} back half a second, scene ${s.n}`}>−</button>
+      <span className="mono">{tc(cur[edge])}</span>
+      <button type="button" className="btn btn-sm" onClick={() => onNudge(edge, 0.5)} aria-label={`${label} forward half a second, scene ${s.n}`}>+</button>
+    </span>
+  );
+  return (
+    <article ref={ref} className="reel-scene" id={`scene-${s.n}`} tabIndex={-1} aria-label={`Scene ${s.n}`}>
+      <div style={{ minWidth: 0 }}>
+        {main && (
+          <div className="reel-main">
+            <img src={main.src} alt={`Still from scene ${s.n} at ${tc(main.t)}`} loading="lazy" />
+            <FaceBoxes film={film} t={main.t} seen={seen} />
+            {poster.has(main.src) && <span className="reel-pk">Poster</span>}
+          </div>
+        )}
+        <div className="reel-thumbs" style={{ '--n': stills.length }}>
+          {stills.map((x, j) => (
+            <button key={x.src} type="button" aria-pressed={x === main} aria-label={`Still at ${tc(x.t)}`} onClick={() => setPick(j)}>
+              <img src={x.src} alt="" loading="lazy" />
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="stack" style={{ gap: 10, minWidth: 0 }}>
+        <div className="reel-shead">
+          <span className="reel-num">{s.n}</span>
+          <span className="reel-src">{name}</span>
+          <span className="mono tiny muted">{fmtTime(cur.end - cur.start, 1)}</span>
+        </div>
+        {s.seg.desc && <p style={{ margin: 0 }}>{s.seg.desc}</p>}
+        <div className="row wrap" style={{ gap: 14 }}>
+          {field('start', 'In')}
+          {field('end', 'Out')}
+          {moved && <button type="button" className="btn btn-sm btn-ghost" onClick={onReset}>Reset</button>}
+        </div>
+        <SceneTags film={film} seg={cur} seen={seen} names={names} />
+      </div>
+    </article>
+  );
+}
+
+const sameRange = (a, b) => Boolean(a && b) && Math.abs(a.start - b.start) < 0.001 && Math.abs(a.end - b.end) < 0.001;
+
+function Reel({ id, doc, reel, films, onSaved }) {
+  const { segs } = flatSegments(doc);
+  // the cut points as the page first loaded them (Reset goes back to these)
+  const [original] = useState(() => Object.fromEntries(segs.map((s) => [`${s.pi}:${s.si}`, { start: s.seg.start, end: s.seg.end }])));
+  const [drafts, setDrafts] = useState({});
+  const { act, busy } = useAct();
+  const vocab = useApi('/scenes/vocab', { quiet: true });
+  const names = {};
+  for (const t of [...(vocab.data?.tags || []), ...(vocab.data?.cut_tags || [])]) names[t.id] = t.name;
+  const filmOf = (src) => {
+    const s = doc.sources[src];
+    if (s?.kind !== 'movie' || s.tmdb == null) return null;
+    const all = (films || []).filter((f) => String(f.tmdb_id) === String(s.tmdb));
+    return all.find((f) => f.indexed) || all.find((f) => f.on_disk) || all[0] || null;
+  };
+  const byScene = {};
+  for (const x of reel.stills) (byScene[x.scene] ||= []).push(x);
+  const poster = new Set(reel.used.map((x) => x.src));
+  const dirty = segs.some((s) => { const d = drafts[`${s.pi}:${s.si}`]; return d && !sameRange(d, s.seg); });
+  const setDraft = (s, v) => setDrafts((d) => ({ ...d, [`${s.pi}:${s.si}`]: { start: v.start, end: v.end, src: s.seg.src } }));
+
+  // GET the whole doc again (it may have changed elsewhere), apply the moved cut points, PUT it.
+  const save = () => act(async () => {
+    const fresh = (await api(`/timelines/${enc(id)}`)).doc;
+    for (const [k, v] of Object.entries(drafts)) {
+      const [pi, si] = k.split(':').map(Number);
+      const seg = fresh.parts?.[pi]?.segments?.[si];
+      if (seg && seg.src === v.src) { seg.start = v.start; seg.end = v.end; }
+    }
+    await api(`/timelines/${enc(id)}`, { method: 'PUT', body: fresh });
+    await onSaved();
+    setDrafts({});
+  }, 'Cut points saved. Sync was reset: run it again before building.');
+
+  const jump = (n) => {
+    const el = document.getElementById(`scene-${n}`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el?.focus({ preventScroll: true });
+  };
+
+  return (
+    <>
+      <nav className="reel-strip" aria-label="Scenes">
+        {segs.map((s) => {
+          const mid = Math.round(((s.seg.start + s.seg.end) / 2) * 10) / 10;
+          return (
+            <button key={s.n} type="button" onClick={() => jump(s.n)}
+              style={{ flexGrow: Math.max(s.dur, 1), backgroundImage: `url("${frameUrl(id, s.seg.src, mid)}")` }}
+              aria-label={`Scene ${s.n}, ${srcName(doc, s.seg.src)}, ${fmtTime(s.dur)}`}>
+              <span>{s.n}</span>
+            </button>
+          );
+        })}
+      </nav>
+      <section aria-labelledby="c-scenes" className="section" style={{ gap: 0 }}>
+        <div className="section-head" style={{ paddingBottom: 12 }}>
+          <h2 id="c-scenes">Scenes</h2>
+          <span className="n">{segs.length}</span>
+          {dirty && (
+            <span className="end row">
+              <button type="button" className="btn btn-sm" onClick={() => setDrafts({})} disabled={busy}>Discard</button>
+              <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={busy}>Save cut points</button>
+            </span>
+          )}
+        </div>
+        {segs.map((s) => {
+          const k = `${s.pi}:${s.si}`;
+          const cur = drafts[k] || { start: s.seg.start, end: s.seg.end };
+          const film = filmOf(s.seg.src);
+          return (
+            <SceneRow key={k} s={s} cur={cur} moved={!sameRange(cur, original[k] || cur)} film={film}
+              name={film?.title || srcName(doc, s.seg.src)} stills={byScene[s.n] || []} metrics={reel.metrics}
+              weights={reel.prefs.weights} poster={poster} names={names}
+              onNudge={(edge, delta) => setDraft(s, nudge(cur, edge, delta, doc.sources[s.seg.src]?.duration, 0.5))}
+              onReset={() => original[k] && setDraft(s, original[k])} />
+          );
+        })}
+      </section>
+    </>
+  );
+}
+
 export function CutDetail() {
   const { id } = useParams();
   const tl = useApi(`/timelines/${enc(id)}`);
@@ -213,6 +535,8 @@ export function CutDetail() {
   const movies = useLoad(() => (hasMovies ? api('/library/movies') : Promise.resolve({ movies: [] })), [hasMovies]);
   const [variant, setVariant] = useUrlState('variant');
   const crumb = useCrumbRoot();
+  const films = useApi(hasMovies ? '/scenes/films' : null, { quiet: true });
+  const reel = useReel(id, tl.data?.doc);
 
   if (tl.error && !tl.data) return <div className="page"><ErrorBox error={tl.error} onRetry={tl.reload} /></div>;
   if (!tl.data) return <div className="page"><Loading /></div>;
@@ -249,9 +573,12 @@ export function CutDetail() {
     <div className="page">
       <Crumbs items={[crumb.root, [doc.title]]} />
       <div className="hero">
-        <div style={{ width: 240, flex: 'none' }}>
-          <ArtPoster keys={heroArt} layout={heroArt.length > 1 ? 'split' : 'single'}
-            fallback={<Poster title={doc.title} sub={subtitle} kind={posterKind(doc)} bare />} />
+        <div className="stack" style={{ width: 240, flex: 'none', gap: 10 }}>
+          {reel.used.length > 0
+            ? <PosterCanvas srcs={reel.used.map((x) => x.src)} layout={reel.prefs.layout} title={reel.prefs.title ? doc.title : ''} sub={subtitle} />
+            : <ArtPoster keys={heroArt} layout={heroArt.length > 1 ? 'split' : 'single'}
+              fallback={<Poster title={doc.title} sub={subtitle} kind={posterKind(doc)} bare />} />}
+          <Link className="btn" to={`/cuts/${enc(id)}/poster`} state={crumb.state}>Poster</Link>
         </div>
         <div className="hero-body" style={{ gap: 18 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -270,6 +597,7 @@ export function CutDetail() {
           {variants.error && <ErrorBox error={variants.error} onRetry={variants.reload} />}
         </div>
       </div>
+      <Reel key={id} id={id} doc={doc} reel={reel} films={films.data?.films} onSaved={tl.reload} />
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'flex-start' }}>
         <SourceList doc={doc} missing={tl.data.missing || []} report={report} movieKeys={movieKeys} seriesKey={tl.data.series_key} />
         <Segments doc={doc} values={chosen?.toggles} report={report} />
