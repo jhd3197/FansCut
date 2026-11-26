@@ -3,7 +3,7 @@ import { setPath, tagName, toggleIn } from './Settings.jsx';
 
 describe('settings helpers', () => {
   it('shows tag names, never the fc: id', () => {
-    expect(tagName({ id: 'fc:no-face', name: 'No face' })).toBe('No face');
+    expect(tagName({ id: 'fc:filler', name: 'Filler' })).toBe('Filler');
     expect(tagName({ id: 'fc:close-up' })).toBe('close up');
   });
 

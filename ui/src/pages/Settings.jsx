@@ -170,13 +170,13 @@ function WebhookUrl() {
   );
 }
 
-// A tag's display name: never the fc: id ("fc:no-face" -> "no face" when the vocab has no name).
+// A tag's display name: never the fc: id ("fc:filler" -> "filler" when the vocab has no name).
 export const tagName = (t) => t.name || String(t.id ?? t).replace(/^fc:/, '').replace(/-/g, ' ');
 // Families switched off are listed; switching one on removes it.
 export const toggleIn = (list, item, on) => (on ? list.filter((x) => x !== item) : [...new Set([...list, item])]);
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-const DETECT = [['auto', 'Measured'], ['ai', 'Checked by AI'], ['person', 'Needs a person']];
+const DETECT = [['auto', 'Cut tags found automatically'], ['ai', 'Checked by AI'], ['person', 'Needs a person']];
 const EXTEND = [
   ['none', 'Don’t extend'],
   ['ambient', 'Add ambient and establishing shots'],
@@ -232,11 +232,10 @@ function TagsSection({ get, put, check }) {
       })}
       {v && DETECT.map(([d, label]) => {
         const ts = (v.cut_tags || []).filter((t) => t.detect === d);
-        if (!ts.length && d !== 'auto') return null;
+        if (!ts.length) return null;
         return (
           <Row key={d} label={label}>
             <div className="stack10" style={{ paddingTop: 8 }}>
-              {d === 'auto' && check('scenes.smart_tags', 'Measure smart tags after indexing a film')}
               {ts.length > 0 && (
                 <table className="smart"><tbody>
                   {ts.map((t) => (
@@ -248,6 +247,9 @@ function TagsSection({ get, put, check }) {
           </Row>
         );
       })}
+      <Row label="Signals" hint="Faces, shots, brightness and sound. Used to pick posters and extend cuts; never shown as tags.">
+        <div style={{ paddingTop: 8 }}>{check('scenes.signals', 'Measure signals after indexing a film')}</div>
+      </Row>
       <Row label="Extending cuts">
         <div style={{ paddingTop: 8 }}>
           <Choice name="Extending cuts" value={get('scenes.extend') ?? 'ambient'} options={EXTEND} onChange={(x) => put('scenes.extend', x)} />
