@@ -33,6 +33,7 @@ class SceneService:
         self._face_engine: faces_mod.FaceEngine | None = None
         self._face_refs: dict[str, dict[str, dict[str, Any]]] = {}
         self._face_lock = threading.Lock()
+        self._clip_locks: dict[str, threading.Lock] = {}
 
     # -- films --------------------------------------------------------------------
     def _movies(self) -> list[Any]:
@@ -275,6 +276,14 @@ class SceneService:
         a, b = st.clean_range(start, end)
         b = min(b, a + MAX_CLIP)
         out = self._cache("clips", path, a, b, ext="mp4")
+        with self._face_lock:  # one lock per clip, so two requests cut it once
+            lock = self._clip_locks.setdefault(out.name, threading.Lock())
+        with lock:
+            if not out.is_file():
+                self._cut_clip(path, a, b, out)
+        return out
+
+    def _cut_clip(self, path: str, a: float, b: float, out: Path) -> None:
         if not out.is_file():
             tmp = out.with_suffix(".tmp.mp4")
             proc = subprocess.run(  # noqa: S603 - argv list
@@ -326,7 +335,6 @@ class SceneService:
                     + (proc.stderr or b"").decode("utf-8", "replace")[-300:]
                 )
             tmp.replace(out)
-        return out
 
     # -- cast -----------------------------------------------------------------------
     def get_cast(self, key: str, refresh: bool = False) -> list[dict[str, Any]]:
