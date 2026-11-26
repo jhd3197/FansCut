@@ -134,36 +134,49 @@ def name_faces(
     *refs* maps an actor's name to {character, photo, feature}.
     """
     h, w = img.shape[:2]
+    found = engine.detect(img)
     out = []
-    for f in engine.detect(img):
+    for f in found:
         box = [
             round(max(0.0, float(f[0])) / w, 4),
             round(max(0.0, float(f[1])) / h, 4),
             round(float(f[2]) / w, 4),
             round(float(f[3]) / h, 4),
         ]
-        face: dict[str, Any] = {
-            "box": box,
-            "score": round(float(f[14]), 2),
-            "name": None,
-            "character": "",
-            "photo": "",
-            "match": None,
-            "sure": False,
-        }
-        if refs:
-            v = engine.feature(img, f)
-            best = pick([(engine.match(v, r["feature"]), n) for n, r in refs.items()], candidates)
-            if best:
-                name, s = best
-                face.update(
-                    name=name,
-                    character=refs[name].get("character") or "",
-                    photo=refs[name].get("photo") or "",
-                    match=round(s, 2),
-                    sure=s >= SURE,
-                )
-        out.append(face)
+        out.append(
+            {
+                "box": box,
+                "score": round(float(f[14]), 2),
+                "name": None,
+                "character": "",
+                "photo": "",
+                "match": None,
+                "sure": False,
+            }
+        )
+    if not refs or not found:
+        return out
+    # Each actor is on screen once: the best face-name pairs are settled first.
+    scores = [
+        [(engine.match(engine.feature(img, f), r["feature"]), n) for n, r in refs.items()]
+        for f in found
+    ]
+    taken: set[str] = set()
+    pairs = sorted(((s, n, i) for i, row in enumerate(scores) for s, n in row), reverse=True)
+    for s, name, i in pairs:
+        face = out[i]
+        if face["name"] or name in taken:
+            continue
+        if pick([(s, name)], candidates) is None:
+            continue
+        taken.add(name)
+        face.update(
+            name=name,
+            character=refs[name].get("character") or "",
+            photo=refs[name].get("photo") or "",
+            match=round(s, 2),
+            sure=s >= SURE,
+        )
     return out
 
 

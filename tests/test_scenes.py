@@ -411,6 +411,14 @@ def test_face_names_need_a_looser_match_for_people_in_the_moment():
     assert got[0]["box"] == [0.025, 0.2, 0.125, 0.6]
     assert got[1]["name"] is None
 
+    class Twins(Engine):  # both faces look like Hermione: only the closer one is her
+        def match(self, a, b):
+            return {10: 0.6, 200: 0.5}[a]
+
+    refs = {"Emma Watson": {"character": "Hermione Granger", "photo": "", "feature": "e"}}
+    got = faces.name_faces(Twins(), Img(), refs, set())
+    assert [g["name"] for g in got] == ["Emma Watson", None]
+
 
 def test_face_models_download_once(tmp_path):
     from fanscut.scenes import faces
