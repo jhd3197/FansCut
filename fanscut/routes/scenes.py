@@ -192,6 +192,12 @@ def ai_tag(core: CoreDep, body: AIBody) -> dict[str, Any]:
     return core.scenes.submit_ai(body.key, body.tag, body.description, body.verify, body.sweep)
 
 
+@router.post("/tidy")
+def tidy(core: CoreDep, body: KeyBody) -> dict[str, Any]:
+    """Accept AI moments at or above Settings' threshold and merge duplicate moments."""
+    return core.scenes.tidy(body.key)
+
+
 class LabelBody(BaseModel):
     key: str
     families: list[str] | None = None  # default: every family not switched off in Settings

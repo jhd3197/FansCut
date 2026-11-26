@@ -570,6 +570,7 @@ class SceneService:
                     source=f"ai:{model}",
                 )["id"]
             )
+        self.tidy(key)
         return {
             "key": key,
             "tag": tag,
@@ -577,6 +578,10 @@ class SceneService:
             "proposed": len(made),
             "rejected_by_look": dropped,
         }
+
+    def tidy(self, key: str) -> dict[str, int]:
+        """Sure AI moments become tags; duplicate moments merge (see SceneStore.tidy)."""
+        return self.store.tidy(key, self.core.cfg.scenes.auto_accept)
 
     # -- one-pass labelling ---------------------------------------------------------
     def submit_label(
@@ -726,9 +731,11 @@ class SceneService:
                     break
                 ctx.progress(0.9 + 0.1 * i / max(1, len(scenes)), f"Looking closely {i + 1}")
                 look_and_propose(c, wanted)
+        tidied = self.tidy(key)
         return {
             "key": key,
             **stats,
+            **tidied,
             "searched_closely": focus,
             "every_scene_for": every_scene,
             "keywords_matched": from_keywords,

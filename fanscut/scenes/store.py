@@ -76,6 +76,17 @@ def clean_range(start: Any, end: Any, duration: float | None = None) -> tuple[fl
     return round(a, 3), round(b, 3)
 
 
+def same_moment(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Two moments saying the same thing: half the shorter one's time shared and at
+    least half of the smaller tag set shared."""
+    shared = min(a["end"], b["end"]) - max(a["start"], b["start"])
+    shorter = min(a["end"] - a["start"], b["end"] - b["start"])
+    if shorter <= 0 or shared < 0.5 * shorter:
+        return False
+    ta, tb = set(a["tags"]), set(b["tags"])
+    return bool(ta and tb) and 2 * len(ta & tb) >= min(len(ta), len(tb))
+
+
 class SceneStore:
     def __init__(self, db: Database):
         self.db = db
@@ -213,6 +224,65 @@ class SceneStore:
                 "DELETE FROM scene_tags WHERE film_key = ? AND source = ?", (film_key, source)
             )
         return int(n["n"]) if n else 0
+
+    def tidy(self, film_key: str, auto_accept: float = 1.0) -> dict[str, int]:
+        """AI proposals at or above *auto_accept* become tags, and moments that say
+        the same thing twice (most of their tags shared, half their time shared) become
+        one: the better one stays (a person's over the AI's, accepted over proposed,
+        surer, longer) and takes the other's tags, people and evidence."""
+        rows = [r for r in self.tags([film_key]) if r["status"] != "rejected"]
+        accepted = 0
+        with self.db.transaction():
+            for r in rows:
+                if (
+                    r["status"] == "proposed"
+                    and str(r["source"]).startswith("ai:")
+                    and r["confidence"] is not None
+                    and r["confidence"] >= auto_accept
+                ):
+                    self.db.execute(
+                        "UPDATE scene_tags SET status = 'accepted', updated_at = ? WHERE id = ?",
+                        (_now(), r["id"]),
+                    )
+                    r["status"] = "accepted"
+                    accepted += 1
+
+            def rank(r: dict[str, Any]) -> tuple:
+                return (
+                    not str(r["source"]).startswith("ai:"),
+                    r["status"] == "accepted",
+                    r["confidence"] or 0,
+                    r["end"] - r["start"],
+                )
+
+            merged = 0
+            alive = sorted(rows, key=rank, reverse=True)
+            kept: list[dict[str, Any]] = []
+            for r in alive:
+                twin = next((k for k in kept if same_moment(k, r)), None)
+                if twin is None:
+                    kept.append(r)
+                    continue
+                twin["tags"] = list(dict.fromkeys([*twin["tags"], *r["tags"]]))[:MAX_TAGS]
+                names = {(p.get("name"), p.get("character")) for p in twin["people"]}
+                twin["people"] += [
+                    p for p in r["people"] if (p.get("name"), p.get("character")) not in names
+                ]
+                twin["evidence"] = list(dict.fromkeys([*twin["evidence"], *r["evidence"]]))[:12]
+                self.db.execute(
+                    "UPDATE scene_tags SET tags = ?, people = ?, evidence = ?, updated_at = ?"
+                    " WHERE id = ?",
+                    (
+                        dumps(twin["tags"]),
+                        dumps(twin["people"][:MAX_PEOPLE]),
+                        dumps(twin["evidence"]),
+                        _now(),
+                        twin["id"],
+                    ),
+                )
+                self.db.execute("DELETE FROM scene_tags WHERE id = ?", (r["id"],))
+                merged += 1
+        return {"auto_accepted": accepted, "merged": merged}
 
     def tags(
         self, film_keys: list[str] | None = None, tag: str | None = None, status: str | None = None

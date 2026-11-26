@@ -615,3 +615,25 @@ def test_cues_mark_what_is_said_and_seen():
     got = label.scenes_to_look({"scenes": [{"start": 0, "end": 5}, {"start": 5, "end": 40},
                                            {"start": 40, "end": 90}]}, [(50, 60)])
     assert [(c["start"], c["end"]) for c in got] == [(5, 40)]
+
+
+def test_tidy_accepts_sure_ai_moments_and_merges_twins(db):
+    s = st.SceneStore(db)
+    human = s.add_tag("radarr:1", 671, 100, 200, ["christmas", "snow"], [{"name": "A"}],
+                      source="user", status="accepted")
+    twin = s.add_tag("radarr:1", 671, 120, 210, ["christmas", "magic"], [{"name": "B"}],
+                     source="ai:x", confidence=0.9, evidence=["wrapped presents"])
+    sure = s.add_tag("radarr:1", 671, 400, 460, ["halloween"], [], source="ai:x", confidence=0.8)
+    unsure = s.add_tag("radarr:1", 671, 500, 560, ["fight"], [], source="ai:x", confidence=0.5)
+    other = s.add_tag("radarr:1", 671, 410, 450, ["fight"], [], source="ai:y", confidence=0.95)
+    got = s.tidy("radarr:1", 0.75)
+    assert got == {"auto_accepted": 3, "merged": 1}
+    ids = {r["id"]: r for r in s.tags(["radarr:1"])}
+    assert twin["id"] not in ids  # the person's moment stays and takes the AI's extras
+    kept = ids[human["id"]]
+    assert kept["tags"] == ["christmas", "snow", "magic"] and kept["evidence"] == ["wrapped presents"]
+    assert {p["name"] for p in kept["people"]} == {"A", "B"}
+    assert ids[sure["id"]]["status"] == "accepted" and ids[unsure["id"]]["status"] == "proposed"
+    assert other["id"] in ids  # different tags: not the same moment
+    assert s.tidy("radarr:1", 0.75) == {"auto_accepted": 0, "merged": 0}
+    assert not st.same_moment({"start": 0, "end": 10, "tags": ["a"]}, {"start": 8, "end": 20, "tags": ["a"]})

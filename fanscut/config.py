@@ -233,6 +233,8 @@ class ScenesCfg(BaseModel):
     signals: bool = True  # measure faces, shots, brightness and sound after indexing
     extend: Literal["none", "ambient", "filler"] = "ambient"  # what may lengthen a cut
     custom_tags: list[str] = Field(default_factory=list)  # local only, never shared
+    # AI moments this sure count as tags straight away (1 = a person accepts everything)
+    auto_accept: float = Field(default=0.75, ge=0, le=1)
     # tags (occasions) searched closely after labelling: own text pass + a look at every scene
     search_closely: list[str] = Field(default_factory=lambda: ["christmas", "halloween"])
 

@@ -266,6 +266,14 @@ function TagsSection({ get, put, check }) {
           </Row>
         );
       })}
+      <Row label="AI moments" hint="This sure or more: a tag straight away, marked AI. Below: a proposal." htmlFor="set-auto-accept">
+        <div className="row" style={{ gap: 8, paddingTop: 4, alignItems: 'center' }}>
+          <input id="set-auto-accept" type="range" min="50" max="100" step="5"
+            value={Math.round((get('scenes.auto_accept') ?? 0.75) * 100)}
+            onChange={(e) => put('scenes.auto_accept', Number(e.target.value) / 100)} />
+          <output className="mono tiny" htmlFor="set-auto-accept">{(get('scenes.auto_accept') ?? 0.75) >= 1 ? 'Never' : `${Math.round((get('scenes.auto_accept') ?? 0.75) * 100)}%`}</output>
+        </div>
+      </Row>
       <Row label="Signals" hint="Faces, shots, brightness and sound. Used to pick posters and extend cuts; never shown as tags.">
         <div style={{ paddingTop: 8 }}>{check('scenes.signals', 'Measure signals after indexing a film')}</div>
       </Row>
