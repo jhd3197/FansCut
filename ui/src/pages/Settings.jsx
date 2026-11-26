@@ -202,6 +202,7 @@ function TagsSection({ get, put, check }) {
   const v = vocab.data;
   const off = get('scenes.families_off') || [];
   const custom = get('scenes.custom_tags') || [];
+  const closely = get('scenes.search_closely') ?? ['christmas', 'halloween'];
   const add = () => {
     const t = draft.trim();
     if (!t) return;
@@ -221,11 +222,29 @@ function TagsSection({ get, put, check }) {
               <label className="ck">
                 <input type="checkbox" checked={on} onChange={(e) => put('scenes.families_off', toggleIn(off, f, e.target.checked))} /> Use when analysing films
               </label>
-              <div className={`tagchips${on ? '' : ' off'}`}>
-                {(v.tags || []).filter((t) => t.family === f).map((t) => (
-                  <span key={t.id} className="tchip" title={t.hint}>{tagName(t)}</span>
-                ))}
-              </div>
+              {f === 'occasion' ? (
+                <table className={`smart cues${on ? '' : ' off'}`}><tbody>
+                  {(v.tags || []).filter((t) => t.family === f).map((t) => (
+                    <tr key={t.id}>
+                      <td><span className="tchip" title={t.hint}>{tagName(t)}</span></td>
+                      <td className="muted tiny">
+                        {t.cues?.see?.length > 0 && <div>Looks for {t.cues.see.join(', ')}</div>}
+                        {t.cues?.hear?.length > 0 && <div>Listens for {t.cues.hear.map((w) => `“${w}”`).join(', ')}</div>}
+                      </td>
+                      <td>
+                        <label className="ck"><input type="checkbox" disabled={!on} checked={closely.includes(t.id)}
+                          onChange={(e) => put('scenes.search_closely', e.target.checked ? [...new Set([...closely, t.id])] : closely.filter((x) => x !== t.id))} /> Search closely</label>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody></table>
+              ) : (
+                <div className={`tagchips${on ? '' : ' off'}`}>
+                  {(v.tags || []).filter((t) => t.family === f).map((t) => (
+                    <span key={t.id} className="tchip" title={t.hint}>{tagName(t)}</span>
+                  ))}
+                </div>
+              )}
             </div>
           </Row>
         );

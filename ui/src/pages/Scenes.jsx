@@ -106,6 +106,7 @@ function TagCard({ x, names, active, onPick, onSet, onDelete }) {
         {shownTags(x).map((g) => <TagLink key={g} id={g} names={names} />)}
       </div>
       {x.summary && <span className="tiny">{x.summary}</span>}
+      {x.evidence?.length > 0 && <span className="tiny muted">Seen: {x.evidence.join(', ')}</span>}
       {x.people.length > 0 && (
         <span className="tiny muted">{x.people.map((p) => p.character || p.name).join(', ')}</span>
       )}
