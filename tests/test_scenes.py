@@ -284,7 +284,9 @@ def sc(cfg, tmp_path, film_dir, monkeypatch):
     monkeypatch.setattr("fanscut.browse._collections_of", lambda m: ["Snow Saga"])
     with TestClient(create_app(cfg, tmp_path / "config.yaml", start_worker=False)) as c:
         c.core = c.app.state.core  # type: ignore[attr-defined]
-        c.key = c.get("/api/scenes/films").json()["films"][0]["key"]
+        film = c.get("/api/scenes/films").json()["films"][0]
+        assert film["franchises"] == ["Snow Saga"]
+        c.key = film["key"]
         yield c
 
 

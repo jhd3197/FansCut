@@ -51,7 +51,7 @@ class SceneService:
         return m, m.file
 
     def films(self, collection: str | None = None) -> list[dict[str, Any]]:
-        from ..browse import _collections_of, resolve_collection
+        from ..browse import NOT_A_FRANCHISE, _collections_of, resolve_collection
 
         counts = self.store.scene_counts()
         tags = self.store.tags()
@@ -73,6 +73,8 @@ class SceneService:
                     "duration": m.duration,
                     "on_disk": bool(m.file),
                     "collections": cols,
+                    # what a cut may span: Plex smart lists ("Popular on My Server") aren't
+                    "franchises": [c for c in cols if not NOT_A_FRANCHISE.search(c)],
                     "indexed": m.key in counts,
                     "scenes": counts.get(m.key),
                     "tags": {

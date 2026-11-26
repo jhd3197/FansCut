@@ -164,7 +164,7 @@ export function SetDetail() {
     const mine = moments.filter((r) => r.film_key === k);
     const f = film.get(k);
     return {
-      key: k, title: titleOf(k), year: f?.year, collections: f?.collections || [],
+      key: k, title: titleOf(k), year: f?.year, collections: f?.franchises || f?.collections || [],
       moments: mine.length, accepted: mine.filter((r) => r.status === 'accepted').length,
       seconds: mine.reduce((s, r) => s + (r.end - r.start), 0),
     };
