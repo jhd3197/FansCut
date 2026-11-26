@@ -172,7 +172,7 @@ export function MyCuts() {
       {doomed && (
         <Dialog title={`Delete ${doomed.title}?`} onClose={() => setDoomed(null)}>
           <p className="muted" style={{ margin: 0 }}>
-            This removes the recipe and its matched cut points from FansCut. Files already built stay where they are; manage them under <Link to="/jobs">Jobs</Link>.
+            This removes the cut and its matched cut points from FansCut. Files already built stay where they are; manage them under <Link to="/jobs">Jobs</Link>.
           </p>
           <div className="row" style={{ justifyContent: 'flex-end' }}>
             <button type="button" className="btn" onClick={() => setDoomed(null)}>Keep it</button>

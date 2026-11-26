@@ -177,7 +177,7 @@ export function ShowPage() {
             ) : null}
             <button type="button" className="btn" onClick={detectAll} disabled={busy || !onDisk}
               title="Fingerprint the audio of every season to find openings, endings and recaps">Detect openings and endings</button>
-            <button type="button" className="btn" onClick={() => setDialog('recipe')}>Recipe</button>
+            <button type="button" className="btn" onClick={() => setDialog('recipe')}>Cut file</button>
           </div>
         </div>
       </div>
@@ -200,7 +200,7 @@ export function ShowPage() {
         {tls.error && <ErrorBox error={tls.error} onRetry={tls.reload} />}
         {!tls.data && !tls.error && <Loading />}
         {tls.data && timelines.length === 0 && ideas.length === 0 && (
-          <p className="muted" style={{ margin: 0 }}>No timelines yet. A timeline is a reordered or merged cut of this show, kept as a recipe. Import one or start a new one.</p>
+          <p className="muted" style={{ margin: 0 }}>No timelines yet. A timeline is a reordered or merged cut of this show, kept as a cut file. Import one or start a new one.</p>
         )}
         {timelines.length + ideas.length > 0 && (
           <div className="shelf">
@@ -231,7 +231,7 @@ export function ShowPage() {
       {dialog === 'recipe' && <RecipeDialog series={series} onClose={() => setDialog(null)} onImported={view.reload} />}
       {dialog?.del && (
         <Dialog title="Delete timeline" onClose={() => setDialog(null)}>
-          <p style={{ margin: 0 }}>Delete “{dialog.del.title}”? Rendered files stay; the recipe and its sync data go.</p>
+          <p style={{ margin: 0 }}>Delete “{dialog.del.title}”? Rendered files stay; the cut and its sync data go.</p>
           <div className="row" style={{ justifyContent: 'flex-end' }}>
             <button type="button" className="btn" onClick={() => setDialog(null)}>Keep it</button>
             <button type="button" className="btn btn-danger" onClick={() => deleteTl(dialog.del)} disabled={busy}>Delete</button>

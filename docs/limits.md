@@ -4,7 +4,7 @@
   (`render.language` picks a preferred audio language). Extra audio tracks and
   subtitles are not carried over. Timeline renders are the exception for text
   subtitles, which follow the cut as Plex sidecars (see
-  [Timeline recipes](timelines.md#edit-operations)).
+  [Timeline cuts](timelines.md#edit-operations)).
 - Stream copy needs all files to match (codec, size, frame rate, audio format);
   otherwise FansCut re-encodes, which is slower. Cuts happen between
   episodes, so mixed sources mean a re-encode.

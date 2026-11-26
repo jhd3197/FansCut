@@ -24,7 +24,7 @@ The Docker image reads `/config/config.yaml`; start from
 | `ffmpeg` | binaries, `nvenc`, CRF, x264 preset, audio bitrate, `mkv` or `mp4` |
 | `render` | output cache: default keep flag, auto-delete days for non-kept renders, preferred audio language |
 | `automation` | Sonarr webhook: accept it, run detection first, keep flag for its renders |
-| `ai` | the Prompture model (and vision model) for AI recipes and scene tagging |
+| `ai` | the Prompture model (and vision model) for AI cuts from notes and scene tagging |
 | `cut` | default preset, unknown policy, padding, merge gap, minimum segment, transition |
 | `schedule` | cron schedules for the background tasks |
 | `notify` | where to send a message when a job is done or failed |
@@ -89,7 +89,7 @@ paths:
 ```
 
 `data_dir` also holds the logs (`<data_dir>/logs`), the filler snapshot
-(`<data_dir>/fillers`) and community recipes (`<data_dir>/recipes`).
+(`<data_dir>/fillers`) and community cuts (`<data_dir>/recipes`).
 
 ## library
 
@@ -191,7 +191,7 @@ See [Automation](automation.md).
 ## ai
 
 ```yaml
-ai:                      # recipes from notes and scene tagging, through Prompture
+ai:                      # cuts from notes and scene tagging, through Prompture
   model: ""              # e.g. claude/claude-opus-5-5, ollama/qwen3:8b, or a bare name with base_url
   vision_model: ""       # looks at frame grids when tagging; empty = model (e.g. ollama/qwen3-vl:8b)
   base_url: ""           # OpenAI-compatible endpoint for a bare model name, e.g. http://localhost:11434/v1
@@ -203,7 +203,7 @@ ai:                      # recipes from notes and scene tagging, through Promptu
 provider keys (`ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, ...) come from the
 environment as Prompture reads them. A bare name such as `qwen2.5:7b` with
 `base_url` set keeps the old OpenAI-compatible setup working. See
-[AI recipes](ai-recipes.md) and [Scene tagging](scene-tagging.md).
+[AI cuts from notes](ai-cuts.md) and [Scene tagging](scene-tagging.md).
 
 ## cut
 

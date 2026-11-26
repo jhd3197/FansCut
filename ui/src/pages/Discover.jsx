@@ -105,7 +105,7 @@ export const STATUS_CLASS = { ready: 'c-ready', partly: 'c-warn', missing: 'c-da
 // One sentence on what installing it makes.
 export function suggestionWhat(s) {
   return s.detail?.template || {
-    recipe: 'A community recipe: scenes from files you own, cut and joined into one new file.',
+    recipe: 'A community cut: scenes from files you own, cut and joined into one new file.',
     collection_merge: 'One film made from every entry in the collection, in release order.',
     watch_order: 'A Plex playlist of the films in order. Nothing is rendered.',
     canon_cut: 'The show with filler episodes left out, rendered as new files.',
@@ -129,8 +129,8 @@ function AddByUrl({ onClose }) {
   return (
     <Dialog title="Add a cut by repo URL" onClose={onClose}>
       <form className="stack" onSubmit={submit}>
-        <p className="muted" style={{ margin: 0 }}>Paste the address of a git repository that holds a FansCut recipe.
-          FansCut copies the recipe and matches it against your library. No video is downloaded.</p>
+        <p className="muted" style={{ margin: 0 }}>Paste the address of a git repository that holds a FansCut cut file.
+          FansCut copies the cut file and matches it against your library. No video is downloaded.</p>
         <label className="field">
           Repository URL
           <input className="input" type="url" required placeholder="https://github.com/someone/some-cut"
@@ -200,7 +200,7 @@ export function Discover() {
         <Empty>
           No suggestions yet. FansCut suggests cuts from what you own: movies that share a Plex
           collection become merges and watch orders, anime matched to MAL or AniList gets a canon cut,
-          and community recipes in the recipes folder show up here. Check your sources in{' '}
+          and community cuts in the recipes folder show up here. Check your sources in{' '}
           <Link to="/settings">Settings</Link>, rescan the <Link to="/library">Library</Link>, or add a cut by repo URL.
         </Empty>
       )}

@@ -297,7 +297,7 @@ export function TimelineEdit() {
     act(async () => {
       const parsed = JSON.parse(await f.text());
       if (!parsed || !Array.isArray(parsed.parts) || typeof parsed.sources !== 'object') {
-        throw new Error('That file is not a FansCut timeline recipe (no parts or sources).');
+        throw new Error('That file is not a FansCut timeline cut (no parts or sources).');
       }
       setDoc(parsed); setDirty(true); setSel(null);
     }, `Imported ${f.name}. Review it, then Save.`);
@@ -342,8 +342,8 @@ export function TimelineEdit() {
   const menus = [
     ['File', [
       ['Save', save, { keys: 'Ctrl+S', disabled: busy }],
-      ['Import recipe…', openImport],
-      ['Export recipe', exportRecipe, { disabled: busy }],
+      ['Import cut…', openImport],
+      ['Export cut', exportRecipe, { disabled: busy }],
       ['Render…', () => navigate(`/cuts/${enc(id)}/build`, { state: crumb.state })],
       ['Back to the cut', () => navigate(`/cuts/${enc(id)}`, { state: crumb.state })],
     ]],
@@ -380,12 +380,12 @@ export function TimelineEdit() {
     assist.push({ key: `i-${i}`, mark: 'var(--danger)', title: is.text, detail: 'Fix before saving',
       action: is.si == null ? '' : 'Select', run: is.si == null ? null : () => select(is.pi, is.si) });
   }
-  if (dirty) assist.push({ key: 'dirty', mark: 'var(--accent)', title: 'Unsaved changes', detail: 'Save writes the recipe and resets the sync', action: 'Save', run: save });
+  if (dirty) assist.push({ key: 'dirty', mark: 'var(--accent)', title: 'Unsaved changes', detail: 'Save writes the cut and resets the sync', action: 'Save', run: save });
   if (!report?.synced) {
     assist.push({ key: 'sync', mark: 'var(--accent)', title: 'Not synced yet', detail: 'Find every cut point in your files before rendering', action: 'Sync', run: sync });
   } else {
     for (const [src, s] of Object.entries(report.sources || {})) {
-      if (!s.matched) assist.push({ key: `u-${src}`, mark: 'var(--danger)', title: `${src}: no cut points found`, detail: s.reason || 'The file does not match the recipe', action: 'Sync view', run: () => setView('sync') });
+      if (!s.matched) assist.push({ key: `u-${src}`, mark: 'var(--danger)', title: `${src}: no cut points found`, detail: s.reason || 'The file does not match the cut', action: 'Sync view', run: () => setView('sync') });
       for (const [ps, st] of Object.entries(s.segments || {})) {
         if (st !== 'missing' && st !== 'partial') continue;
         const [p, g] = ps.split(':').map(Number);
@@ -463,9 +463,9 @@ export function TimelineEdit() {
                 {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
               </select>
             )}
-            <button type="button" className="bt" onClick={() => file.current.click()}>Import recipe</button>
+            <button type="button" className="bt" onClick={() => file.current.click()}>Import cut</button>
             <input ref={file} type="file" accept="application/json,.json" hidden onChange={onFile} data-testid="recipe-file" />
-            <button type="button" className="bt" onClick={exportRecipe} disabled={busy}>Export recipe</button>
+            <button type="button" className="bt" onClick={exportRecipe} disabled={busy}>Export cut</button>
             <button type="button" className="bt" onClick={save} disabled={busy}>Save</button>
             <Link to={`/cuts/${enc(id)}/build`} state={crumb.state} className="bt bp">Render</Link>
           </div>
@@ -573,7 +573,7 @@ export function TimelineEdit() {
                     ) : (
                       <span style={{ color: '#666', padding: 16, textAlign: 'center' }}>
                         {!viewer ? 'Select a segment to preview it'
-                          : `No preview for ${viewer.src}: it isn't in your library${dirty ? ', or the recipe has unsaved sources (save first)' : ''}`}
+                          : `No preview for ${viewer.src}: it isn't in your library${dirty ? ', or the cut has unsaved sources (save first)' : ''}`}
                       </span>
                     )}
                   </div>
@@ -685,7 +685,7 @@ export function TimelineEdit() {
                     <div className="grp">
                       <b>Anchors</b>
                       <dl className="kvp">
-                        <dt>In recipe</dt><dd>{selSeg.anchors ? 'yes' : 'none'}</dd>
+                        <dt>In cut file</dt><dd>{selSeg.anchors ? 'yes' : 'none'}</dd>
                         <dt>Status</dt>
                         <dd style={{ color: segSync?.status === 'missing' ? 'var(--danger)' : segSync?.status === 'partial' ? 'var(--accent)' : undefined }}>
                           {!report?.synced ? 'not synced' : !segSync ? 'not in the report' : segSync.matched === false ? (segSync.reason || 'source not matched') : STATUS_TEXT[segSync.status] || '–'}
@@ -860,7 +860,7 @@ export function TimelineEdit() {
               </span>
             </div>
             <div className="wide">
-              {dirty && <p style={{ margin: 0, color: 'var(--accent)' }}>You have unsaved changes. Save first: sync runs on the saved recipe.</p>}
+              {dirty && <p style={{ margin: 0, color: 'var(--accent)' }}>You have unsaved changes. Save first: sync runs on the saved cut.</p>}
               <SyncReport report={report} onPreview={(src, t) => { look(src, t); setView('edit'); }} />
             </div>
           </section>

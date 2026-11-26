@@ -49,7 +49,7 @@ export function stages(job) {
       return at(names, m ? 1 : 0);
     }
     case 'timeline_sync':
-      return at(['Read the recipe', 'Match cut points', 'Save the report'], msg ? 1 : 0);
+      return at(['Read the cut', 'Match cut points', 'Save the report'], msg ? 1 : 0);
     case 'render':
       return at(['Plan the cut', 'Render', 'Save'], msg.startsWith('rendering') ? 1 : 0);
     case 'detect':

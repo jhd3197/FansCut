@@ -42,7 +42,7 @@ export function NewCutPage() {
     <>
       <Crumbs items={[crumb.root, ['New cut from template']]} />
       <div className="page-head"><div><h1>New cut from template</h1>
-        <p className="muted">Start a recipe from a template, then shape it in the editor.</p></div></div>
+        <p className="muted">Start a cut from a template, then shape it in the editor.</p></div></div>
     </>
   );
   if (tq.error) return <div className="page">{head}<ErrorBox error={tq.error} onRetry={tq.reload} /></div>;
@@ -127,7 +127,7 @@ export function NewCutPage() {
       </div>
       <p className="dim tiny" style={{ margin: 0 }}>
         Creates README.md, fanscut.json and outline.md in your data folder and opens the new cut.
-        The recipe holds timestamps only, never video.
+        The cut holds timestamps only, never video.
       </p>
     </div>
   );

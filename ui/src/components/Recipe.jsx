@@ -25,7 +25,7 @@ function AIRecipeForm({ base, onDone, onImported }) {
       const r = await api(`${base}/recipe/ai`, { method: 'POST', body: { notes, apply } });
       if (apply) {
         onImported();
-        onDone(`Recipe applied to ${r.import.applied} episode(s)`);
+        onDone(`Cut applied to ${r.import.applied} episode(s)`);
         return r;
       }
       setPreview(r.recipe);
@@ -40,7 +40,7 @@ function AIRecipeForm({ base, onDone, onImported }) {
     <div className="stack">
       <p className="muted" style={{ margin: 0 }}>
         Paste what a fan editor published about their cut: which episodes they dropped or kept,
-        timestamps, reasons. The LLM set in Settings turns it into a recipe. Nothing is
+        timestamps, reasons. The LLM set in Settings turns it into a cut. Nothing is
         applied until you press Apply.
       </p>
       <textarea className="input" rows={10} style={{ width: '100%', fontFamily: 'inherit' }}
@@ -49,7 +49,7 @@ function AIRecipeForm({ base, onDone, onImported }) {
       {error && <div className="notice notice-err" role="alert">{error}</div>}
       {preview && (
         <div className="notice notice-ok">
-          <span>Recipe ready: {n} episode(s) touched, preset “{preview.preset || 'unchanged'}”.
+          <span>Cut ready: {n} episode(s) touched, preset “{preview.preset || 'unchanged'}”.
             Review the episodes after applying.</span>
         </div>
       )}
@@ -77,16 +77,16 @@ export function RecipeButtons({ series, onImported, onAi }) {
       const r = await api(`${base}/recipe`, { method: 'POST', body: doc });
       onImported();
       return r;
-    }, (r) => `Recipe applied to ${r.applied} episode(s)${r.skipped.length ? `; ${r.skipped.length} not in this library (${r.skipped.slice(0, 5).join(', ')})` : ''}`);
+    }, (r) => `Cut applied to ${r.applied} episode(s)${r.skipped.length ? `; ${r.skipped.length} not in this library (${r.skipped.slice(0, 5).join(', ')})` : ''}`);
   };
   return (
     <>
-      <button type="button" className="btn" onClick={() => act(async () => downloadJson(recipeFileName(series.title), await api(`${base}/recipe`)))}>Export recipe</button>
-      <button type="button" className="btn" onClick={() => file.current.click()}>Import recipe</button>
-      <button type="button" className="btn" onClick={() => (onAi ? onAi() : setAiOpen(true))} title="Turn community cut notes into a recipe with the configured LLM">AI recipe…</button>
+      <button type="button" className="btn" onClick={() => act(async () => downloadJson(recipeFileName(series.title), await api(`${base}/recipe`)))}>Export cut</button>
+      <button type="button" className="btn" onClick={() => file.current.click()}>Import cut</button>
+      <button type="button" className="btn" onClick={() => (onAi ? onAi() : setAiOpen(true))} title="Turn community cut notes into a cut with the configured LLM">AI cut…</button>
       <input ref={file} type="file" accept="application/json,.json" hidden onChange={onFile} data-testid="recipe-file" />
       {aiOpen && (
-        <Dialog title="AI recipe from notes" onClose={() => setAiOpen(false)} wide>
+        <Dialog title="AI cut from notes" onClose={() => setAiOpen(false)} wide>
           <AIRecipeForm base={base} onImported={onImported} onDone={() => setAiOpen(false)} />
         </Dialog>
       )}
@@ -102,14 +102,14 @@ export function RecipeDialog({ series, onClose, onImported }) {
   const [done, setDone] = useState(null);
   const base = seriesPath(series.key);
   return (
-    <Dialog title={ai ? 'AI recipe from notes' : `Recipe · ${series.title}`} onClose={onClose} wide>
+    <Dialog title={ai ? 'AI cut from notes' : `Cut file · ${series.title}`} onClose={onClose} wide>
       {ai ? (
         <AIRecipeForm base={base} onImported={onImported}
           onDone={(text) => { setDone({ ok: true, text }); setAi(false); }} />
       ) : (
         <div className="stack">
           <p className="muted" style={{ margin: 0 }}>
-            A recipe is a small JSON file with this show’s labels, keep choices, trims and custom
+            A cut file is a small JSON file with this show’s labels, keep choices, trims and custom
             segments. It holds no video, so you can share it. Importing applies it by episode number.
           </p>
           <Notice msg={done} onClose={() => setDone(null)} />
