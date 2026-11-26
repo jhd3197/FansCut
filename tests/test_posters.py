@@ -108,7 +108,9 @@ def test_take_keep_discard_and_build(pc, tmp_path):
     out.mkdir()
     written = pc.core.posters.write_for_build("t1", out)
     assert written == str(out / "poster.jpg")
-    assert Image.open(out / "poster.jpg").format == "JPEG"
+    with Image.open(out / "poster.jpg") as img:
+        fmt = img.format
+    assert fmt == "JPEG"
 
     cleared = pc.delete("/api/timelines/t1/poster").json()
     assert cleared["chosen"] is None
