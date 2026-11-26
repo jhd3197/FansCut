@@ -99,6 +99,13 @@ def cast(core: CoreDep, key: str, refresh: bool = False) -> dict[str, Any]:
     return {"cast": core.scenes.get_cast(key, refresh)}
 
 
+@router.get("/faces")
+def faces(core: CoreDep, key: str, t: float = Query(ge=0)) -> dict[str, Any]:
+    """Faces in the frame at t: boxes (fractions of the frame), named against the
+    cast photos; `sure` is false for names a person should confirm."""
+    return core.scenes.faces_at(key, t)
+
+
 @router.get("/xray")
 def xray(core: CoreDep, key: str, t: float = Query(ge=0)) -> dict[str, Any]:
     """Who is on screen at t, from the tags covering it, and their other scenes."""

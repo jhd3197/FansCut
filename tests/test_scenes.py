@@ -380,3 +380,54 @@ def test_vocab_api_and_smart_tag_counts(cfg, tmp_path):
         counts = {t["tag"]: t for t in c.get("/api/scenes/tag-counts").json()["tags"]}
         assert counts["fc:no-face"]["smart"] and counts["fc:no-face"]["name"] == "No face"
         assert not counts["christmas"]["smart"] and counts["christmas"]["family"] == "occasion"
+
+
+def test_face_names_need_a_looser_match_for_people_in_the_moment():
+    from fanscut.scenes import faces
+
+    scores = [(0.35, "Rupert Grint"), (0.33, "Daniel Radcliffe")]
+    assert faces.pick(scores, set()) is None
+    assert faces.pick(scores, {"Daniel Radcliffe"}) == ("Daniel Radcliffe", 0.33)
+    assert faces.pick([(0.45, "Tom Felton")], set()) == ("Tom Felton", 0.45)
+
+    class Engine:  # two faces: one matches Harry, one nobody
+        def detect(self, img):
+            return [[10, 20, 50, 60, *[0] * 10, 0.9], [200, 20, 40, 40, *[0] * 10, 0.8]]
+
+        def feature(self, img, f):
+            return f[0]
+
+        def match(self, a, b):
+            return 0.38 if a == 10 and b == "h" else 0.1
+
+    class Img:
+        shape = (100, 400, 3)
+
+    refs = {"Daniel Radcliffe": {"character": "Harry Potter", "photo": "h.jpg", "feature": "h"}}
+    got = faces.name_faces(Engine(), Img(), refs, {"Daniel Radcliffe"})
+    assert got[0]["name"] == "Daniel Radcliffe" and got[0]["character"] == "Harry Potter"
+    assert got[0]["sure"] is False and got[0]["match"] == 0.38  # below SURE: "Harry Potter?"
+    assert got[0]["box"] == [0.025, 0.2, 0.125, 0.6]
+    assert got[1]["name"] is None
+
+
+def test_face_models_download_once(tmp_path):
+    from fanscut.scenes import faces
+
+    class Resp:
+        content = b"onnx"
+
+        def raise_for_status(self):
+            pass
+
+    calls = []
+
+    class Session:
+        def get(self, url, timeout):
+            calls.append(url)
+            return Resp()
+
+    d, r = faces.ensure_models(tmp_path, Session())
+    assert d.name == "face_detection_yunet_2023mar.onnx" and r.read_bytes() == b"onnx"
+    faces.ensure_models(tmp_path, Session())
+    assert len(calls) == 2

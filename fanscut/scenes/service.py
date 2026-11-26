@@ -5,11 +5,13 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import subprocess
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..errors import FansCutError, NotFoundError
 from . import cast as cast_mod
+from . import faces as faces_mod
 from . import index as idx
 from . import store as st
 from . import tagger
@@ -26,6 +28,9 @@ class SceneService:
     def __init__(self, core: Core):
         self.core = core
         self.store = st.SceneStore(core.db)
+        self._face_engine: faces_mod.FaceEngine | None = None
+        self._face_refs: dict[str, dict[str, dict[str, Any]]] = {}
+        self._face_lock = threading.Lock()
 
     # -- films --------------------------------------------------------------------
     def _movies(self) -> list[Any]:
@@ -281,6 +286,50 @@ class SceneService:
             return self.get_cast(key)
         except FansCutError:
             return []
+
+    # -- faces ----------------------------------------------------------------------
+    def face_engine(self) -> faces_mod.FaceEngine:
+        if not faces_mod.available():
+            raise FansCutError("face recognition needs OpenCV: pip install opencv-python-headless")
+        with self._face_lock:
+            if self._face_engine is None:
+                det, rec = faces_mod.ensure_models(
+                    self.core.cfg.data_dir / "models", self.core.session
+                )
+                self._face_engine = faces_mod.FaceEngine(det, rec)
+            return self._face_engine
+
+    def face_refs(self, key: str) -> dict[str, dict[str, Any]]:
+        """Reference faces of the film's cast, from their photos (cached per film)."""
+        if key in self._face_refs:
+            return self._face_refs[key]
+        engine = self.face_engine()
+        cache = self.core.cfg.data_dir / "scenes" / "faces" / "cast"
+        refs: dict[str, dict[str, Any]] = {}
+        for c in self._cast_or_empty(key):
+            name, url = c.get("name"), c.get("photo") or ""
+            if not name or name in refs or not url:
+                continue
+            photo = faces_mod.photo_cache(cache, url, self.core.session)
+            feat = engine.reference(photo) if photo else None
+            if feat is not None:
+                refs[name] = {"character": c.get("character") or "", "photo": url, "feature": feat}
+        self._face_refs[key] = refs
+        return refs
+
+    def faces_at(self, key: str, t: float) -> dict[str, Any]:
+        """Faces in the frame at *t*, named against the cast where they match."""
+        engine = self.face_engine()
+        img = engine.read(self.frame(key, t, 720))
+        candidates = {
+            p["name"]
+            for x in self.store.tags([key])
+            if x["status"] != "rejected" and x["start"] <= t + 1 and x["end"] >= t - 1
+            for p in x["people"]
+            if p.get("name")
+        }
+        found = faces_mod.name_faces(engine, img, self.face_refs(key), candidates)
+        return {"t": t, "width": int(img.shape[1]), "height": int(img.shape[0]), "faces": found}
 
     # -- tags -----------------------------------------------------------------------
     def add_tag(self, key: str, body: dict[str, Any], source: str = "user") -> dict[str, Any]:
