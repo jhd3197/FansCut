@@ -2,7 +2,7 @@
 # FansCut: UI build stage, then a slim Python image with ffmpeg.
 # Base images are pinned by digest so a rebuild of one commit gets the same
 # bytes; Dependabot's docker ecosystem proposes digest bumps.
-FROM node:22-slim@sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb AS ui
+FROM node:25-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370 AS ui
 WORKDIR /src/ui
 COPY ui/package.json ui/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
