@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clipWindows, namedFaces, tagsAt, visibleRows } from './ScenePlayer.jsx';
+import { clipWindows, namedFaces, personTo, segmentEditUrl, tagsAt, visibleRows } from './ScenePlayer.jsx';
 import { filmsBySource, nextPlayable } from '../pages/CutScenes.jsx';
 
 describe('scenes player helpers', () => {
@@ -22,6 +22,11 @@ describe('scenes player helpers', () => {
   it('shows matched faces only, once each, sure first', () => {
     const faces = [{ name: null }, { name: 'A', sure: false }, { name: 'B', sure: true }, { name: 'A', sure: true }];
     expect(namedFaces(faces).map((f) => [f.name, f.sure])).toEqual([['B', true], ['A', true]]);
+  });
+  it('links a person to the film editor and a segment to its range', () => {
+    expect(personTo('plexmovie:1', 'Rupert Grint')).toBe('/movies/plexmovie%3A1/scenes?person=Rupert+Grint');
+    expect(segmentEditUrl('plexmovie:1', { start: 10.12345, end: 20 }, 'c1', 3))
+      .toBe('/movies/plexmovie%3A1/scenes?from=10.123&to=20&cut=c1&seg=3');
   });
   it('maps sources to films and skips segments that cannot play', () => {
     const doc = { sources: { M1: { kind: 'movie', tmdb: 1 }, M2: { kind: 'movie', tmdb: 2 } } };

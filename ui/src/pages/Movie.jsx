@@ -5,7 +5,7 @@ import { SuggestionTile, TimelineTile } from './Discover.jsx';
 import { FilmTile, ShowTile } from './Collection.jsx';
 import { movieTag } from './LibraryPage.jsx';
 import { newCutTo } from './NewCut.jsx';
-import { castTo } from './CutDetail.jsx';
+import { personTo } from '../components/ScenePlayer.jsx';
 import { useApi } from '../lib/store.js';
 import { useAct, useFrom, usePageTitle } from '../lib/hooks.js';
 import { openInPlex } from '../lib/api.js';
@@ -56,7 +56,7 @@ function Cast({ fkey }) {
       end={<Link to={`/movies/${enc(fkey)}/cast`} className="tiny">All {cast.length}</Link>}>
       <div className="cast-shelf">
         {cast.slice(0, 8).map((c) => (
-          <Link key={`${c.name}-${c.character}`} className="cast-card" to={castTo(fkey, c.name)} style={{ color: 'var(--text)', textDecoration: 'none' }}>
+          <Link key={`${c.name}-${c.character}`} className="cast-card" to={personTo(fkey, c.name)} style={{ color: 'var(--text)', textDecoration: 'none' }}>
             {c.photo ? <img src={c.photo} alt="" loading="lazy" /> : <span className="cast-noface">{c.name.slice(0, 1)}</span>}
             <span className="cast-name">{c.name}</span>
             {c.character && <span className="cast-role">{c.character}</span>}

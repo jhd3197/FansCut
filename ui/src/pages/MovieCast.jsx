@@ -1,9 +1,10 @@
 // A film's full cast: search, "in analysed moments" filter, how many moments each is in.
-import { useParams } from 'react-router';
+import { Link, useParams } from 'react-router';
 import { useDebounced, usePageTitle, useUrlState } from '../lib/hooks.js';
 import { useApi } from '../lib/store.js';
 import { Empty, ErrorBox, Loading } from '../components/ui.jsx';
 import { Crumbs, Search, Seg, enc } from '../components/kit.jsx';
+import { personTo } from '../components/ScenePlayer.jsx';
 import './Sets.css';
 
 const norm = (s) => String(s || '').trim().toLowerCase();
@@ -58,13 +59,13 @@ export function MovieCast() {
                 <tr key={`${c.order}-${c.name}`}>
                   <td className="num muted">{c.order}</td>
                   <td>
-                    <span className="row" style={{ gap: 10 }}>
+                    <Link className="row" style={{ gap: 10, color: 'var(--text)' }} to={personTo(key, c.name)}>
                       {c.photo ? <img className="cast-thumb" src={c.photo} alt="" loading="lazy" />
                         : <span className="cast-thumb" aria-hidden="true">{(c.name || '?').slice(0, 1)}</span>}
                       <b>{c.name}</b>
-                    </span>
+                    </Link>
                   </td>
-                  <td>{c.character || <span className="muted">—</span>}</td>
+                  <td>{c.character ? <Link to={personTo(key, c.name)} style={{ color: 'var(--text)' }}>{c.character}</Link> : <span className="muted">—</span>}</td>
                   <td className="num">{c.n || <span className="muted">0</span>}</td>
                 </tr>
               ))}

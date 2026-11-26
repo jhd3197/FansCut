@@ -85,14 +85,28 @@ export function namedFaces(faces) {
   return out;
 }
 
-export function OnScreen({ fkey, faces }) {
+// A person in a film opens the film's scenes editor filtered to them (never an actor page).
+export const personTo = (filmKey, name) => `/movies/${enc(filmKey)}/scenes${name ? `?${q({ person: name })}` : ''}`;
+
+// The scenes editor limited to one segment of a cut (n is 1-based, flatSegments order):
+// it plays only seg.start..seg.end and trims write back to the cut.
+export const segmentEditUrl = (filmKey, seg, cutId, n) => `/movies/${enc(filmKey)}/scenes?${q({
+  from: Math.round(seg.start * 1000) / 1000, to: Math.round(seg.end * 1000) / 1000, cut: cutId, seg: n,
+})}`;
+
+const low = (s) => String(s || '').trim().toLowerCase();
+
+// `hrefFor(name)` is where a person's chip goes (default: the film's editor filtered to
+// them); `person` marks the one already picked.
+export function OnScreen({ fkey, faces, hrefFor, person }) {
   const people = namedFaces(faces);
   if (!people.length) return null;
+  const to = hrefFor || ((name) => personTo(fkey, name));
   return (
     <ul className="scp-people" aria-label="On screen">
       {people.map((f) => (
         <li key={f.name}>
-          <Link to={`/movies/${enc(fkey)}/cast?${q({ q: f.name })}`} className={f.sure ? '' : 'scp-maybe'}
+          <Link to={to(f.name)} className={`${f.sure ? '' : 'scp-maybe'} ${person && low(person) === low(f.name) ? 'scp-me' : ''}`}
             title={f.sure ? undefined : 'Unsure match'}>
             {f.photo ? <img src={f.photo} alt="" loading="lazy" /> : <span className="scp-noface">{f.name.slice(0, 1)}</span>}
             <span className="stack" style={{ gap: 0, minWidth: 0 }}>
@@ -112,13 +126,14 @@ export function MomentTags({ ids, names }) {
 }
 
 // What is at the playhead: who is on screen and the tags covering it. Draws nothing when
-// there is nothing to say.
-export function AtPlayhead({ fkey, t, playing, rows, names }) {
-  const faces = useFacesAt(fkey, t, playing);
+// there is nothing to say. Pass `faces` when the caller already asks for them.
+export function AtPlayhead({ fkey, t, playing, rows, names, faces: given, hrefFor, person }) {
+  const asked = useFacesAt(given === undefined ? fkey : null, t, playing);
+  const faces = given === undefined ? asked : given;
   const ids = tagsAt(rows, t);
   return (
     <div className="scp-now">
-      <OnScreen fkey={fkey} faces={faces} />
+      <OnScreen fkey={fkey} faces={faces} hrefFor={hrefFor} person={person} />
       <MomentTags ids={ids} names={names} />
     </div>
   );
