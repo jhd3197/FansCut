@@ -17,6 +17,7 @@ FansCut has no accounts. What it does have:
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import ipaddress
 import secrets
@@ -106,11 +107,19 @@ def presented_key(request: Request) -> str:
     return key or request.cookies.get(COOKIE, "")
 
 
+def session_token(key: str) -> str:
+    """What the login cookie holds: an HMAC of the key, never the key itself. Changing
+    the key signs everyone out."""
+    if not key:
+        return ""
+    return "s1." + hmac.new(key.encode(), b"fanscut session", hashlib.sha256).hexdigest()
+
+
 def role_of(key: str, server: Any) -> str | None:
-    """'admin' for the API key, 'viewer' for the viewer key, else None."""
-    if _same(key, server.api_key):
+    """'admin' for the API key (or its session token), 'viewer' for the viewer key."""
+    if _same(key, server.api_key) or _same(key, session_token(server.api_key)):
         return "admin"
-    if _same(key, server.viewer_key):
+    if _same(key, server.viewer_key) or _same(key, session_token(server.viewer_key)):
         return "viewer"
     return None
 
