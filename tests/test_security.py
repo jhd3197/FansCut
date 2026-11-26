@@ -74,6 +74,7 @@ def test_api_key_mode(client):
     assert client.post("/api/auth/login", json={"key": "wrong"}).status_code == 401
     assert client.post("/api/auth/login", json={"key": key}).json()["role"] == "admin"
     assert client.get("/api/settings").status_code == 200  # the cookie works now
+    assert key not in str(client.cookies.get("fanscut_key"))  # a token, not the key
     client.post("/api/auth/logout")
     client.cookies.clear()
     v = {"X-Api-Key": "viewer-secret"}

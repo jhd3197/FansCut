@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from ..security import COOKIE, presented_key, rate_limit, role_of
+from ..security import COOKIE, presented_key, rate_limit, role_of, session_token
 from . import CoreDep
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -32,9 +32,9 @@ def login(core: CoreDep, body: Login, request: Request, response: Response) -> d
     role = role_of(body.key.strip(), core.cfg.server)
     if role is None:
         raise HTTPException(401, "wrong key")
-    # the cookie carries the configured key the login matched, never request text
+    # the cookie holds a token derived from the configured key, never the key itself
     stored = core.cfg.server.api_key if role == "admin" else core.cfg.server.viewer_key
-    response.set_cookie(COOKIE, stored, httponly=True, samesite="strict",
+    response.set_cookie(COOKIE, session_token(stored), httponly=True, samesite="strict",
                         secure=request.url.scheme == "https", max_age=30 * 86400)
     return {"role": role}
 
