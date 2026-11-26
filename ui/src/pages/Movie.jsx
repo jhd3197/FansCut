@@ -8,6 +8,7 @@ import { newCutTo } from './NewCut.jsx';
 import { useApi } from '../lib/store.js';
 import { useAct, useFrom, usePageTitle } from '../lib/hooks.js';
 import { openInPlex } from '../lib/api.js';
+import { tagName, useTagNames } from './Sets.jsx';
 
 const CODECS = {
   hevc: 'HEVC', h264: 'H.264', av1: 'AV1', vp9: 'VP9', mpeg2video: 'MPEG-2', mpeg4: 'MPEG-4',
@@ -50,14 +51,38 @@ function Cast({ fkey }) {
   const cast = data?.cast || [];
   if (error || !cast.length) return null;
   return (
-    <Section id="m-cast" title="Cast" count={cast.length}>
+    <Section id="m-cast" title="Cast" count={cast.length}
+      end={<Link to={`/movies/${enc(fkey)}/cast`} className="tiny">All {cast.length}</Link>}>
       <div className="cast-shelf">
-        {cast.slice(0, 40).map((c) => (
+        {cast.slice(0, 8).map((c) => (
           <div key={`${c.name}-${c.character}`} className="cast-card">
             {c.photo ? <img src={c.photo} alt="" loading="lazy" /> : <span className="cast-noface">{c.name.slice(0, 1)}</span>}
             <span className="cast-name">{c.name}</span>
             {c.character && <span className="cast-role">{c.character}</span>}
           </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+// The film's tags (non-rejected ranges), by name, each opening its set.
+function Tags({ fkey }) {
+  const { data } = useApi(`/scenes/tags?${new URLSearchParams({ key: fkey })}`, { quiet: true });
+  const names = useTagNames();
+  const counts = new Map();
+  for (const r of data?.tags || []) {
+    if (r.status === 'rejected') continue;
+    for (const t of r.tags || []) counts.set(t, (counts.get(t) || 0) + 1);
+  }
+  if (!counts.size) return null;
+  const list = [...counts].map(([tag, n]) => ({ tag, n, name: tagName(tag, names) }))
+    .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+  return (
+    <Section id="m-tags" title="Tags" count={list.length}>
+      <div className="tag-links">
+        {list.map((x) => (
+          <Link key={x.tag} to={`/sets/${enc(x.tag)}`}>{x.name}<span className="n">{x.n}</span></Link>
         ))}
       </div>
     </Section>
@@ -150,6 +175,7 @@ export function MoviePage() {
       </div>
 
       <Cast fkey={m.key} />
+      <Tags fkey={m.key} />
 
       {shelf > 0 && (
         <Section id="m-cuts" title="Cuts and playlists with this film" count={shelf}>
