@@ -16,6 +16,7 @@ TAG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 MAX_TAGS = 20
 MAX_PEOPLE = 40
 MAX_SUMMARY = 500
+SMART = "fc:"  # FansCut's own (smart) tags; content tags have no prefix
 
 
 def _now() -> str:
@@ -23,13 +24,16 @@ def _now() -> str:
 
 
 def norm_tag(tag: Any) -> str:
-    """ "Great Hall" -> "great-hall"; rejects anything that isn't a short slug."""
+    """ "Great Hall" -> "great-hall"; "fc:No face" -> "fc:no-face" (FansCut's smart
+    tags keep their prefix); rejects anything that isn't a short slug."""
     if not isinstance(tag, str):
         raise FansCutError("tags must be strings")
-    t = re.sub(r"[^a-z0-9]+", "-", tag.strip().lower()).strip("-")
+    raw = tag.strip().lower()
+    prefix = SMART if raw.startswith(SMART) else ""
+    t = re.sub(r"[^a-z0-9]+", "-", raw[len(prefix):]).strip("-")
     if not TAG_RE.match(t):
         raise FansCutError(f"bad tag {tag!r} (letters, digits and dashes, up to 40)")
-    return t
+    return prefix + t
 
 
 def clean_tags(tags: Any) -> list[str]:
@@ -91,6 +95,13 @@ class SceneStore:
 
     def indexed(self) -> set[str]:
         return {r["film_key"] for r in self.db.query("SELECT film_key FROM scene_index")}
+
+    def scene_counts(self) -> dict[str, int]:
+        """Automatic scenes per indexed film, without loading the documents."""
+        rows = self.db.query(
+            "SELECT film_key, json_array_length(doc, '$.scenes') AS n FROM scene_index"
+        )
+        return {r["film_key"]: int(r["n"] or 0) for r in rows}
 
     # -- tags -------------------------------------------------------------------
     @staticmethod
@@ -206,7 +217,18 @@ class SceneStore:
             for t in json.loads(r["tags"]):
                 c = counts.setdefault(t, {"proposed": 0, "accepted": 0, "rejected": 0})
                 c[r["status"]] += 1
-        return [{"tag": t, **c} for t, c in sorted(counts.items())]
+        from . import vocab
+
+        return [
+            {
+                "tag": t,
+                "name": vocab.name(t),
+                "family": (vocab.get(t) or {}).get("family"),
+                "smart": vocab.is_smart(t),
+                **c,
+            }
+            for t, c in sorted(counts.items())
+        ]
 
     # -- cast -------------------------------------------------------------------
     def cast(self, film_key: str) -> dict[str, Any] | None:

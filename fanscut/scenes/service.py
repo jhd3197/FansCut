@@ -47,7 +47,7 @@ class SceneService:
     def films(self, collection: str | None = None) -> list[dict[str, Any]]:
         from ..browse import _collections_of, resolve_collection
 
-        indexed = self.store.indexed()
+        counts = self.store.scene_counts()
         tags = self.store.tags()
         out = []
         movies = self._movies()
@@ -67,7 +67,8 @@ class SceneService:
                     "duration": m.duration,
                     "on_disk": bool(m.file),
                     "collections": cols,
-                    "indexed": m.key in indexed,
+                    "indexed": m.key in counts,
+                    "scenes": counts.get(m.key),
                     "tags": {
                         "proposed": sum(t["status"] == "proposed" for t in mine),
                         "accepted": sum(t["status"] == "accepted" for t in mine),

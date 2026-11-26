@@ -134,6 +134,29 @@ def test_tag_cleaning():
         st.clean_range(10, 500, duration=100)
 
 
+def test_smart_tags_keep_their_prefix():
+    assert st.norm_tag("fc:No Face") == "fc:no-face"
+    assert st.clean_tags(["fc:close-up", "Snow"]) == ["fc:close-up", "snow"]
+    with pytest.raises(Exception, match="bad tag"):
+        st.norm_tag("fc:")
+
+
+def test_vocab_ships_with_the_package():
+    from fanscut.scenes import vocab
+
+    data = vocab.load()
+    assert data["version"] == 1 and len(data["tags"]) == 128
+    assert len(vocab.families()) == 9
+    assert {t["family"] for t in vocab.content_tags(["mood", "content"])} ==         set(vocab.families()) - {"mood", "content"}
+    assert all(vocab.is_smart(t["id"]) for t in vocab.cut_tags())
+    assert vocab.name("fc:no-face") == "No face" and vocab.name("fc:made-up") == "Made up"
+    assert vocab.name("great-hall") == "Great hall"
+    assert {t["id"] for t in vocab.cut_tags("person")} == {"fc:filler", "fc:spoiler"}
+    # every id is a valid stored tag
+    for t in [*data["tags"], *data["cut_tags"]]:
+        assert st.norm_tag(t["id"]) == t["id"]
+
+
 def test_store_round_trip(db):
     s = st.SceneStore(db)
     a = s.add_tag("radarr:1", 671, 10, 40, ["christmas"], [], "presents", source="ai:x")
@@ -345,3 +368,15 @@ def test_scene_api_end_to_end(sc, monkeypatch):
 
     gone = sc.delete(f"/api/scenes/tags/{t['id']}")
     assert gone.status_code == 204
+
+
+def test_vocab_api_and_smart_tag_counts(cfg, tmp_path):
+    with TestClient(create_app(cfg, tmp_path / "config.yaml", start_worker=False)) as c:
+        v = c.get("/api/scenes/vocab").json()
+        assert v["version"] == 1 and len(v["families"]) == 9
+        assert {t["detect"] for t in v["cut_tags"]} == {"auto", "ai", "person"}
+        store = c.app.state.core.scenes.store
+        store.add_tag("radarr:1", 671, 10, 40, ["christmas", "fc:no-face"], [], source="auto")
+        counts = {t["tag"]: t for t in c.get("/api/scenes/tag-counts").json()["tags"]}
+        assert counts["fc:no-face"]["smart"] and counts["fc:no-face"]["name"] == "No face"
+        assert not counts["christmas"]["smart"] and counts["christmas"]["family"] == "occasion"

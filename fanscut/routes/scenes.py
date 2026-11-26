@@ -132,6 +132,14 @@ def list_tags(
     return {"tags": core.scenes.store.tags([key] if key else None, tag, status)}
 
 
+@router.get("/vocab")
+def vocab_list() -> dict[str, Any]:
+    """The shared tag list: content tags by family and FansCut's smart tags."""
+    from ..scenes import vocab
+
+    return vocab.public()
+
+
 @router.get("/tag-counts")
 def tag_counts(core: CoreDep) -> dict[str, Any]:
     return {"tags": core.scenes.store.tag_counts()}
