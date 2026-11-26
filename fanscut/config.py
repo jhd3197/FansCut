@@ -233,6 +233,8 @@ class ScenesCfg(BaseModel):
     signals: bool = True  # measure faces, shots, brightness and sound after indexing
     extend: Literal["none", "ambient", "filler"] = "ambient"  # what may lengthen a cut
     custom_tags: list[str] = Field(default_factory=list)  # local only, never shared
+    # tags (occasions) searched closely after labelling: own text pass + a look at every scene
+    search_closely: list[str] = Field(default_factory=lambda: ["christmas", "halloween"])
 
     @field_validator("families_off")
     @classmethod
@@ -240,6 +242,17 @@ class ScenesCfg(BaseModel):
         bad = [f for f in v if f not in FAMILIES]
         if bad:
             raise ValueError(f"unknown tag family: {', '.join(bad)}")
+        return list(dict.fromkeys(v))
+
+    @field_validator("search_closely")
+    @classmethod
+    def _closely(cls, v: list[str]) -> list[str]:
+        from .scenes import vocab
+
+        known = {t["id"] for t in vocab.content_tags()}
+        bad = [t for t in v if t not in known]
+        if bad:
+            raise ValueError(f"unknown tag: {', '.join(bad)}")
         return list(dict.fromkeys(v))
 
     @field_validator("custom_tags")

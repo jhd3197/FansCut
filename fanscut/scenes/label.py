@@ -15,11 +15,25 @@
 Each stretch is fitted to the scenes that hold its dialogue, the look step
 can turn a stretch down, and a moment keeps at most ``MAX_KEEP`` tags.
 
+**Cues.** Some tags carry cues: things to look for (``see``: pumpkins,
+costumes) and words to listen for (``hear``: "trick or treat"). Both prompts
+get them; a window whose subtitles say a ``hear`` word is marked for the text
+model, and the look step lists the cues it actually saw, kept as the
+proposal's evidence.
+
+**Searching closely.** After the pass, some tags (the occasions picked in
+Settings, the ones the film's TMDB keywords name, and any whose ``hear``
+words turn up in the subtitles) get a focused search of their own: a
+one-tag text pass with the cues, a look around every line that says a cue
+word, and, for the ones picked in Settings or named by keywords, a look at
+every scene the pass didn't already tag.
+
 Everything is saved as proposals, source ``ai:<model>``.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -38,6 +52,8 @@ NO_FACE_MIN = 6.0  # no-face stretches this long go to the sweep...
 NO_FACE_TOP = 15  # ...the longest ones only
 MIN_LEN = 3.0
 OVERLAP = 0.5  # candidates sharing this much of the shorter one become one
+CUE_PAD = 45.0  # seconds around a line that says a cue word, for the focused look
+SCENE_MIN = 8.0  # scenes shorter than this aren't looked at by the focused pass
 
 
 def tag_list(families: list[str]) -> list[dict[str, Any]]:
@@ -74,6 +90,10 @@ def schemas(ids: list[str]) -> tuple[type[BaseModel], type[BaseModel]]:
         summary=(str, Field(default="", description="one plain sentence on what happens")),
         people=(list[str], Field(default_factory=list, description="characters you can see")),
         confidence=(float, Field(default=0.5, ge=0, le=1)),
+        seen=(
+            list[str],
+            Field(default_factory=list, description="the listed cues you actually see"),
+        ),
     )
     return moments, look
 
@@ -92,8 +112,10 @@ Give 2 to 6 tags per stretch, the most specific ones:
 - people tags (children, crowd, family) only when they are the point of the
   scene; mood only when it is strong and plain;
 - judge by what happens and where, not by a single word.
-Use only ids from the list. If nothing applies, return an empty list. Never
-invent windows.
+Some tags list words to listen for (hear) and things to look for (see). A
+window marked "heard" contains such words: look at it closely, but a word
+alone is not enough, the scene must be about it. Use only ids from the list.
+If nothing applies, return an empty list. Never invent windows.
 """
 
 LOOK_SYSTEM = """\
@@ -104,18 +126,61 @@ the rest, and add tags from the list that are plainly visible (places,
 weather, time of day, creatures, actions). Give the first and last tile the
 tags belong to, one plain sentence on what happens, and the characters you
 can see (use names from the cast list when you can tell). Always check the
-weather and time of day (snow, rain, fog, night) and whether fire or water is
-on screen. Be strict: a place or weather tag must be visible, and keep at most
-6 tags, the most specific. Answer match false when the proposed tags don't fit
-what you see, or the tiles are only studio logos or credits.
+weather and time of day (snow, rain, fog, night). Be strict: a place or
+weather tag must be visible, and keep at most 6 tags, the most specific. Don't
+add what is only the backdrop: a broad place (school, castle) that is the
+setting of the whole film, candles or torches on the walls (that isn't fire),
+or children and crowds who aren't the point of the scene. Answer match false
+when the proposed tags don't fit what you see, or the tiles are only studio
+logos or credits. Some tags list things to look for (see): name in "seen" the
+ones you actually see.
 """
+
+
+def cue_text(t: dict[str, Any]) -> str:
+    cues = t.get("cues") or {}
+    parts = [f"{k}: {', '.join(cues[k])}" for k in ("see", "hear") if cues.get(k)]
+    return f" ({'; '.join(parts)})" if parts else ""
 
 
 def list_text(tags: list[dict[str, Any]]) -> str:
     by: dict[str, list[str]] = {}
     for t in tags:
-        by.setdefault(t["family"], []).append(f"{t['id']}: {t['hint']}")
+        by.setdefault(t["family"], []).append(f"{t['id']}: {t['hint']}{cue_text(t)}")
     return "\n".join(f"[{fam}]\n" + "\n".join(rows) for fam, rows in by.items())
+
+
+def _hear_re(words: list[str]) -> re.Pattern[str] | None:
+    words = [w for w in words if w.strip()]
+    if not words:
+        return None
+    alts = "|".join(re.escape(w.strip()) for w in sorted(words, key=len, reverse=True))
+    return re.compile(rf"(?<![\w'])({alts})(?![\w'])", re.IGNORECASE)
+
+
+def cue_hits(doc: dict[str, Any], tags: list[dict[str, Any]]) -> dict[str, list[tuple[float, str]]]:
+    """Tag id -> [(time, the cue word said)] for every subtitle line saying a hear cue."""
+    out: dict[str, list[tuple[float, str]]] = {}
+    lines = idx.lines_of(doc)
+    for t in tags:
+        rx = _hear_re((t.get("cues") or {}).get("hear") or [])
+        if rx is None:
+            continue
+        for ln in lines:
+            m = rx.search(ln.text)
+            if m:
+                out.setdefault(t["id"], []).append((ln.start, m.group(1)))
+    return out
+
+
+def heard_in(hits: dict[str, list[tuple[float, str]]], a: float, b: float) -> str:
+    """ "christmas ('Merry Christmas'), birthday ('make a wish')" for a window."""
+    rows = []
+    for tag, hs in hits.items():
+        words = list(dict.fromkeys(w for t, w in hs if a <= t < b))
+        if words:
+            rows.append(f"{tag} ({', '.join(repr(w) for w in words[:3])})")
+    return ", ".join(rows)
 
 
 def fit(doc: dict[str, Any], a: float, b: float, hi: float) -> tuple[float, float]:
@@ -184,6 +249,7 @@ def read(
     wins = tagger.windows(doc)
     groups = tagger.batches(doc, wins)
     head = f"Film: {title}\nCast: {tagger.cast_hint(cast)}\n\nTags:\n{list_text(tags)}\n\n"
+    hits = cue_hits(doc, tags)
     found: list[dict[str, Any]] = []
     for gi, group in enumerate(groups):
         if cancel is not None and cancel.is_set():
@@ -194,8 +260,11 @@ def read(
         for i in group:
             text = tagger.window_text(doc, wins[i])
             if text:
+                heard = heard_in(hits, *wins[i])
                 parts.append(
-                    f"## Window {i} ({tagger._clock(wins[i][0])}-{tagger._clock(wins[i][1])})\n"
+                    f"## Window {i} ({tagger._clock(wins[i][0])}-{tagger._clock(wins[i][1])})"
+                    + (f" heard: {heard}" if heard else "")
+                    + "\n"
                     + text
                 )
         if not parts:
@@ -260,3 +329,54 @@ def look(
         f"Tiles: {sheet.legend()}"
     )
     return ai.ask_json(cfg, look_model, LOOK_SYSTEM, prompt, images=[sheet.data])
+
+
+# -- searching one tag closely ------------------------------------------------------
+def focus_text(t: dict[str, Any]) -> str:
+    """The meaning given to the one-tag text pass: the hint plus the cues."""
+    return f"{t['hint']}{cue_text(t)}"
+
+
+def around_hits(
+    doc: dict[str, Any], hits: list[tuple[float, str]], tag: str
+) -> list[dict[str, Any]]:
+    """A stretch around each line that says a cue word, fitted to its scene."""
+    out = []
+    duration = float(doc.get("duration") or 0) or None
+    for t, word in hits:
+        a, b = max(0.0, t - CUE_PAD), t + CUE_PAD
+        if duration:
+            b = min(b, duration)
+        out.append(
+            {
+                "start": a,
+                "end": b,
+                "tags": [tag],
+                "people": [],
+                "why": f"someone says {word!r}",
+                "confidence": 0.4,
+            }
+        )
+    return out
+
+
+def scenes_to_look(doc: dict[str, Any], tagged: list[tuple[float, float]]) -> list[dict[str, Any]]:
+    """Every automatic scene of at least SCENE_MIN seconds that no range in *tagged* covers."""
+    out = []
+    for sc in doc.get("scenes") or []:
+        a, b = sc["start"], sc["end"]
+        if b - a < SCENE_MIN or any(x < b and y > a for x, y in tagged):
+            continue
+        out.append({"start": a, "end": b, "tags": [], "people": [], "why": "", "confidence": 0.3})
+    return out
+
+
+def keyword_tags(keywords: list[str], tags: list[dict[str, Any]]) -> list[str]:
+    """Tags whose id or name appears among a film's TMDB keywords ("christmas", "halloween")."""
+    words = {k.strip().lower() for k in keywords}
+    out = []
+    for t in tags:
+        names = {t["id"].replace("-", " "), t["name"].lower(), t["id"]}
+        if names & words:
+            out.append(t["id"])
+    return out

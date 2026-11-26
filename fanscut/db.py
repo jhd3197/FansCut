@@ -252,7 +252,14 @@ def _v11() -> str:
     """
 
 
-MIGRATIONS: list[Callable[[], str]] = [_v1, _v2, _v3, _v4, _v5, _v6, _v7, _v8, _v9, _v10, _v11]
+def _v12() -> str:
+    # What the vision check saw for a proposed tag ("pumpkins", "costumes"), as a
+    # JSON list: the evidence shown next to the proposal.
+    return "ALTER TABLE scene_tags ADD COLUMN evidence TEXT NOT NULL DEFAULT '[]';"
+
+
+MIGRATIONS: list[Callable[[], str]] = [_v1, _v2, _v3, _v4, _v5, _v6, _v7, _v8, _v9, _v10, _v11,
+                                       _v12]
 
 
 class Database:

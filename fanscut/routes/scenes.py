@@ -196,12 +196,13 @@ class LabelBody(BaseModel):
     key: str
     families: list[str] | None = None  # default: every family not switched off in Settings
     sweep: bool = False  # also look at stretches with no dialogue
+    mode: str = "full"  # "focused": only the close search of occasions (Settings, cues)
 
 
 @router.post("/label", status_code=202)
 def label(core: CoreDep, body: LabelBody) -> dict[str, Any]:
     """Tag a film with the whole tag list in one pass (proposals)."""
-    return core.scenes.submit_label(body.key, body.families, body.sweep)
+    return core.scenes.submit_label(body.key, body.families, body.sweep, body.mode)
 
 
 @router.get("/collection")

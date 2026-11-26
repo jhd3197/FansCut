@@ -423,6 +423,7 @@ class SceneService:
             source=str(body.get("source") or source),
             status=status,
             confidence=float(conf) if conf is not None else None,
+            evidence=list(body.get("evidence") or []),
         )
 
     def update_tag(self, tid: str, changes: dict[str, Any]) -> dict[str, Any]:
@@ -579,7 +580,11 @@ class SceneService:
 
     # -- one-pass labelling ---------------------------------------------------------
     def submit_label(
-        self, key: str, families: list[str] | None = None, sweep: bool = False
+        self,
+        key: str,
+        families: list[str] | None = None,
+        sweep: bool = False,
+        mode: str = "full",
     ) -> dict[str, Any]:
         from . import vocab
 
@@ -587,6 +592,8 @@ class SceneService:
         self._index_or_fail(key)
         if not self.core.cfg.ai.model:
             raise FansCutError("set an AI model in Settings first")
+        if mode not in ("full", "focused"):
+            raise FansCutError("mode is full or focused")
         known = vocab.families()
         if families is None:
             off = set(self.core.cfg.scenes.families_off)
@@ -598,12 +605,27 @@ class SceneService:
             raise FansCutError("pick at least one tag family")
         return self.core.worker.submit(
             "scene_label",
-            f"Tag {m.title}",
-            {"key": key, "families": list(dict.fromkeys(families)), "sweep": bool(sweep)},
+            f"Tag {m.title}" if mode == "full" else f"Search {m.title} closely",
+            {
+                "key": key,
+                "families": list(dict.fromkeys(families)),
+                "sweep": bool(sweep),
+                "mode": mode,
+            },
         )
 
+    def _keywords(self, m: Any) -> list[str]:
+        api_key = self.core.cfg.catalogues.tmdb_api_key
+        if not (api_key and m.tmdb_id):
+            return []
+        try:
+            return cast_mod.fetch_keywords(api_key, m.tmdb_id, self.core.session)
+        except FansCutError:
+            return []
+
     def job_label(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
-        """Read the dialogue once for every tag, check each stretch on a contact sheet."""
+        """Read the dialogue once for every tag, check each stretch on a contact sheet,
+        then search some tags closely (see label.py)."""
         from prompture.media.understand import contact_sheet, sample_times
 
         key = payload["key"]
@@ -613,59 +635,103 @@ class SceneService:
         cast = self._cast_or_empty(key)
         title = f"{m.title} ({m.year})" if m.year else m.title
         tags = label_mod.tag_list(payload["families"])
-
-        def text_progress(p: float, msg: str) -> None:
-            ctx.progress(0.4 * p, msg)
-
-        cands = label_mod.read(cfg, doc, title, tags, cast, ctx.cancel, text_progress)
-        if payload.get("sweep"):
-            cands += label_mod.sweep(doc, cands, self.store.signals(key))
-        cands = label_mod.merge(cands)
+        by_id = {t["id"]: t for t in tags}
         model = cfg.vision_model or cfg.model
-        made, dropped, counts = [], 0, {}
-        for i, c in enumerate(cands):
-            if ctx.cancel.is_set():
-                break
-            ctx.progress(0.4 + 0.6 * i / max(1, len(cands)), f"Looking {i + 1}/{len(cands)}")
+        source = f"ai:{model}"
+        stats = {"candidates": 0, "proposed": 0, "rejected_by_look": 0, "looks": 0}
+        counts: dict[str, int] = {}
+
+        def look_and_propose(c: dict[str, Any], allowed: list[dict[str, Any]]) -> None:
             cols, rows, tile_h = tagger.sheet_shape(c["end"] - c["start"])
             times = sample_times(c["start"], c["end"], cols * rows)
             sheet = contact_sheet(path, times=times, cols=cols, rows=rows, tile_height=tile_h)
-            check = label_mod.look(cfg, sheet, title, c, tags, cast)
+            stats["looks"] += 1
+            check = label_mod.look(cfg, sheet, title, c, allowed, cast)
             keep = list(dict.fromkeys(check.tags))[: label_mod.MAX_KEEP]
             if not check.match or not keep:
-                dropped += 1
-                continue
+                stats["rejected_by_look"] += 1
+                return
             a, b = tagger.refine(c, check, times)
             a, b = idx.quiet_start(doc, a), idx.quiet_end(doc, b)
             if b - a < label_mod.MIN_LEN:
-                dropped += 1
-                continue
+                stats["rejected_by_look"] += 1
+                return
             new = [t for t in keep if not self.store.overlapping(key, a, b, t)]
             if not new:
-                continue
-            made.append(
-                self.add_tag(
-                    key,
-                    {
-                        "start": a,
-                        "end": b,
-                        "tags": new,
-                        "people": list(dict.fromkeys([*check.people, *c["people"]])),
-                        "summary": check.summary or c["why"],
-                        "confidence": round((c["confidence"] + check.confidence) / 2, 2),
-                        "snap": False,
-                        "status": "proposed",
-                    },
-                    source=f"ai:{model}",
-                )["id"]
+                return
+            self.add_tag(
+                key,
+                {
+                    "start": a,
+                    "end": b,
+                    "tags": new,
+                    "people": list(dict.fromkeys([*check.people, *c["people"]])),
+                    "summary": check.summary or c["why"],
+                    "confidence": round((c["confidence"] + check.confidence) / 2, 2),
+                    "evidence": list(dict.fromkeys(check.seen)),
+                    "snap": False,
+                    "status": "proposed",
+                },
+                source=source,
             )
+            stats["proposed"] += 1
             for t in new:
                 counts[t] = counts.get(t, 0) + 1
+
+        full = payload.get("mode", "full") == "full"
+        if full:
+            cands = label_mod.read(
+                cfg, doc, title, tags, cast, ctx.cancel, lambda p, msg: ctx.progress(0.3 * p, msg)
+            )
+            if payload.get("sweep"):
+                cands += label_mod.sweep(doc, cands, self.store.signals(key))
+            cands = label_mod.merge(cands)
+            stats["candidates"] = len(cands)
+            for i, c in enumerate(cands):
+                if ctx.cancel.is_set():
+                    break
+                ctx.progress(0.3 + 0.4 * i / max(1, len(cands)), f"Looking {i + 1}/{len(cands)}")
+                look_and_propose(c, tags)
+
+        # -- searching closely ------------------------------------------------------
+        hits = label_mod.cue_hits(doc, [t for t in tags if t["family"] == "occasion"])
+        picked = [t for t in self.core.cfg.scenes.search_closely if t in by_id]
+        from_keywords = label_mod.keyword_tags(self._keywords(m), tags)
+        every_scene = list(dict.fromkeys([*picked, *from_keywords]))
+        focus = list(dict.fromkeys([*every_scene, *hits]))
+        for n, tag in enumerate(focus):
+            if ctx.cancel.is_set():
+                break
+            t = by_id[tag]
+            ctx.progress(0.7 + 0.2 * n / max(1, len(focus)), f"Searching for {t['name']}")
+            found = tagger.text_pass(cfg, doc, title, tag, label_mod.focus_text(t), cast)
+            found = [{**c, "tags": [tag]} for c in found]
+            found += label_mod.around_hits(doc, hits.get(tag, []), tag)
+            for c in label_mod.merge(found):
+                if ctx.cancel.is_set():
+                    break
+                if self.store.overlapping(key, c["start"], c["end"], tag):
+                    continue
+                look_and_propose(c, [t])
+        if every_scene and not ctx.cancel.is_set():
+            wanted = [by_id[t] for t in every_scene]
+            tagged = [
+                (x["start"], x["end"])
+                for x in self.store.tags([key])
+                if x["status"] != "rejected" and set(x["tags"]) & set(every_scene)
+            ]
+            scenes = label_mod.scenes_to_look(doc, tagged)
+            for i, c in enumerate(scenes):
+                if ctx.cancel.is_set():
+                    break
+                ctx.progress(0.9 + 0.1 * i / max(1, len(scenes)), f"Looking closely {i + 1}")
+                look_and_propose(c, wanted)
         return {
             "key": key,
-            "candidates": len(cands),
-            "proposed": len(made),
-            "rejected_by_look": dropped,
+            **stats,
+            "searched_closely": focus,
+            "every_scene_for": every_scene,
+            "keywords_matched": from_keywords,
             "tags": counts,
         }
 

@@ -124,6 +124,7 @@ class SceneStore:
         d = dict(r)
         d["tags"] = json.loads(d["tags"])
         d["people"] = json.loads(d["people"])
+        d["evidence"] = json.loads(d.get("evidence") or "[]")
         return d
 
     def add_tag(
@@ -138,6 +139,7 @@ class SceneStore:
         source: str = "user",
         status: str = "proposed",
         confidence: float | None = None,
+        evidence: list[str] | None = None,
     ) -> dict[str, Any]:
         if status not in STATUSES:
             raise FansCutError(f"status must be one of {', '.join(STATUSES)}")
@@ -145,8 +147,8 @@ class SceneStore:
         now = _now()
         self.db.execute(
             "INSERT INTO scene_tags (id, film_key, tmdb_id, start, end, tags, people, summary,"
-            " source, status, confidence, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " source, status, confidence, evidence, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 tid,
                 film_key,
@@ -159,6 +161,7 @@ class SceneStore:
                 source[:80],
                 status,
                 confidence,
+                dumps([str(x)[:60] for x in (evidence or [])][:12]),
                 now,
                 now,
             ),

@@ -514,15 +514,21 @@ def test_signals_and_label_jobs(sc, monkeypatch):
     sc.core.cfg.ai.model = "ollama/test"
     assert sc.post("/api/scenes/label", json={"key": key, "families": ["nope"]}).status_code == 400
 
+    sc.core.cfg.scenes.search_closely = []  # the close search has its own check below
+
     def fake(cfg_, schema, system, prompt, images=None, **kw):
+        if schema is tagger.WindowHits:  # the one-tag pass of the close search
+            return tagger.WindowHits(matches=[])
         if schema.__name__ == "Moments":
             assert "christmas:" in prompt and "gore:" not in prompt  # content family off
             return schema(moments=[{"window": 0, "start": "0:01", "end": "0:09",
                                     "tags": ["christmas", "happy"], "people": ["Harry"],
                                     "why": "presents", "confidence": 0.8}])
-        assert images and "christmas" in prompt
-        return schema(match=True, tags=["christmas", "snow"], first_tile=1, last_tile=6,
-                      summary="presents", people=["Harry"], confidence=0.6)
+        assert images
+        allowed = [t for t in ("christmas", "snow", "halloween") if f"{t}:" in prompt]
+        return schema(match=True, tags=allowed[:2], first_tile=1, last_tile=6,
+                      summary="presents", people=["Harry"], confidence=0.6,
+                      seen=["wrapped presents"])
 
     monkeypatch.setattr(ai, "ask_json", fake)
     fams = [f for f in label.vocab.families() if f != "content"]
@@ -534,6 +540,17 @@ def test_signals_and_label_jobs(sc, monkeypatch):
     row = next(t for t in sc.get("/api/scenes/tags", params={"key": key}).json()["tags"]
                if t["source"] == "ai:ollama/test")
     assert row["tags"] == ["christmas", "snow"] and row["status"] == "proposed"
+    assert row["evidence"] == ["wrapped presents"]
+    assert res["result"]["searched_closely"] == ["christmas"]  # "Happy Christmas" was said
+
+    # Searching closely: halloween is picked in Settings, so every untagged scene is looked at.
+    sc.core.cfg.scenes.search_closely = ["halloween"]
+    job = sc.post("/api/scenes/label", json={"key": key, "families": fams, "mode": "focused"}).json()
+    sc.core.worker.run_pending()
+    res = sc.get(f"/api/jobs/{job['id']}").json()
+    assert res["status"] == "done", res
+    assert res["result"]["every_scene_for"] == ["halloween"] and res["result"]["candidates"] == 0
+    assert res["result"]["tags"].get("halloween", 0) >= 1
     # the schema refuses ids outside the list
     moments, _ = label.schemas(["christmas"])
     from pydantic import ValidationError
@@ -577,3 +594,24 @@ def test_look_can_turn_a_stretch_down():
 
     _, look = label.schemas(["snow"])
     assert look.model_validate({"match": False, "tags": []}).match is False
+
+
+def test_cues_mark_what_is_said_and_seen():
+    from fanscut.scenes import label, vocab
+
+    halloween = vocab.get("halloween")
+    assert "pumpkins" in halloween["cues"]["see"] and "trick or treat" in halloween["cues"]["hear"]
+    occasions = [t for t in vocab.content_tags() if t["family"] == "occasion"]
+    assert all(t.get("cues", {}).get("see") and t["cues"].get("hear") for t in occasions)
+    doc = {"lines": [{"start": 10, "end": 12, "text": "Happy Halloween, everyone!"},
+                     {"start": 50, "end": 52, "text": "Make a wish, Harry."},
+                     {"start": 90, "end": 92, "text": "Halloweens past were dull."}]}
+    hits = label.cue_hits(doc, occasions)
+    assert [t for t, _ in hits["halloween"]] == [10]  # whole words only
+    assert hits["birthday"] == [(50, "Make a wish")]
+    assert label.heard_in(hits, 0, 60) == "halloween ('Halloween'), birthday ('Make a wish')"
+    assert "see: pumpkins" in label.list_text([halloween])
+    assert label.keyword_tags(["christmas", "boarding school"], occasions) == ["christmas"]
+    got = label.scenes_to_look({"scenes": [{"start": 0, "end": 5}, {"start": 5, "end": 40},
+                                           {"start": 40, "end": 90}]}, [(50, 60)])
+    assert [(c["start"], c["end"]) for c in got] == [(5, 40)]
