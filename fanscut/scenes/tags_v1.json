@@ -1,5 +1,5 @@
 {
- "schema": 2,
+ "schema": 3,
  "kind": "fanscut-tags",
  "version": 1,
  "families": [
@@ -801,97 +801,6 @@
  ],
  "cut_tags": [
   {
-   "id": "fc:no-face",
-   "name": "No face",
-   "hint": "no face on screen: scenery, objects, backs of heads",
-   "detect": "auto",
-   "how": "face detector finds nobody"
-  },
-  {
-   "id": "fc:close-up",
-   "name": "Close-up",
-   "hint": "one face fills the frame",
-   "detect": "auto",
-   "how": "face detector: one large face"
-  },
-  {
-   "id": "fc:group",
-   "name": "Group",
-   "hint": "three or more faces",
-   "detect": "auto",
-   "how": "face detector: 3+ faces"
-  },
-  {
-   "id": "fc:dialogue",
-   "name": "Dialogue",
-   "hint": "people talking is the main sound",
-   "detect": "auto",
-   "how": "subtitle lines + speech detector"
-  },
-  {
-   "id": "fc:silence",
-   "name": "Silence",
-   "hint": "near silence",
-   "detect": "auto",
-   "how": "loudness"
-  },
-  {
-   "id": "fc:music-only",
-   "name": "Music only",
-   "hint": "score or song with no speech",
-   "detect": "auto",
-   "how": "sound classifier says music, speech detector says nobody talks"
-  },
-  {
-   "id": "fc:ambient",
-   "name": "Ambient sound",
-   "hint": "only background sound (wind, rain, crowd, fire)",
-   "detect": "auto",
-   "how": "sound classifier: not speech, not music"
-  },
-  {
-   "id": "fc:loud",
-   "name": "Loud",
-   "hint": "sudden peaks: explosions, crashes, shouting",
-   "detect": "auto",
-   "how": "loudness peaks"
-  },
-  {
-   "id": "fc:fast-cutting",
-   "name": "Fast cutting",
-   "hint": "many shots per minute",
-   "detect": "auto",
-   "how": "shot index"
-  },
-  {
-   "id": "fc:long-take",
-   "name": "Long take",
-   "hint": "one shot runs 20 seconds or more",
-   "detect": "auto",
-   "how": "shot index"
-  },
-  {
-   "id": "fc:still",
-   "name": "Still",
-   "hint": "the picture barely moves",
-   "detect": "auto",
-   "how": "frame difference"
-  },
-  {
-   "id": "fc:dark",
-   "name": "Dark",
-   "hint": "very dark picture",
-   "detect": "auto",
-   "how": "brightness"
-  },
-  {
-   "id": "fc:fade",
-   "name": "Fade",
-   "hint": "fade to or from black",
-   "detect": "auto",
-   "how": "black frames at a shot edge"
-  },
-  {
    "id": "fc:recap",
    "name": "Recap",
    "hint": "repeats footage seen earlier",
@@ -917,7 +826,7 @@
    "name": "Establishing shot",
    "hint": "a wide shot that sets up a place",
    "detect": "ai",
-   "how": "no face + vision model says wide shot of a place"
+   "how": "vision model, starting from stretches with no face that barely move"
   },
   {
    "id": "fc:transition",
@@ -931,14 +840,14 @@
    "name": "Montage",
    "hint": "short shots set to music",
    "detect": "ai",
-   "how": "fast cutting + music only, confirmed by the vision model"
+   "how": "vision model, starting from fast cutting under music"
   },
   {
    "id": "fc:extendable",
    "name": "Extendable",
    "hint": "calm and steady enough to hold longer or loop",
    "detect": "ai",
-   "how": "still + ambient or music, confirmed by the vision model"
+   "how": "vision model, starting from still stretches with ambient sound or music"
   },
   {
    "id": "fc:filler",
@@ -953,6 +862,86 @@
    "hint": "gives away a twist or the ending",
    "detect": "person",
    "how": "a person marks it"
+  }
+ ],
+ "signals": [
+  {
+   "id": "no-face",
+   "name": "No face",
+   "hint": "no face on screen: scenery, objects, backs of heads",
+   "how": "face detector finds nobody"
+  },
+  {
+   "id": "close-up",
+   "name": "Close-up",
+   "hint": "one face fills the frame",
+   "how": "face detector: one large face"
+  },
+  {
+   "id": "group",
+   "name": "Group",
+   "hint": "three or more faces",
+   "how": "face detector: 3+ faces"
+  },
+  {
+   "id": "dialogue",
+   "name": "Dialogue",
+   "hint": "people talking is the main sound",
+   "how": "subtitle lines + speech detector"
+  },
+  {
+   "id": "silence",
+   "name": "Silence",
+   "hint": "near silence",
+   "how": "loudness"
+  },
+  {
+   "id": "music-only",
+   "name": "Music only",
+   "hint": "score or song with no speech",
+   "how": "sound classifier says music, speech detector says nobody talks"
+  },
+  {
+   "id": "ambient",
+   "name": "Ambient sound",
+   "hint": "only background sound (wind, rain, crowd, fire)",
+   "how": "sound classifier: not speech, not music"
+  },
+  {
+   "id": "loud",
+   "name": "Loud",
+   "hint": "sudden peaks: explosions, crashes, shouting",
+   "how": "loudness peaks"
+  },
+  {
+   "id": "fast-cutting",
+   "name": "Fast cutting",
+   "hint": "many shots per minute",
+   "how": "shot index"
+  },
+  {
+   "id": "long-take",
+   "name": "Long take",
+   "hint": "one shot runs 20 seconds or more",
+   "how": "shot index"
+  },
+  {
+   "id": "still",
+   "name": "Still",
+   "hint": "the picture barely moves",
+   "how": "frame difference"
+  },
+  {
+   "id": "dark",
+   "name": "Dark",
+   "hint": "very dark picture",
+   "how": "brightness"
+  },
+  {
+   "id": "fade",
+   "name": "Fade",
+   "hint": "fade to or from black",
+   "how": "black frames at a shot edge"
   }
  ]
 }

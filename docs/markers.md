@@ -19,7 +19,9 @@ library nobody has analysed, and the AI can build and stretch cuts from them.
 - **Content tags**: what is in a stretch (`christmas`, `snow`, `kiss`). A
   fixed list of 128 in version 1.
 - **Cut tags**: FansCut's own, about how a stretch can be used in a cut
-  (`fc:filler`, `fc:ambient`). Filled by a second pass.
+  (`fc:filler`, `fc:establishing`). Filled by a second pass.
+- **Signals**: what FansCut measures in every film (faces, shots, brightness,
+  sound). Not tags: never reviewed, never shown as tags, never shared.
 - **Moment**: a range of one film with one or more tags.
 - **Sound map**: which sound leads each part of a moment (dialogue, ambient,
   music, silence).
@@ -61,61 +63,72 @@ the closest today), content tags can map to it without renumbering anything.
 - `content` tags exist so a set or cut can leave scenes out (a family
   version), not to find them.
 
-## 3. Cut tags and the sound map (second pass)
+## 3. Signals, cut tags and the sound map (second pass)
 
-After the content pass, a second pass marks how each stretch can be used in a
-cut. These are **smart tags**: most are measured, not guessed. The `fc:`
-prefix exists only in files; the app shows plain names ("No face").
+### Signals (measured, not tags)
 
-**Measured (no AI, run after indexing a film):**
+After indexing, FansCut measures every film: one frame a second (faces,
+brightness, movement), the loudness of the sound, the shot index and the
+subtitle timing. The results are **signals**: time ranges kept with the
+film's index. They are not tags. Nobody reviews them, the app never shows
+them as tags (a scene is not "No face"; when a face matches someone in the
+cast, the app shows that person, otherwise nothing), and they never go into
+a marker file. They exist so FansCut can pick poster stills, extend cuts and
+find stretches like "a wide, still shot with only ambient sound".
 
-| Tag | Found by |
+| Signal | Found by |
 |---|---|
-| No face | face detector finds nobody (section 4) |
+| No face | face detector finds nobody |
 | Close-up | face detector: one large face |
 | Group | face detector: 3+ faces |
-| Dialogue | subtitle lines plus a speech detector |
+| Dialogue | subtitle lines (sound descriptions left out), later a speech detector |
 | Silence | loudness |
+| Loud | loudness peaks |
 | Music only | sound classifier says music, speech detector says nobody talks |
 | Ambient sound | sound classifier: not speech, not music (wind, rain, crowd, fire) |
-| Loud | loudness peaks |
 | Fast cutting | shots per minute from the shot index |
 | Long take | one shot of 20 s or more |
 | Still | frame difference between samples |
 | Dark | brightness |
 | Fade | black frames at a shot edge |
+
+`GET /api/scenes/signals?key=` returns them; a re-index measures them again.
+
+### Cut tags
+
+Cut tags *are* tags: they say how a stretch can be used in a cut, a person
+can accept or reject them, and they travel in marker files. The `fc:` prefix
+exists only in files; the app shows plain names ("Filler").
+
+| Tag | How it is found |
+|---|---|
 | Recap | audio fingerprint matches earlier in the film or series |
 | Theme music | audio fingerprint of a clip someone tagged once |
 | Titles or credits | position in the film plus text on screen |
+| Establishing shot | vision model, starting from no-face, still stretches |
+| Transition | vision model on the shots between two scenes |
+| Montage | vision model, starting from fast cutting under music |
+| Extendable | vision model, starting from still stretches with ambient sound or music |
+| Filler | the text model proposes from dialogue, a person decides |
+| Spoiler | a person marks it |
 
-**Checked by AI:** Establishing shot, Transition, Montage, Extendable. Each
-starts from measured tags (no face + still, fast cutting + music only) and the
-vision model confirms it on a contact sheet.
+How the sound signals work: a small speech detector (Silero VAD, CPU) says
+when someone talks; a small sound classifier (YAMNet or PANNs, CPU, labels
+such as Music, Speech, Wind, Rain, Crowd) labels the rest. A specific theme
+("Hedwig's Theme") is not something a classifier knows: someone tags it once,
+and FansCut's existing audio fingerprint search ("find similar", today used
+for flashbacks) finds every other place it plays, in every film of the
+series.
 
-**Needs a person:** Filler, Spoiler. The text model can propose filler from
-the dialogue, but whether a scene matters to the story is a person's call.
-
-How the sound tags work: a small speech detector (Silero VAD, CPU) says when
-someone talks; a small sound classifier (YAMNet or PANNs, CPU, labels such as
-Music, Speech, Wind, Rain, Crowd) labels the rest. A specific theme ("Hedwig's
-Theme") is not something a classifier knows: someone tags it once, and
-FansCut's existing audio fingerprint search ("find similar", today used for
-flashbacks) finds every other place it plays, in every film of the series.
-
-Nothing here runs until the tagger branch lands; the list is a design, not
-data.
-
-It also writes the **sound map**: inside a moment, which sound leads each
-part, so a cut can keep a dialogue line whole or borrow a stretch of ambience.
+The pass also writes the **sound map**: inside a moment, which sound leads
+each part, so a cut can keep a dialogue line whole or borrow a stretch of
+ambience.
 
 ```json
 "sound": [["ambient", 3524.6, 3541.0], ["dialogue", 3541.0, 3566.2], ["music", 3566.2, 3598.9]]
 ```
 
-The pass uses what the index already has: shot cuts, subtitle timing (gaps
-between lines mean no dialogue), audio loudness and the face count from
-section 4. Only the model call that names `fc:filler` and `fc:extendable`
-costs tokens.
+Only the model calls that name the AI-checked cut tags cost tokens.
 
 ### Extending a cut
 
@@ -124,10 +137,11 @@ Cut tags let FansCut stretch a cut toward a target length (say a 26 minute
 
 1. Widen each moment into neighbouring stretches with the same content tags
    (more of the same snowy courtyard).
-2. Add `fc:establishing` and `fc:no-face` stretches from the same films with
-   the set's tags (wide shots of the snowy castle) between scenes.
-3. Lay `fc:ambient` sound under the joins, so the snow keeps falling across a
-   cut instead of going silent.
+2. Add `fc:establishing` stretches (found with the no-face and still
+   signals) from the same films with the set's tags (wide shots of the snowy
+   castle) between scenes.
+3. Lay stretches with the ambient-sound signal under the joins, so the snow
+   keeps falling across a cut instead of going silent.
 4. Only if the user asks: add `fc:filler` scenes from the same franchise.
 
 Each added piece is marked in the editor and can be removed. Extending never
@@ -152,7 +166,8 @@ named. Names at 0.40 or higher were right in every case checked by eye; below
 that, roughly one in three was wrong, which is why those stay unconfirmed.
 
 Face boxes and features stay on the server. Marker files carry only TMDB
-person ids per moment (section 5), never boxes, crops or features.
+person ids per moment (section 5), never boxes, crops or features. A face
+that matches nobody in the cast is not shown at all.
 
 ## 5. The marker file
 
@@ -170,7 +185,7 @@ One file per film and edition, JSON, at most 1 MB.
   "authors": ["jhd3197"],
   "moments": [
     {"start": 3524.55, "end": 3598.93,
-     "tags": ["christmas", "snow", "castle", "fc:no-face", "fc:ambient"],
+     "tags": ["christmas", "snow", "castle", "fc:establishing"],
      "sound": [["ambient", 3524.6, 3541.0], ["dialogue", 3541.0, 3566.2]],
      "people": [10980, 10990],
      "source": "ai", "model": "claude-sonnet-5-5", "confidence": 0.78,
@@ -238,7 +253,7 @@ moments.
 1. Ship `tags-v1.json`; tagger UI picks from the list.
 2. Multi-label content pass (one read of the film for all tags).
 3. Faces: YuNet + SFace against Plex cast photos, tracks, confirm UI.
-4. Second pass: cut tags and the sound map.
+4. Signals, then the second pass: cut tags and the sound map.
 5. `fanscut markers export/import/validate`, moment anchors, sync.
 6. KB in `fanscut-community`: schema, CI, index, update check.
 7. Sets with rules and exports; extending cuts.
