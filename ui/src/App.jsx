@@ -32,6 +32,7 @@ import { t } from './i18n/index.js';
 // The two editors are the heaviest pages: load them only when opened.
 const Build = lazy(() => import('./pages/Build.jsx').then((m) => ({ default: m.Build })));
 const TimelineEdit = lazy(() => import('./pages/TimelineEdit.jsx').then((m) => ({ default: m.TimelineEdit })));
+const Find = lazy(() => import('./pages/Find.jsx').then((m) => ({ default: m.Find })));
 import { useApi } from './lib/store.js';
 
 // The white horizontal logo on the dark sidebar.
@@ -149,7 +150,7 @@ export function App() {
   }, [where]);
   if (locked) return <KeyGate />;
   // The editor is full screen, like an NLE: no app sidebar (its bar has a Home link).
-  if (/^\/cuts\/[^/]+\/edit\/?$/.test(where)) {
+  if (/^\/cuts\/[^/]+\/(edit|find)\/?$/.test(where)) {
     return (
       <div className="shell-full">
         <LoadingBar />
@@ -157,7 +158,7 @@ export function App() {
           <StatusChecker />
           <ErrorBoundary resetKey={where}>
             <Suspense fallback={<div className="page"><Loading /></div>}>
-              <Routes><Route path="/cuts/:id/edit" element={<TimelineEdit />} /></Routes>
+              <Routes><Route path="/cuts/:id/edit" element={<TimelineEdit />} /><Route path="/cuts/:id/find" element={<Find />} /></Routes>
             </Suspense>
           </ErrorBoundary>
         </main>
