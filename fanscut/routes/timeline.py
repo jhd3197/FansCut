@@ -5,11 +5,79 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from ..errors import FansCutError, NotFoundError
 from . import CoreDep
 
 router = APIRouter(prefix="/api", tags=["timelines"])
+
+
+class PosterAIBody(BaseModel):
+    stills: list[dict[str, Any]] = Field(max_length=8)  # [{src, t}] of the cut's sources
+    title: bool = True  # the cut's title on the poster
+
+
+@router.get("/timelines/{tid}/poster/ai")
+def poster_ai_state(core: CoreDep, tid: str) -> dict[str, Any]:
+    """AI poster takes, the chosen one, and the take being drawn (if any)."""
+    return core.posters.state(tid)
+
+
+@router.post("/timelines/{tid}/poster/ai", status_code=202)
+def poster_ai_start(core: CoreDep, tid: str, body: PosterAIBody) -> dict[str, Any]:
+    """Draw a new take from these stills (runs in the background, about a minute)."""
+    return core.posters.start(tid, body.stills, body.title)
+
+
+@router.get("/timelines/{tid}/poster/ai/{name}")
+def poster_ai_take(core: CoreDep, tid: str, name: str) -> FileResponse:
+    return FileResponse(core.posters.take_path(tid, name), media_type="image/png")
+
+
+@router.post("/timelines/{tid}/poster/ai/{name}/keep")
+def poster_ai_keep(core: CoreDep, tid: str, name: str) -> dict[str, Any]:
+    """Use this take as the cut's poster (cut page, builds, Plex)."""
+    return core.posters.keep(tid, name)
+
+
+@router.delete("/timelines/{tid}/poster/ai/{name}")
+def poster_ai_discard(core: CoreDep, tid: str, name: str) -> dict[str, Any]:
+    return core.posters.discard(tid, name)
+
+
+@router.get("/timelines/{tid}/poster")
+def poster_file(core: CoreDep, tid: str) -> FileResponse:
+    """The chosen AI poster; 404 when the cut has none."""
+    p = core.posters.chosen(tid)
+    if p is None:
+        raise NotFoundError("this cut has no AI poster")
+    return FileResponse(p, media_type="image/png", headers={"Cache-Control": "no-cache"})
+
+
+class PosterImageBody(BaseModel):
+    kind: Literal["frame", "title"]
+    image: str = Field(max_length=16_000_000)  # base64, or a data: URL
+
+
+@router.put("/timelines/{tid}/poster")
+def poster_use_image(core: CoreDep, tid: str, body: PosterImageBody) -> dict[str, Any]:
+    """Use a poster drawn on the cut page (a frame with the title, or the title only)."""
+    import base64
+    import binascii
+
+    try:
+        data = base64.b64decode(body.image.split(",", 1)[-1], validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise FansCutError("the image is not base64") from exc
+    return core.posters.use_image(tid, data, body.kind)
+
+
+@router.delete("/timelines/{tid}/poster")
+def poster_clear(core: CoreDep, tid: str) -> dict[str, Any]:
+    """Stop using the AI poster (takes are kept)."""
+    return core.posters.clear(tid)
 
 
 @router.get("/series/{key}/timelines")

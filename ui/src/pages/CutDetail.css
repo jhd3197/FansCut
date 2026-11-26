@@ -1,0 +1,61 @@
+/* The cut page (v2 CutPage board): poster and details beside the preview, build band, film groups. */
+.cutp { max-width: 1180px; flex-direction: row; flex-wrap: wrap; gap: 28px 32px; align-items: flex-start; }
+.cutp-side { flex: 1 1 240px; max-width: 300px; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding-top: 26px; }
+.cutp-side > .btn { width: 100%; }
+.cutp-poster { display: block; width: 100%; aspect-ratio: 2 / 3; height: auto; object-fit: cover; border-radius: 10px; background: var(--raised); }
+.cutp-dl { margin: 10px 0 0; display: flex; flex-direction: column; gap: 12px; }
+.cutp-dl dd { margin: 3px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+
+.cutp-main { flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; }
+.cutp-kicker { margin-top: 14px; color: var(--sky); }
+.cutp-title { margin: 4px 0 0; font: 700 40px/1.1 var(--display); text-wrap: balance; }
+.cutp-meta { margin-top: 8px; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.cutp-franchise { font-size: 15px; font-weight: 600; }
+.cutp-dim { color: var(--dim); }
+.cutp-soft { color: var(--soft); }
+
+.cutp-player { position: relative; margin-top: 20px; }
+.cutp-badge { position: absolute; right: 12px; top: 12px; z-index: 3; pointer-events: none; }
+
+.cutp-band { margin-top: 14px; background: var(--panel); padding: 16px 18px; }
+.cutp-band-hd { font-size: 17px; font-weight: 600; }
+.cutp-band-sub { margin-top: 3px; font-size: 13px; }
+.cutp-pct { font-size: 15px; color: var(--sky); }
+.cutp-progress { margin-top: 10px; height: 8px; border-radius: 4px; background: var(--raised); overflow: hidden; }
+.cutp-progress > span { display: block; height: 100%; border-radius: 4px; background: var(--sky); transition: width .4s ease; }
+.cutp-done { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: var(--sky); color: var(--on-sky); }
+
+.cutp-build { margin-top: 30px; }
+.cutp-build-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding-bottom: 10px; }
+.cutp-build-head h2 { font-size: 18px; }
+.cutp-find { margin-left: auto; font-size: 13px; }
+.cutp-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 10px 16px; align-items: start; }
+.cutp-groups .film-group { background: var(--panel); }
+.cutp-group-name { display: block; font-size: 14px; font-weight: 600; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cutp-group-sub { display: block; font-size: 11px; color: var(--faint); }
+.cutp-row { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.cutp-row[aria-current] { box-shadow: inset 0 0 0 1px var(--sky); }
+.cutp-row:focus-visible { outline: 2px solid var(--sky); outline-offset: 1px; }
+.cutp-row img { flex: none; width: 72px; height: 30px; border-radius: 4px; object-fit: cover; background: color-mix(in srgb, var(--film, var(--faint)) 40%, var(--page)); }
+
+/* the poster picker */
+.cutp-opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: 10px; }
+.cutp-opt-wrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cutp-opt-wrap > .btn { align-self: flex-start; margin-left: 6px; }
+.cutp-opt { display: block; width: 100%; padding: 6px; border-radius: 12px; border: 2px solid transparent; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.cutp-opt:hover:not(:disabled) { background: var(--raised); }
+.cutp-opt[aria-pressed=true] { border-color: var(--sky); background: var(--raised); }
+.cutp-opt:disabled { opacity: .45; cursor: not-allowed; }
+.cutp-opt:focus-visible { outline: 2px solid var(--sky); outline-offset: 2px; }
+.cutp-opt .cutp-poster { border-radius: 8px; }
+.cutp-opt-name { display: block; margin-top: 8px; font-size: 13px; font-weight: 600; }
+.cutp-opt-sub { display: block; font-size: 11.5px; color: var(--dim); overflow-wrap: anywhere; }
+.cutp-ask { padding: 8px; }
+.cutp-ask .cutp-opt-name { margin-top: 2px; }
+.cutp-ask-box { border: 1px dashed var(--border-hover); background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 10px; color: var(--dim); font-size: 12px; font-weight: 600; text-align: center; }
+.cutp-empty { background: var(--well); }
+.cutp-frames { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+.cutp-frames button { flex: none; width: 72px; height: 30px; padding: 0; border: 2px solid transparent; border-radius: 5px; overflow: hidden; background: var(--well); cursor: pointer; }
+.cutp-frames button[aria-checked=true] { border-color: var(--sky); }
+.cutp-frames img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cutp-dlg-foot { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding-top: 16px; border-top: 1px solid var(--border); }

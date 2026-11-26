@@ -80,6 +80,25 @@ def fetch_tmdb(
         raise FansCutError(f"TMDB credits failed: {exc.__class__.__name__}") from exc
 
 
+def fetch_keywords(
+    api_key: str, tmdb_id: int, session: requests.Session | None = None
+) -> list[str]:
+    """The film's TMDB keywords ("christmas", "boarding school"), lower case."""
+    http = session or requests
+    bearer = len(api_key) > 40
+    try:
+        r = http.get(
+            f"{TMDB}/movie/{int(tmdb_id)}/keywords",
+            params=None if bearer else {"api_key": api_key},
+            headers={"Authorization": f"Bearer {api_key}"} if bearer else None,
+            timeout=20,
+        )
+        r.raise_for_status()
+    except requests.RequestException as exc:
+        raise FansCutError(f"TMDB keywords failed: {exc.__class__.__name__}") from exc
+    return [str(k.get("name", "")).lower() for k in r.json().get("keywords") or []]
+
+
 def _fold(s: str) -> str:
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
     return re.sub(r"[^a-z0-9 ]+", " ", s).strip()

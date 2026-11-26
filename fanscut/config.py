@@ -224,6 +224,73 @@ class AICfg(BaseModel):
     timeout: int = 120
 
 
+FAMILIES = ("occasion", "weather", "place", "action", "beat", "people", "mood", "creature",
+            "element", "content")
+
+
+class ScenesCfg(BaseModel):
+    families_off: list[str] = Field(default_factory=list)  # tag families left out of analysis
+    signals: bool = True  # measure faces, shots, brightness and sound after indexing
+    extend: Literal["none", "ambient", "filler"] = "ambient"  # what may lengthen a cut
+    custom_tags: list[str] = Field(default_factory=list)  # local only, never shared
+    # AI moments this sure count as tags straight away (1 = a person accepts everything)
+    auto_accept: float = Field(default=0.75, ge=0, le=1)
+    # tags (occasions) searched closely after labelling: own text pass + a look at every scene
+    search_closely: list[str] = Field(default_factory=lambda: ["christmas", "halloween"])
+
+    @field_validator("families_off")
+    @classmethod
+    def _families(cls, v: list[str]) -> list[str]:
+        bad = [f for f in v if f not in FAMILIES]
+        if bad:
+            raise ValueError(f"unknown tag family: {', '.join(bad)}")
+        return list(dict.fromkeys(v))
+
+    @field_validator("search_closely")
+    @classmethod
+    def _closely(cls, v: list[str]) -> list[str]:
+        from .scenes import vocab
+
+        known = {t["id"] for t in vocab.content_tags()}
+        bad = [t for t in v if t not in known]
+        if bad:
+            raise ValueError(f"unknown tag: {', '.join(bad)}")
+        return list(dict.fromkeys(v))
+
+    @field_validator("custom_tags")
+    @classmethod
+    def _custom(cls, v: list[str]) -> list[str]:
+        out = [t.strip() for t in v if t and t.strip()]
+        if any(len(t) > 60 for t in out):
+            raise ValueError("a tag is at most 60 characters")
+        return list(dict.fromkeys(out))
+
+
+class MarkersCfg(BaseModel):
+    check: bool = True  # look for newer community markers daily
+    auto_install: bool = False
+    share: bool = False  # offer ours to the community index
+    reviewed_only: bool = True
+    share_people: bool = False  # include who is on screen
+    index_url: str = "https://raw.githubusercontent.com/jhd3197/fanscut-community/main/index.json"
+
+
+class PosterWeights(BaseModel):
+    exposure: int = Field(default=30, ge=0, le=50)
+    contrast: int = Field(default=25, ge=0, le=50)
+    color: int = Field(default=25, ge=0, le=50)
+    detail: int = Field(default=20, ge=0, le=50)
+
+
+class PostersCfg(BaseModel):
+    layout: Literal["frame", "strip", "grid"] = "frame"
+    title: bool = True  # title on the poster
+    stills: Literal[2, 4, 6] = 4  # stills per scene
+    weights: PosterWeights = Field(default_factory=PosterWeights)
+    ai_model: str = "openai/gpt-image-2"  # draws posters from stills; empty = off
+    ai_quality: Literal["low", "medium", "high"] = "medium"
+
+
 class Config(BaseModel):
     server: ServerCfg = Field(default_factory=ServerCfg)
     paths: PathsCfg = Field(default_factory=PathsCfg)
@@ -241,6 +308,9 @@ class Config(BaseModel):
     schedule: ScheduleCfg = Field(default_factory=ScheduleCfg)
     ai: AICfg = Field(default_factory=AICfg)
     community: CommunityCfg = Field(default_factory=CommunityCfg)
+    scenes: ScenesCfg = Field(default_factory=ScenesCfg)
+    markers: MarkersCfg = Field(default_factory=MarkersCfg)
+    posters: PostersCfg = Field(default_factory=PostersCfg)
 
     @property
     def data_dir(self) -> Path:

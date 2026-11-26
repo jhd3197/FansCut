@@ -1,6 +1,8 @@
 Outfit (c) 2021 The Outfit Project Authors (https://github.com/Outfitio/Outfit-Fonts),
 DM Sans (c) 2014 The DM Sans Project Authors (https://github.com/googlefonts/dm-fonts),
+DM Mono (c) 2020 The DM Mono Project Authors (https://github.com/googlefonts/dm-mono),
 JetBrains Mono (c) The JetBrains Mono Project Authors, Oswald (c) 2016 The Oswald
 Project Authors (https://github.com/googlefonts/OswaldFont). Latin subsets as served
-by Google Fonts. All licensed under the SIL Open Font License, Version 1.1:
+by Google Fonts (DM Mono via @fontsource/dm-mono 5.3.0). All licensed under the SIL
+Open Font License, Version 1.1:
 https://openfontlicense.org/open-font-license-official-text/

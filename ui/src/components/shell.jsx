@@ -97,10 +97,10 @@ export function Toasts() {
   useEffect(() => subscribeToasts(setItems), []);
   return (
     <div className="toasts" aria-live="polite">
-      {items.map((t) => (
-        <div key={t.id} className={`toast ${t.ok ? 'toast-ok' : 'toast-err'}`} role={t.ok ? 'status' : 'alert'}>
-          <span>{t.text}</span>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => dismiss(t.id)} aria-label={t('shell.dismiss')}>✕</button>
+      {items.map((x) => (
+        <div key={x.id} className={`toast ${x.ok ? 'toast-ok' : 'toast-err'}`} role={x.ok ? 'status' : 'alert'}>
+          <span>{x.text}</span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => dismiss(x.id)} aria-label={t('shell.dismiss')}>✕</button>
         </div>
       ))}
     </div>

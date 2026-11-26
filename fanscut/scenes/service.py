@@ -5,12 +5,16 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import subprocess
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..errors import FansCutError, NotFoundError
 from . import cast as cast_mod
+from . import faces as faces_mod
 from . import index as idx
+from . import label as label_mod
+from . import signals as sig
 from . import store as st
 from . import tagger
 
@@ -26,6 +30,10 @@ class SceneService:
     def __init__(self, core: Core):
         self.core = core
         self.store = st.SceneStore(core.db)
+        self._face_engine: faces_mod.FaceEngine | None = None
+        self._face_refs: dict[str, dict[str, dict[str, Any]]] = {}
+        self._face_lock = threading.Lock()
+        self._clip_locks: dict[str, threading.Lock] = {}
 
     # -- films --------------------------------------------------------------------
     def _movies(self) -> list[Any]:
@@ -45,9 +53,9 @@ class SceneService:
         return m, m.file
 
     def films(self, collection: str | None = None) -> list[dict[str, Any]]:
-        from ..browse import _collections_of, resolve_collection
+        from ..browse import NOT_A_FRANCHISE, _collections_of, resolve_collection
 
-        indexed = self.store.indexed()
+        counts = self.store.scene_counts()
         tags = self.store.tags()
         out = []
         movies = self._movies()
@@ -67,7 +75,10 @@ class SceneService:
                     "duration": m.duration,
                     "on_disk": bool(m.file),
                     "collections": cols,
-                    "indexed": m.key in indexed,
+                    # what a cut may span: Plex smart lists ("Popular on My Server") aren't
+                    "franchises": [c for c in cols if not NOT_A_FRANCHISE.search(c)],
+                    "indexed": m.key in counts,
+                    "scenes": counts.get(m.key),
                     "tags": {
                         "proposed": sum(t["status"] == "proposed" for t in mine),
                         "accepted": sum(t["status"] == "accepted" for t in mine),
@@ -79,8 +90,9 @@ class SceneService:
     def overview(self, key: str, with_lines: bool = True) -> dict[str, Any]:
         m = self.film(key)
         doc = self.store.index(key)
-        if doc and not with_lines:
-            doc = {k: v for k, v in doc.items() if k != "lines"}
+        if doc:
+            drop = {"signals"} if with_lines else {"signals", "lines"}
+            doc = {k: v for k, v in doc.items() if k not in drop}
         from ..browse import NOT_A_FRANCHISE, _collections_of, collection_ids
 
         ids = collection_ids(self._movies())
@@ -133,6 +145,9 @@ class SceneService:
         self.store.save_index(key, doc)
         with contextlib.suppress(FansCutError):
             self.get_cast(key)
+        if self.core.cfg.scenes.signals:
+            with contextlib.suppress(FansCutError):
+                self.submit_signals(key)
         return {
             "key": key,
             "shots": len(doc["shots"]),
@@ -141,13 +156,77 @@ class SceneService:
             "subtitles": doc["subtitles"]["kind"],
         }
 
+    # -- signals (measured, never tags) ---------------------------------------------
+    def submit_signals(self, key: str) -> dict[str, Any]:
+        m, _ = self._file(key)
+        self._index_or_fail(key)
+        return self.core.worker.submit(
+            "scene_signals", f"Measure signals of {m.title}", {"key": key}
+        )
+
+    def signals(self, key: str) -> dict[str, Any]:
+        found = self.store.signals(key)
+        if found is None:
+            raise NotFoundError("this film's signals haven't been measured yet")
+        return {"key": key, **found}
+
+    def job_signals(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+        """Brightness, movement and faces from one frame a second, loudness from the
+        sound, shots and lines from the index -> signals saved with the index."""
+        key = payload["key"]
+        m, path = self._file(key)
+        doc = self._index_or_fail(key)
+        ff = self.core.cfg.ffmpeg
+        engine = None
+        with contextlib.suppress(FansCutError):
+            engine = self.face_engine()
+        w, h = doc.get("width") or 1920, doc.get("height") or 1080
+        width = sig.WIDTH
+        height = max(2, round(width * h / w / 2) * 2)
+        total = float(doc.get("duration") or m.duration or 0)
+        samples = []
+        for t, img in sig.frames(path, width, height, ffmpeg=ff.binary, cancel=ctx.cancel):
+            luma, thumb, nf, fh = sig.measure(img, engine)
+            samples.append(sig.Sample(t, luma, thumb, nf, fh))
+            if total and len(samples) % 30 == 0:
+                ctx.progress(
+                    0.85 * min(t / total, 1.0), f"Looking at the picture ({int(t // 60)} min)"
+                )
+        if ctx.cancel.is_set():
+            return {"key": key, "cancelled": True}
+        ctx.progress(0.87, "Listening")
+        loud = sig.levels(path, ffmpeg=ff.binary)
+        ranges = sig.label(doc, samples, loud)
+        self.store.save_signals(
+            key,
+            {
+                "version": sig.VERSION,
+                "faces": engine is not None,
+                "signals": {k: [[a, b] for a, b in rs] for k, rs in ranges.items()},
+            },
+        )
+        # measured ranges used to be stored as tags (source "auto"): they go
+        dropped = self.store.delete_source(key, "auto")
+        return {
+            "key": key,
+            "frames": len(samples),
+            "faces": engine is not None,
+            "signals": {k: len(rs) for k, rs in ranges.items()},
+            "old_tags_removed": dropped,
+        }
+
     # -- looking at the film ------------------------------------------------------
     def transcript(
-        self, key: str, start: float = 0, end: float | None = None
+        self, key: str, start: float = 0, end: float | None = None, speech: bool = False
     ) -> list[dict[str, Any]]:
+        """Subtitle lines in [start, end]; *speech* leaves sound descriptions out."""
         doc = self._index_or_fail(key)
         hi = end if end is not None else float("inf")
-        return [x for x in doc.get("lines") or [] if x["end"] > start and x["start"] < hi]
+        return [
+            x
+            for x in doc.get("lines") or []
+            if x["end"] > start and x["start"] < hi and (not speech or sig.speech(x["text"]))
+        ]
 
     def shots(self, key: str, start: float = 0, end: float | None = None) -> list[list[float]]:
         doc = self._index_or_fail(key)
@@ -202,6 +281,14 @@ class SceneService:
         a, b = st.clean_range(start, end)
         b = min(b, a + MAX_CLIP)
         out = self._cache("clips", path, a, b, ext="mp4")
+        with self._face_lock:  # one lock per clip, so two requests cut it once
+            lock = self._clip_locks.setdefault(out.name, threading.Lock())
+        with lock:
+            if not out.is_file():
+                self._cut_clip(path, a, b, out)
+        return out
+
+    def _cut_clip(self, path: str, a: float, b: float, out: Path) -> None:
         if not out.is_file():
             tmp = out.with_suffix(".tmp.mp4")
             proc = subprocess.run(  # noqa: S603 - argv list
@@ -253,7 +340,6 @@ class SceneService:
                     + (proc.stderr or b"").decode("utf-8", "replace")[-300:]
                 )
             tmp.replace(out)
-        return out
 
     # -- cast -----------------------------------------------------------------------
     def get_cast(self, key: str, refresh: bool = False) -> list[dict[str, Any]]:
@@ -281,6 +367,50 @@ class SceneService:
         except FansCutError:
             return []
 
+    # -- faces ----------------------------------------------------------------------
+    def face_engine(self) -> faces_mod.FaceEngine:
+        if not faces_mod.available():
+            raise FansCutError("face recognition needs OpenCV: pip install opencv-python-headless")
+        with self._face_lock:
+            if self._face_engine is None:
+                det, rec = faces_mod.ensure_models(
+                    self.core.cfg.data_dir / "models", self.core.session
+                )
+                self._face_engine = faces_mod.FaceEngine(det, rec)
+            return self._face_engine
+
+    def face_refs(self, key: str) -> dict[str, dict[str, Any]]:
+        """Reference faces of the film's cast, from their photos (cached per film)."""
+        if key in self._face_refs:
+            return self._face_refs[key]
+        engine = self.face_engine()
+        cache = self.core.cfg.data_dir / "scenes" / "faces" / "cast"
+        refs: dict[str, dict[str, Any]] = {}
+        for c in self._cast_or_empty(key):
+            name, url = c.get("name"), c.get("photo") or ""
+            if not name or name in refs or not url:
+                continue
+            photo = faces_mod.photo_cache(cache, url, self.core.session)
+            feat = engine.reference(photo) if photo else None
+            if feat is not None:
+                refs[name] = {"character": c.get("character") or "", "photo": url, "feature": feat}
+        self._face_refs[key] = refs
+        return refs
+
+    def faces_at(self, key: str, t: float) -> dict[str, Any]:
+        """Faces in the frame at *t*, named against the cast where they match."""
+        engine = self.face_engine()
+        img = engine.read(self.frame(key, t, 720))
+        candidates = {
+            p["name"]
+            for x in self.store.tags([key])
+            if x["status"] != "rejected" and x["start"] <= t + 1 and x["end"] >= t - 1
+            for p in x["people"]
+            if p.get("name")
+        }
+        found = faces_mod.name_faces(engine, img, self.face_refs(key), candidates)
+        return {"t": t, "width": int(img.shape[1]), "height": int(img.shape[0]), "faces": found}
+
     # -- tags -----------------------------------------------------------------------
     def add_tag(self, key: str, body: dict[str, Any], source: str = "user") -> dict[str, Any]:
         m = self.film(key)
@@ -306,6 +436,7 @@ class SceneService:
             source=str(body.get("source") or source),
             status=status,
             confidence=float(conf) if conf is not None else None,
+            evidence=list(body.get("evidence") or []),
         )
 
     def update_tag(self, tid: str, changes: dict[str, Any]) -> dict[str, Any]:
@@ -452,12 +583,173 @@ class SceneService:
                     source=f"ai:{model}",
                 )["id"]
             )
+        self.tidy(key)
         return {
             "key": key,
             "tag": tag,
             "candidates": len(cands),
             "proposed": len(made),
             "rejected_by_look": dropped,
+        }
+
+    def tidy(self, key: str) -> dict[str, int]:
+        """Sure AI moments become tags; duplicate moments merge (see SceneStore.tidy)."""
+        return self.store.tidy(key, self.core.cfg.scenes.auto_accept)
+
+    # -- one-pass labelling ---------------------------------------------------------
+    def submit_label(
+        self,
+        key: str,
+        families: list[str] | None = None,
+        sweep: bool = False,
+        mode: str = "full",
+    ) -> dict[str, Any]:
+        from . import vocab
+
+        m, _ = self._file(key)
+        self._index_or_fail(key)
+        if not self.core.cfg.ai.model:
+            raise FansCutError("set an AI model in Settings first")
+        if mode not in ("full", "focused"):
+            raise FansCutError("mode is full or focused")
+        known = vocab.families()
+        if families is None:
+            off = set(self.core.cfg.scenes.families_off)
+            families = [f for f in known if f not in off]
+        bad = [f for f in families if f not in known]
+        if bad:
+            raise FansCutError(f"unknown tag family: {', '.join(bad)}")
+        if not families:
+            raise FansCutError("pick at least one tag family")
+        return self.core.worker.submit(
+            "scene_label",
+            f"Tag {m.title}" if mode == "full" else f"Search {m.title} closely",
+            {
+                "key": key,
+                "families": list(dict.fromkeys(families)),
+                "sweep": bool(sweep),
+                "mode": mode,
+            },
+        )
+
+    def _keywords(self, m: Any) -> list[str]:
+        api_key = self.core.cfg.catalogues.tmdb_api_key
+        if not (api_key and m.tmdb_id):
+            return []
+        try:
+            return cast_mod.fetch_keywords(api_key, m.tmdb_id, self.core.session)
+        except FansCutError:
+            return []
+
+    def job_label(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+        """Read the dialogue once for every tag, check each stretch on a contact sheet,
+        then search some tags closely (see label.py)."""
+        from prompture.media.understand import contact_sheet, sample_times
+
+        key = payload["key"]
+        m, path = self._file(key)
+        doc = self._index_or_fail(key)
+        cfg = self.core.cfg.ai
+        cast = self._cast_or_empty(key)
+        title = f"{m.title} ({m.year})" if m.year else m.title
+        tags = label_mod.tag_list(payload["families"])
+        by_id = {t["id"]: t for t in tags}
+        model = cfg.vision_model or cfg.model
+        source = f"ai:{model}"
+        stats = {"candidates": 0, "proposed": 0, "rejected_by_look": 0, "looks": 0}
+        counts: dict[str, int] = {}
+
+        def look_and_propose(c: dict[str, Any], allowed: list[dict[str, Any]]) -> None:
+            cols, rows, tile_h = tagger.sheet_shape(c["end"] - c["start"])
+            times = sample_times(c["start"], c["end"], cols * rows)
+            sheet = contact_sheet(path, times=times, cols=cols, rows=rows, tile_height=tile_h)
+            stats["looks"] += 1
+            check = label_mod.look(cfg, sheet, title, c, allowed, cast)
+            keep = list(dict.fromkeys(check.tags))[: label_mod.MAX_KEEP]
+            # an occasion (or any tag with cues) needs one of its cues actually seen
+            keep = [t for t in keep if t not in by_id or label_mod.cue_seen(by_id[t], check.seen)]
+            if not check.match or not keep:
+                stats["rejected_by_look"] += 1
+                return
+            a, b = tagger.refine(c, check, times)
+            a, b = idx.quiet_start(doc, a), idx.quiet_end(doc, b)
+            if b - a < label_mod.MIN_LEN:
+                stats["rejected_by_look"] += 1
+                return
+            new = [t for t in keep if not self.store.overlapping(key, a, b, t)]
+            if not new:
+                return
+            self.add_tag(
+                key,
+                {
+                    "start": a,
+                    "end": b,
+                    "tags": new,
+                    "people": list(dict.fromkeys([*check.people, *c["people"]])),
+                    "summary": check.summary or c["why"],
+                    "confidence": round((c["confidence"] + check.confidence) / 2, 2),
+                    "evidence": list(dict.fromkeys(check.seen)),
+                    "snap": False,
+                    "status": "proposed",
+                },
+                source=source,
+            )
+            stats["proposed"] += 1
+            for t in new:
+                counts[t] = counts.get(t, 0) + 1
+
+        full = payload.get("mode", "full") == "full"
+        if full:
+            cands = label_mod.read(
+                cfg, doc, title, tags, cast, ctx.cancel, lambda p, msg: ctx.progress(0.3 * p, msg)
+            )
+            if payload.get("sweep"):
+                cands += label_mod.sweep(doc, cands, self.store.signals(key))
+            cands = label_mod.merge(cands)
+            stats["candidates"] = len(cands)
+            for i, c in enumerate(cands):
+                if ctx.cancel.is_set():
+                    break
+                ctx.progress(0.3 + 0.4 * i / max(1, len(cands)), f"Looking {i + 1}/{len(cands)}")
+                look_and_propose(c, tags)
+
+        # -- searching closely ------------------------------------------------------
+        hits = label_mod.cue_hits(doc, [t for t in tags if t["family"] == "occasion"])
+        picked = [t for t in self.core.cfg.scenes.search_closely if t in by_id]
+        from_keywords = label_mod.keyword_tags(self._keywords(m), tags)
+        every_scene = list(dict.fromkeys([*picked, *from_keywords]))
+        focus = list(dict.fromkeys([*every_scene, *hits]))
+        for n, tag in enumerate(focus):
+            if ctx.cancel.is_set():
+                break
+            t = by_id[tag]
+            ctx.progress(0.7 + 0.2 * n / max(1, len(focus)), f"Searching for {t['name']}")
+            found = tagger.text_pass(cfg, doc, title, tag, label_mod.focus_text(t), cast)
+            found = [{**c, "tags": [tag]} for c in found]
+            found += label_mod.around_hits(doc, hits.get(tag, []), tag)
+            for c in label_mod.merge(found):
+                if ctx.cancel.is_set():
+                    break
+                if self.store.overlapping(key, c["start"], c["end"], tag):
+                    continue
+                look_and_propose(c, [t])
+        if every_scene and not ctx.cancel.is_set():
+            rows = [x for x in self.store.tags([key]) if x["status"] != "rejected"]
+            scenes = label_mod.scenes_to_look(doc, every_scene, rows)
+            for i, c in enumerate(scenes):
+                if ctx.cancel.is_set():
+                    break
+                ctx.progress(0.9 + 0.1 * i / max(1, len(scenes)), f"Looking closely {i + 1}")
+                look_and_propose(c, [by_id[t] for t in c["look_for"]])
+        tidied = self.tidy(key)
+        return {
+            "key": key,
+            **stats,
+            **tidied,
+            "searched_closely": focus,
+            "every_scene_for": every_scene,
+            "keywords_matched": from_keywords,
+            "tags": counts,
         }
 
     # -- collections ----------------------------------------------------------------

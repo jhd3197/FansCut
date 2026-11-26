@@ -1,10 +1,14 @@
+// Discover: the season's picks, scene sets, then one grid of every suggestion you can filter.
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad, useUrlState, useDebounced, useShelfLayout } from '../lib/hooks.js';
-import { Dialog, Empty, ErrorBox, Loading, Notice, SkeletonTiles } from '../components/ui.jsx';
-import { Backdrop, CutTile, KV, Search, Seg, Shelf, enc, hm } from '../components/kit.jsx';
+import { useAct, useDebounced, useFrom, useLoad, useUrlState } from '../lib/hooks.js';
+import { Dialog, Empty, ErrorBox, Notice, SkeletonTiles } from '../components/ui.jsx';
+import { ArtPoster, CutTile, Poster, Search, Seg, enc, hm } from '../components/kit.jsx';
+import { FilterChip, ReadyState } from '../components/v2.jsx';
 import { discoverShelves } from '../lib/shelves.js';
+import { SetCard, useSets } from './Sets.jsx';
+import './Discover.css';
 
 // -- shared with the Collection and Movie pages --------------------------------------------
 
@@ -117,29 +121,90 @@ export const suggestionTo = (s) => `/discover/${enc(s.id)}`;
 
 // -- the page --------------------------------------------------------------------------------
 
+// The kind tabs: one per kind present, in this order.
+const KIND_TABS = [['collection_merge', 'Merged movies'], ['watch_order', 'Story order'], ['recipe', 'Community cuts'], ['canon_cut', 'Canon cuts']];
+const CARD_KIND = { collection_merge: 'Merged movie', watch_order: 'Story order', recipe: 'Community cut', canon_cut: 'Canon cut' };
+
+// Short status under a card: "Ready" or "Missing 2 films".
+export function cardStatus(s) {
+  if (s.status === 'ready') return 'Ready';
+  const n = new Set((s.missing || []).map((m) => m.src).filter((x) => x && x !== '-')).size;
+  if (!n) return s.status === 'partly' ? 'Partly ready' : 'Not available';
+  return `Missing ${n} ${s.kind === 'canon_cut' ? 'episode' : 'film'}${n === 1 ? '' : 's'}`;
+}
+
+// Genres with counts, biggest first, from every suggestion's genres.
+export function genreCounts(items) {
+  const n = new Map();
+  for (const s of items) for (const g of new Set(s.genres || [])) n.set(g, (n.get(g) || 0) + 1);
+  return [...n].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+function Art({ s }) {
+  const [layout] = SUGGESTION_ART[s.kind] || ['single'];
+  const drawn = <Poster title={s.name || s.title} sub={s.tagline} kind={POSTER_KIND[s.kind] || 'supercut'} bare />;
+  return s.art?.length ? <ArtPoster keys={s.art} layout={layout} fallback={drawn} /> : drawn;
+}
+
+function Card({ s }) {
+  const from = useFrom();
+  return (
+    <Link className="disc-card" to={suggestionTo(s)} state={from}>
+      <span className="disc-art"><Art s={s} /></span>
+      <span className="lab disc-kind">{CARD_KIND[s.kind] || KIND_LABEL[s.kind] || 'Cut'}</span>
+      <span className="hd disc-title">{s.name || s.title}</span>
+      <span className="mono disc-meta">{suggestionMeta(s) || ''}</span>
+      <ReadyState ready={s.status === 'ready'}>{cardStatus(s)}</ReadyState>
+    </Link>
+  );
+}
+
+// The season's pick: art, name, one Install button. Installing works like the cut's own page.
+function Featured({ s }) {
+  const navigate = useNavigate();
+  const { act, busy } = useAct();
+  const install = async () => {
+    const repo = s.from_catalogue ? s.url || s.repo : null;
+    const res = await act(() => (repo
+      ? api('/cuts/install', { method: 'POST', body: { url: repo } })
+      : api(`/suggestions/${enc(s.id)}/install`, { method: 'POST' })),
+    (r) => (r?.action === 'playlist' ? 'Playlist created in Plex. Nothing was rendered.' : 'Queued. Watch the Jobs page.'));
+    if (!res || res.action === 'playlist') return;
+    const tid = res.timeline || (repo ? res.id : null);
+    navigate(tid ? `/cuts/${enc(tid)}` : '/jobs');
+  };
+  return (
+    <div className="disc-feat">
+      <Link to={suggestionTo(s)} className="disc-feat-art" tabIndex={-1} aria-hidden="true"><Art s={s} /></Link>
+      <div className="disc-feat-body">
+        <div className="lab">{CARD_KIND[s.kind] || KIND_LABEL[s.kind]}</div>
+        <Link to={suggestionTo(s)} className="hd disc-feat-title">{s.name || s.title}</Link>
+        <div className="mono disc-meta">{suggestionMeta(s)}</div>
+        <button type="button" className="btn btn-sm btn-primary" disabled={busy || s.status !== 'ready'} onClick={install}>Install</button>
+      </div>
+    </div>
+  );
+}
+
 function AddByUrl({ onClose }) {
   const navigate = useNavigate();
   const [url, setUrl] = useState('');
-  const { act, msg, busy, clear } = useAct();
+  const { act, msg, busy, clear } = useAct({ inline: true });
   const submit = async (e) => {
     e.preventDefault();
     const res = await act(() => api('/cuts/install', { method: 'POST', body: { url: url.trim() } }));
     if (res?.id) navigate(`/cuts/${enc(res.id)}`);
   };
   return (
-    <Dialog title="Add a cut by repo URL" onClose={onClose}>
+    <Dialog title="Add by repo URL" onClose={onClose}>
       <form className="stack" onSubmit={submit}>
-        <p className="muted" style={{ margin: 0 }}>Paste the address of a git repository that holds a FansCut recipe.
-          FansCut copies the recipe and matches it against your library. No video is downloaded.</p>
-        <label className="field">
-          Repository URL
-          <input className="input" type="url" required placeholder="https://github.com/someone/some-cut"
-            value={url} onChange={(e) => setUrl(e.target.value)} autoFocus />
-        </label>
+        <label className="lab" htmlFor="disc-repo">Repository URL</label>
+        <input id="disc-repo" className="inp" type="url" required placeholder="https://github.com/someone/some-cut"
+          value={url} onChange={(e) => setUrl(e.target.value)} autoFocus />
         <Notice msg={msg} onClose={clear} />
         <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={busy || !url.trim()}>{busy ? 'Adding…' : 'Add cut'}</button>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={busy || !url.trim()}>{busy ? 'Adding' : 'Add cut'}</button>
         </div>
       </form>
     </Dialog>
@@ -147,10 +212,9 @@ function AddByUrl({ onClose }) {
 }
 
 async function loadAll() {
-  const [sugg, cat, colls] = await Promise.all([
+  const [sugg, cat] = await Promise.all([
     api('/suggestions'),
     api('/catalogue').catch(() => null), // optional: the catalogue may not exist yet
-    api('/library/collections').catch(() => null),
   ]);
   const seen = new Set();
   const out = [];
@@ -160,89 +224,109 @@ async function loadAll() {
   for (const c of cat?.cuts || []) {
     if (c?.id && !seen.has(c.id)) { seen.add(c.id); out.push({ ...c, from_catalogue: true }); }
   }
-  return { items: out, collections: colls?.collections || [] };
+  return out;
 }
 
+const PAGE = 60;
+
 export function Discover() {
-  const { data: loaded, error, loading, reload } = useLoad(loadAll);
-  const data = loaded?.items;
-  const [filter, setFilter] = useUrlState('show', 'all');
+  const { data, error, loading, reload } = useLoad(loadAll);
+  const [status, setStatus] = useUrlState('show', 'all');
+  const [kind, setKind] = useUrlState('kind', 'all');
+  const [genre, setGenre] = useUrlState('genre', '');
   const [q, setQ] = useUrlState('q');
   const dq = useDebounced(q);
   const [adding, setAdding] = useState(false);
+  const [more, setMore] = useState(1);
+  const { sets } = useSets();
 
+  const all = data || [];
   const needle = dq.trim().toLowerCase();
-  const items = (data || []).filter((s) => (filter === 'all' || (filter === 'ready' ? s.status === 'ready' : s.status !== 'ready'))
-    && (!needle || [s.title, s.tagline, s.category].some((x) => x && x.toLowerCase().includes(needle))));
-
-  // editorial order: the season's shelf, genres, then story order / characters / short / anime
-  const built = discoverShelves(items);
-  const byName = new Map(built.map((x) => [x.name, x.items]));
-  const layout = useShelfLayout(built.map((x) => x.name));
-  const pinned = built.filter((x) => x.seasonal).map((x) => x.name);
-  const visible = [...pinned.filter((n) => layout.visible.includes(n)), ...layout.visible.filter((n) => !pinned.includes(n))];
+  const hit = (s) => !needle || [s.name, s.title, s.tagline, s.category, ...(s.genres || []), ...(s.detail?.movies || [])]
+    .some((x) => x && String(x).toLowerCase().includes(needle));
+  const items = all.filter((s) => hit(s)
+    && (status === 'all' || (status === 'ready' ? s.status === 'ready' : s.status !== 'ready'))
+    && (kind === 'all' || s.kind === kind)
+    && (!genre || (s.genres || []).includes(genre)));
+  const kinds = KIND_TABS.filter(([k]) => all.some((s) => s.kind === k));
+  const genres = genreCounts(all.filter((s) => kind === 'all' || s.kind === kind));
+  const seasonal = discoverShelves(all).filter((x) => x.seasonal);
+  const plainSets = (sets || []).filter((x) => !x.smart && (!needle || x.name.toLowerCase().includes(needle)));
+  const shown = items.slice(0, PAGE * more);
 
   return (
-    <div className="page page-wide" style={{ gap: 30 }}>
-      <div className="toolbar">
-        <Seg label="Show" value={filter} onChange={setFilter}
-          options={[['all', 'All'], ['ready', 'Ready'], ['missing', 'Missing something']]} />
-        <div className="row wrap">
-          <Search value={q} onChange={setQ} label="Search cuts" />
-          <button className="btn" type="button" onClick={() => setAdding(true)}>Add by repo URL</button>
+    <div className="page disc">
+      <header className="disc-head">
+        <div className="disc-head-name">
+          <h1>Discover</h1>
+          {data && <div className="mono disc-meta">{all.length} cuts</div>}
         </div>
-      </div>
+        <Search value={q} onChange={setQ} label="Search films, collections, tags" />
+        <button className="btn" type="button" onClick={() => setAdding(true)}>Add by repo URL</button>
+      </header>
 
       <ErrorBox error={error} onRetry={reload} />
       {loading && !data && <SkeletonTiles n={12} />}
 
-      {data && data.length === 0 && (
+      {data && all.length === 0 && (
         <Empty>
-          No suggestions yet. FansCut suggests cuts from what you own: movies that share a Plex
-          collection become merges and watch orders, anime matched to MAL or AniList gets a canon cut,
-          and community recipes in the recipes folder show up here. Check your sources in{' '}
-          <Link to="/settings">Settings</Link>, rescan the <Link to="/library">Library</Link>, or add a cut by repo URL.
+          No suggestions yet. Films that share a Plex collection become merges and story orders here.
+          Check your sources in <Link to="/settings">Settings</Link> or add a cut by repo URL.
         </Empty>
       )}
-      {data && data.length > 0 && items.length === 0 && (
-        <Empty>Nothing matches. {needle ? 'Try another search' : 'Try another filter'}.</Empty>
-      )}
 
-      {!needle && filter === 'all' && loaded?.collections?.length > 0 && (
-        <Shelf id="shelf-coll" title="Your collections" count={loaded.collections.length} wide>
-          {loaded.collections.map((c) => (
-            <Link key={c.id || c.name} className="tile tile-wide" to={`/collections/${enc(c.id || c.name)}`}>
-              <Backdrop k={c.backdrops?.[0]} name={c.name} />
-              <span className="tiny muted">{c.films} films{c.cuts ? ` · ${c.cuts} cuts` : ''}</span>
-            </Link>
-          ))}
-        </Shelf>
-      )}
-
-      {visible.map((name, i) => (
-        <Shelf key={name} id={`shelf-${i}`} title={name} count={byName.get(name).length}
-          actions={(
-            <span className="shelf-tools">
-              <button type="button" className="btn btn-sm btn-ghost" aria-label={`Move ${name} up`} disabled={i === 0} onClick={() => layout.move(name, -1)}>↑</button>
-              <button type="button" className="btn btn-sm btn-ghost" aria-label={`Move ${name} down`} disabled={i === visible.length - 1} onClick={() => layout.move(name, 1)}>↓</button>
-              <button type="button" className="btn btn-sm btn-ghost" aria-label={`Hide ${name}`} onClick={() => layout.hide(name)}>Hide</button>
-            </span>
-          )}>
-          {byName.get(name).map((s) => <SuggestionTile key={s.id} s={s} />)}
-        </Shelf>
+      {!needle && seasonal.map((shelf) => (
+        <section key={shelf.name} className="box" aria-labelledby={`disc-${shelf.name}`}>
+          <div className="disc-sec-head">
+            <h2 id={`disc-${shelf.name}`}>{shelf.name}</h2>
+            <span className="mono disc-meta">{shelf.items.filter((s) => s.status === 'ready').length} ready to install</span>
+          </div>
+          <div className="disc-feats">{shelf.items.slice(0, 4).map((s) => <Featured key={s.id} s={s} />)}</div>
+        </section>
       ))}
-      {layout.hidden.length > 0 && (
-        <p className="muted tiny" style={{ margin: 0 }}>
-          {layout.hidden.length} shelf{layout.hidden.length > 1 ? 'ves' : ''} hidden ({layout.hidden.join(', ')}).{' '}
-          <button type="button" className="btn btn-sm btn-ghost" onClick={layout.showAll}>Show them</button>
-        </p>
+
+      {plainSets.length > 0 && (
+        <section aria-labelledby="disc-sets">
+          <div className="disc-sec-head">
+            <h2 id="disc-sets">Scene sets from your films</h2>
+            <span className="mono disc-meta">{plainSets.length}</span>
+            <Link to="/sets" className="disc-all">See all</Link>
+          </div>
+          <div className="disc-sets">{plainSets.slice(0, 5).map((x) => <SetCard key={x.tag} s={x} />)}</div>
+        </section>
       )}
 
-      {data && data.length > 0 && (
-        <p className="muted tiny" style={{ margin: 0 }}>
-          Renders land in your output folder; point a Plex library at it. When Plex is set up, renders
-          also get a poster and a “FansCut” collection. Manage files on the <Link to="/jobs">Jobs</Link> page.
-        </p>
+      {all.length > 0 && (
+        <section aria-labelledby="disc-all">
+          <div className="disc-sec-head disc-filters">
+            <h2 id="disc-all">Everything</h2>
+            <span className="mono disc-meta">{items.length === all.length ? all.length : `${items.length} shown`}</span>
+            <span className="disc-gap" />
+            <Seg label="What you have" value={status} onChange={setStatus}
+              options={[['all', 'All'], ['ready', 'Ready'], ['missing', 'Missing something']]} />
+            {kinds.length > 1 && (
+              <Seg label="Kind of cut" value={kind} onChange={setKind} options={[['all', 'All kinds'], ...kinds]} />
+            )}
+          </div>
+          {genres.length > 0 && (
+            <div className="tags-row disc-genres" role="group" aria-label="Genre">
+              <FilterChip on={!genre} onClick={() => setGenre('')}>All genres</FilterChip>
+              {genres.map(([g, n]) => (
+                <FilterChip key={g} on={genre === g} count={n} onClick={() => setGenre(genre === g ? '' : g)}>{g}</FilterChip>
+              ))}
+            </div>
+          )}
+          {items.length === 0
+            ? <p className="disc-meta">Nothing here matches. Try another genre, or switch back to All.</p>
+            : <div className="disc-grid">{shown.map((s) => <Card key={s.id} s={s} />)}</div>}
+          {items.length > shown.length && (
+            <div className="disc-more"><button type="button" className="btn" onClick={() => setMore((m) => m + 1)}>Show more ({items.length - shown.length})</button></div>
+          )}
+          <p className="disc-foot">
+            Builds land in your output folder. When Plex is set up they also get a poster and a FansCut collection.
+            Manage files on the <Link to="/jobs">Jobs</Link> page.
+          </p>
+        </section>
       )}
 
       {adding && <AddByUrl onClose={() => setAdding(false)} />}
