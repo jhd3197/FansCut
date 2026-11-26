@@ -7,9 +7,13 @@
 2. **Look.** Each stretch is shown to the vision model on one contact sheet:
    it keeps the tags it can confirm, may add ones plainly visible, trims the
    range to the matching tiles and names who is on screen.
-3. **Sweep** (optional). Stretches with almost no dialogue go straight to the
-   look step with no tags, so places, weather and action without words are
-   found too.
+3. **Sweep** (optional). Stretches the dialogue can't speak for go straight
+   to the look step with no tags: scenes with almost no dialogue, scenes no
+   stretch covers, and (when the film's signals are measured) the longest
+   stretches with no face, which are often wide shots of a place.
+
+Each stretch is fitted to the scenes that hold its dialogue, the look step
+can turn a stretch down, and a moment keeps at most ``MAX_KEEP`` tags.
 
 Everything is saved as proposals, source ``ai:<model>``.
 """
@@ -23,9 +27,15 @@ from pydantic import BaseModel, Field, create_model
 
 from .. import ai
 from ..config import AICfg
+from . import index as idx
+from . import signals as sig
 from . import tagger, vocab
 
 MAX_TAGS = 12  # per moment (marker file limit)
+MAX_KEEP = 8  # tags the look step may keep: more is noise, not detail
+GAP_SCENE = 15.0  # an uncovered scene this long goes to the sweep
+NO_FACE_MIN = 6.0  # no-face stretches this long go to the sweep...
+NO_FACE_TOP = 15  # ...the longest ones only
 MIN_LEN = 3.0
 OVERLAP = 0.5  # candidates sharing this much of the shorter one become one
 
@@ -51,6 +61,13 @@ def schemas(ids: list[str]) -> tuple[type[BaseModel], type[BaseModel]]:
     moments = create_model("Moments", moments=(list[moment], Field(default_factory=list)))
     look = create_model(
         "LookCheck",
+        match=(
+            bool,
+            Field(
+                description="false when the stretch doesn't show what the tags describe, "
+                "or is only logos or credits"
+            ),
+        ),
         tags=(list[tag_id], Field(description="tag ids you can confirm on the sheet")),
         first_tile=(int, Field(default=1, description="first tile that belongs")),
         last_tile=(int, Field(default=6, description="last tile that belongs")),
@@ -65,11 +82,18 @@ TEXT_SYSTEM = """\
 You tag a film from its subtitles with a fixed list of tags. You get the list
 (id: meaning, grouped by family) and numbered windows of dialogue with times
 (h:mm:ss of the film). Return the stretches of the film where tags clearly
-apply, each with where it starts and ends inside its window and every tag id
-from the list that applies to it. A stretch is one scene or beat, from a few
-seconds to a few minutes. Judge by what happens and where, not by a single
-word. Mood tags only when the mood is strong and plain. Use only ids from the
-list. If nothing applies, return an empty list. Never invent windows.
+apply, each with where it starts and ends inside its window and the tag ids
+from the list that apply to it. A stretch is one scene or beat, from a few
+seconds to a few minutes, and starts at the first line that belongs to it.
+Give 2 to 6 tags per stretch, the most specific ones:
+- a place only when the scene happens there and the place matters; prefer the
+  specific place (bar, hospital, train, forest) over a broad one (school,
+  castle) that is merely the setting of the whole film;
+- people tags (children, crowd, family) only when they are the point of the
+  scene; mood only when it is strong and plain;
+- judge by what happens and where, not by a single word.
+Use only ids from the list. If nothing applies, return an empty list. Never
+invent windows.
 """
 
 LOOK_SYSTEM = """\
@@ -79,8 +103,11 @@ dialogue and the full tag list. Keep the proposed tags you can confirm, drop
 the rest, and add tags from the list that are plainly visible (places,
 weather, time of day, creatures, actions). Give the first and last tile the
 tags belong to, one plain sentence on what happens, and the characters you
-can see (use names from the cast list when you can tell). Be strict: a place
-or weather tag must be visible. If no tag applies, return no tags.
+can see (use names from the cast list when you can tell). Always check the
+weather and time of day (snow, rain, fog, night) and whether fire or water is
+on screen. Be strict: a place or weather tag must be visible, and keep at most
+6 tags, the most specific. Answer match false when the proposed tags don't fit
+what you see, or the tiles are only studio logos or credits.
 """
 
 
@@ -89,6 +116,57 @@ def list_text(tags: list[dict[str, Any]]) -> str:
     for t in tags:
         by.setdefault(t["family"], []).append(f"{t['id']}: {t['hint']}")
     return "\n".join(f"[{fam}]\n" + "\n".join(rows) for fam, rows in by.items())
+
+
+def fit(doc: dict[str, Any], a: float, b: float, hi: float) -> tuple[float, float]:
+    """A stretch fitted to the automatic scenes that hold its dialogue.
+
+    A stretch whose dialogue starts later (the model gave the window's start)
+    moves to the scene of the next line before *hi*.
+    """
+    lines = [ln for ln in idx.lines_of(doc) if sig.speech(ln.text)]
+    scenes = doc.get("scenes") or []
+
+    def scene_of(t: float) -> dict[str, Any] | None:
+        return next((s for s in scenes if s["start"] <= t < s["end"]), None)
+
+    inside = [ln for ln in lines if ln.end > a and ln.start < b]
+    if not inside:
+        later = [ln for ln in lines if a <= ln.start < hi]
+        if not later or (sc := scene_of(later[0].start)) is None:
+            return a, b
+        return sc["start"], min(sc["end"], max(b, sc["end"]))
+    first, last = scene_of(inside[0].start), scene_of(max(inside[-1].end - 0.01, a))
+    if first is not None:
+        a = max(a, first["start"])
+    if last is not None:
+        b = min(b, last["end"])
+    return a, b
+
+
+def sweep(
+    doc: dict[str, Any], cands: list[dict[str, Any]], signals: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """Stretches for the look step that the dialogue pass can't speak for."""
+    out = [{**c, "tags": [], "why": ""} for c in tagger.sweep_candidates(doc)]
+    taken = [(c["start"], c["end"]) for c in [*cands, *out]]
+
+    def free(a: float, b: float) -> bool:
+        return not any(x < b and y > a for x, y in taken)
+
+    def add(a: float, b: float, why: str) -> None:
+        out.append({"start": a, "end": b, "tags": [], "why": why, "people": [], "confidence": 0.3})
+        taken.append((a, b))
+
+    for sc in doc.get("scenes") or []:
+        if sc["end"] - sc["start"] >= GAP_SCENE and free(sc["start"], sc["end"]):
+            add(sc["start"], sc["end"], "")
+    no_face = ((signals or {}).get("signals") or {}).get("no-face") or []
+    longest = sorted(no_face, key=lambda r: r[0] - r[1])[:NO_FACE_TOP]
+    for a, b in sorted(longest):
+        if b - a >= NO_FACE_MIN and free(a, b):
+            add(a, b, "no face on screen: maybe a wide shot of a place")
+    return out
 
 
 def read(
@@ -130,6 +208,7 @@ def read(
             a, b = tagger._parse(m.start, lo, hi), tagger._parse(m.end, lo, hi)
             if b - a < 5:
                 a, b = max(lo, a - 15), min(hi, a + 45)
+            a, b = fit(doc, a, b, hi)
             found.append(
                 {
                     "start": a,

@@ -619,7 +619,7 @@ class SceneService:
 
         cands = label_mod.read(cfg, doc, title, tags, cast, ctx.cancel, text_progress)
         if payload.get("sweep"):
-            cands += [{**c, "tags": [], "why": ""} for c in tagger.sweep_candidates(doc)]
+            cands += label_mod.sweep(doc, cands, self.store.signals(key))
         cands = label_mod.merge(cands)
         model = cfg.vision_model or cfg.model
         made, dropped, counts = [], 0, {}
@@ -631,8 +631,8 @@ class SceneService:
             times = sample_times(c["start"], c["end"], cols * rows)
             sheet = contact_sheet(path, times=times, cols=cols, rows=rows, tile_height=tile_h)
             check = label_mod.look(cfg, sheet, title, c, tags, cast)
-            keep = list(dict.fromkeys(check.tags))[: label_mod.MAX_TAGS]
-            if not keep:
+            keep = list(dict.fromkeys(check.tags))[: label_mod.MAX_KEEP]
+            if not check.match or not keep:
                 dropped += 1
                 continue
             a, b = tagger.refine(c, check, times)

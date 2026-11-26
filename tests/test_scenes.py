@@ -521,8 +521,8 @@ def test_signals_and_label_jobs(sc, monkeypatch):
                                     "tags": ["christmas", "happy"], "people": ["Harry"],
                                     "why": "presents", "confidence": 0.8}])
         assert images and "christmas" in prompt
-        return schema(tags=["christmas", "snow"], first_tile=1, last_tile=6, summary="presents",
-                      people=["Harry"], confidence=0.6)
+        return schema(match=True, tags=["christmas", "snow"], first_tile=1, last_tile=6,
+                      summary="presents", people=["Harry"], confidence=0.6)
 
     monkeypatch.setattr(ai, "ask_json", fake)
     fams = [f for f in label.vocab.families() if f != "content"]
@@ -541,3 +541,39 @@ def test_signals_and_label_jobs(sc, monkeypatch):
     with pytest.raises(ValidationError):
         moments.model_validate({"moments": [{"window": 0, "start": "0", "end": "1",
                                              "tags": ["quidditch"]}]})
+
+
+def test_label_fits_stretches_to_their_dialogue():
+    from fanscut.scenes import label
+
+    doc = {"scenes": [{"start": 0, "end": 60}, {"start": 60, "end": 140}, {"start": 140, "end": 300}],
+           "lines": [{"start": 78, "end": 80, "text": "Professor McGonagall."},
+                     {"start": 150, "end": 152, "text": "Up. Get up!"},
+                     {"start": 200, "end": 202, "text": "[OWL HOOTS]"}]}
+    # the model gave the window's start (a studio logo): the stretch moves to the first line's scene
+    assert label.fit(doc, 0, 60, 300) == (60, 140)
+    # a stretch spilling over is cut back to the scenes its lines sit in
+    assert label.fit(doc, 30, 280, 300) == (60, 280)
+    # no speech at all in reach (a sound description isn't speech): left alone
+    assert label.fit(doc, 190, 230, 240) == (190, 230)
+
+
+def test_label_sweep_covers_gaps_and_faceless_stretches():
+    from fanscut.scenes import label
+
+    doc = {"scenes": [{"start": 0, "end": 30}, {"start": 30, "end": 40}, {"start": 40, "end": 100}],
+           "lines": [{"start": t, "end": t + 1, "text": "Talk."} for t in (1, 20, 31, 34, 41, 80)]}
+    cands = [{"start": 40, "end": 100, "tags": ["snow"], "people": [], "why": "", "confidence": 0.5}]
+    sig = {"signals": {"no-face": [[33.0, 39.0], [90.0, 95.0]]}}
+    got = [(c["start"], c["end"]) for c in label.sweep(doc, cands, sig)]
+    assert (0, 30) in got and (30, 40) not in got  # uncovered scenes of 15 s or more
+    assert (33.0, 39.0) in got  # a long enough no-face stretch nobody covers
+    assert (90.0, 95.0) not in got  # covered by the dialogue pass
+    assert all(c["tags"] == [] for c in label.sweep(doc, cands, None))
+
+
+def test_look_can_turn_a_stretch_down():
+    from fanscut.scenes import label
+
+    _, look = label.schemas(["snow"])
+    assert look.model_validate({"match": False, "tags": []}).match is False
