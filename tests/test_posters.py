@@ -28,8 +28,14 @@ def _jpeg(color: str = "red") -> bytes:
 
 class FakeDriver:
     calls: list = []
+    refuse = False
 
-    def edit_image(self, images, prompt, options):
+    def generate_image(self, prompt, options):
+        return self.edit_image([], prompt, options, words_only=True)
+
+    def edit_image(self, images, prompt, options, words_only=False):
+        if FakeDriver.refuse and not words_only:
+            raise RuntimeError("Error code: 400 - moderation_blocked")
         FakeDriver.calls.append((images, prompt, options))
         png = io.BytesIO()
         Image.new("RGB", (32, 48), "blue").save(png, "PNG")
@@ -50,6 +56,8 @@ def pc(cfg, tmp_path, monkeypatch):
             {"key": "radarr:1", "tmdb_id": 671}])
         core.scenes.store.add_tag("radarr:1", 671, 0, 30, ["christmas", "snow"], [],
                                   source="user", status="accepted")
+        monkeypatch.setattr(core.scenes.store, "signals", lambda key: {
+            "signals": {"no-face": [[18.0, 22.0], [30.0, 36.0]]}})
         import prompture.drivers.img_gen_registry as reg
 
         monkeypatch.setattr(reg, "get_img_gen_driver_for_model", lambda model: FakeDriver())
@@ -82,7 +90,9 @@ def test_take_keep_discard_and_build(pc, tmp_path):
     st = _wait(pc)
     assert st["task"]["status"] == "done", st
     images, prompt, options = FakeDriver.calls[0]
-    assert len(images) == posters.MAX_STILLS and images[0][:4] == b"\x89PNG"
+    # t=20 has no face; the other copies of it collapse into one still
+    assert len(images) == 1 and images[0][:4] == b"\x89PNG"
+    assert "do not depict any real" in prompt
     assert "christmas, snow" in prompt and options["size"] == "1024x1536"
     take = st["takes"][0]
     assert take["cost"] == 0.05 and take["tags"] == ["christmas", "snow"]
@@ -124,3 +134,21 @@ def test_folder_rejects_odd_ids(pc):
     with pytest.raises(Exception, match="no such cut"):
         pc.core.posters.folder("../x")
     assert isinstance(pc.core.posters.folder("t1"), Path)
+
+
+def test_stills_move_to_faceless_moments(pc):
+    got = pc.core.posters.faceless("t1", [("M671", 12.0), ("M671", 20.0), ("nope", 5.0)])
+    assert got == [("M671", 33.0), ("M671", 20.0)]  # 12 s had a face: the longest no-face bit
+
+
+def test_a_refusal_draws_from_words(pc):
+    FakeDriver.calls.clear()
+    FakeDriver.refuse = True
+    try:
+        pc.post("/api/timelines/t1/poster/ai", json={"stills": [{"src": "M671", "t": 20}]})
+        st = _wait(pc)
+    finally:
+        FakeDriver.refuse = False
+    assert st["task"]["status"] == "done", st
+    images, prompt, _ = FakeDriver.calls[0]
+    assert images == [] and "reference images" not in prompt

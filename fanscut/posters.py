@@ -39,15 +39,19 @@ TAKE_RE = re.compile(r"^take-\d{10,13}\.png$")
 
 PROMPT = """\
 A vertical film poster (2:3) for a fan-made cut called "{title}"{franchise}.
-Use the reference images: they are frames from the films. Keep the people
-recognisable and the look of the films; compose one poster, not a collage of
-the frames. Mood and setting: {tags}.
+{refs}Show the places, objects, light and atmosphere; do not depict any real
+person's face: people only as small figures, from behind or as silhouettes.
+Compose one poster, not a collage. Mood and setting: {tags}.
 {title_line} No other text, no logos, no studio names, no credits block.
 """
+REFS_LINE = "The reference images are frames of the setting: match their places and colours.\n"
 
 
-def prompt_for(title: str, franchise: str, tags: list[str], with_title: bool = True) -> str:
+def prompt_for(
+    title: str, franchise: str, tags: list[str], with_title: bool = True, refs: bool = True
+) -> str:
     return PROMPT.format(
+        refs=REFS_LINE if refs else "",
         title=title,
         franchise=f", from {franchise}" if franchise and franchise != title else "",
         tags=", ".join(tags) or "taken from the frames",
@@ -230,7 +234,9 @@ class Posters:
                 raise FansCutError("a poster for this cut is already being made")
             self._tasks[tid] = {"status": "running", "started": time.time(), "message": "Starting"}
         threading.Thread(
-            target=self._run, args=(tid, refs, with_title, model), daemon=True,
+            target=self._run,
+            args=(tid, refs, with_title, model),
+            daemon=True,
             name=f"poster-{tid}",
         ).start()
         return self.state(tid)
@@ -239,18 +245,65 @@ class Posters:
         with self._lock:
             self._tasks[tid] = {**self._tasks.get(tid, {}), **kw}
 
+    def faceless(self, tid: str, refs: list[tuple[str, float]]) -> list[tuple[str, float]]:
+        """The stills moved to moments with no face on screen (the film's no-face
+        signal), inside the same segment; stills that can't move are dropped. Image
+        models refuse to redraw real people, and a poster shouldn't need them."""
+        doc = self.core.get_timeline(tid)["doc"]
+        sources = doc.get("sources") or {}
+        films = {f["tmdb_id"]: f["key"] for f in self.core.scenes.films() if f.get("tmdb_id")}
+        segs = [g for part in doc.get("parts") or [] for g in part.get("segments") or []]
+        out: list[tuple[str, float]] = []
+        for src, t in refs:
+            key = films.get((sources.get(src) or {}).get("tmdb"))
+            sig = self.core.scenes.store.signals(key) if key else None
+            ranges = ((sig or {}).get("signals") or {}).get("no-face") or []
+            if any(a <= t < b for a, b in ranges):
+                out.append((src, t))
+                continue
+            seg = next(
+                (g for g in segs if g.get("src") == src and g["start"] <= t < g["end"]), None
+            )
+            if seg is None:
+                continue
+            inside = [
+                (max(a, seg["start"]), min(b, seg["end"]))
+                for a, b in ranges
+                if a < seg["end"] and b > seg["start"]
+            ]
+            inside = [(a, b) for a, b in inside if b - a >= 1 and (src, (a + b) / 2) not in out]
+            if inside:
+                a, b = max(inside, key=lambda r: r[1] - r[0])
+                out.append((src, round((a + b) / 2, 2)))
+        return list(dict.fromkeys(out))
+
     def _run(self, tid: str, refs: list[tuple[str, float]], with_title: bool, model: str) -> None:
         try:
             self._set(tid, message="Grabbing stills")
+            refs = self.faceless(tid, refs)
             images = [png(self.core.timeline_source_frame(tid, s, t).read_bytes()) for s, t in refs]
             title, franchise, tags = self.describe(tid)
-            prompt = prompt_for(title, franchise, tags, with_title)
             self._set(tid, message="Drawing (about a minute)")
             from prompture.drivers.img_gen_registry import get_img_gen_driver_for_model
 
             drv = get_img_gen_driver_for_model(model)
             quality = self.core.cfg.posters.ai_quality
-            res = drv.edit_image(images, prompt, {"size": SIZE, "quality": quality})
+            opts = {"size": SIZE, "quality": quality}
+            res = None
+            if images:
+                try:
+                    res = drv.edit_image(
+                        images, prompt_for(title, franchise, tags, with_title), opts
+                    )
+                except Exception as exc:  # noqa: BLE001 - a refusal falls back to words only
+                    if "moderation" not in str(exc) and "safety" not in str(exc):
+                        raise
+                    log.info("image model refused the stills for %s; drawing from words", tid)
+                    refs = []
+            if res is None:
+                res = drv.generate_image(
+                    prompt_for(title, franchise, tags, with_title, False), opts
+                )
             data = image_bytes((res.get("images") or [None])[0])
             folder = self.folder(tid)
             folder.mkdir(parents=True, exist_ok=True)
@@ -258,8 +311,13 @@ class Posters:
             (folder / name).write_bytes(png(data))
             cost = float((res.get("meta") or {}).get("cost") or 0)
             meta = self._meta(tid)
-            meta[name] = {"model": model, "quality": quality, "cost": round(cost, 4),
-                          "tags": tags, "stills": [list(r) for r in refs]}
+            meta[name] = {
+                "model": model,
+                "quality": quality,
+                "cost": round(cost, 4),
+                "tags": tags,
+                "stills": [list(r) for r in refs],
+            }
             for old in self.takes(tid)[MAX_TAKES:]:
                 if old != meta.get("chosen"):
                     (folder / old).unlink(missing_ok=True)
