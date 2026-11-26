@@ -80,7 +80,8 @@ def _grade(g: dict[str, float]) -> list[str]:
     return out
 
 
-def filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str, Any],
+def filter_script(segs: list[Segment], at: list[tuple[int, float]],
+                  bridge: list[tuple[int, float] | None], first: dict[str, Any],
                   infos: dict[str, dict[str, Any]], audio: bool, workdir: Path,
                   out: Out, audio_map: dict[str, int] | None = None
                   ) -> tuple[str, dict[str, str]]:
@@ -117,7 +118,9 @@ def filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str, 
         sp = f.get("speed", 1.0)
         v = f.get("video") or {}
         src_end = s.end + vext_src[k] * sp
-        chain = [f"trim=start={s.start:.3f}:end={src_end:.3f}", "setpts=PTS-STARTPTS"]
+        n_in, off = at[k]  # the segment's (seeked) input: its times are file time - off
+        chain = [f"trim=start={s.start - off:.3f}:end={src_end - off:.3f}",
+                 "setpts=PTS-STARTPTS"]
         if s.file in out.tonemap:
             chain.append(TONEMAP)
         if sp != 1.0:
@@ -159,7 +162,7 @@ def filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str, 
             chain.append(f"drawtext=fontfile={_q(FONT)}:textfile={_q(tf)}:fontcolor=white:"
                          f"fontsize=h*0.045:x=w*0.06:y=h*0.84:alpha='{alpha}':"
                          f"enable='lt(t\\,{td:.3f})':shadowcolor=black@0.6:shadowx=2:shadowy=2")
-        lines.append(f"[{inputs[s.file]}:v:0]{','.join(chain)}[v{k}];")
+        lines.append(f"[{n_in}:v:0]{','.join(chain)}[v{k}];")
 
     # join video: xfade where a dissolve asks, else concat
     cur, cur_len = "[v0]", dur[0] + vext_src[0] + vext_hold[0]
@@ -200,16 +203,19 @@ def filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str, 
         a = f.get("audio") or {}
         sp = f.get("speed", 1.0)
         length = dur[k] + lead[k] + tail[k] - cut_head[k] - cut_tail[k]
-        if a.get("src") and s.audio_file:
+        if a.get("src") and s.audio_file and bridge[k] is not None:
+            b_in, b_off = bridge[k]  # type: ignore[misc]
             a0 = a.get("start", 0.0) - lead[k] + cut_head[k]
-            src = f"[{inputs[s.audio_file]}:a:{(audio_map or {}).get(s.audio_file, 0)}]"
-            chain = [f"atrim=start={max(a0, 0):.3f}:end={max(a0, 0) + length:.3f}",
+            src = f"[{b_in}:a:{(audio_map or {}).get(s.audio_file, 0)}]"
+            chain = [f"atrim=start={max(a0, 0) - b_off:.3f}:end={max(a0, 0) + length - b_off:.3f}",
                      "asetpts=PTS-STARTPTS"]
         else:
             a0 = s.start + (cut_head[k] - lead[k]) * sp
             a1 = s.end + (tail[k] - cut_tail[k]) * sp
-            src = f"[{inputs[s.file]}:a:{(audio_map or {}).get(s.file, 0)}]"
-            chain = [f"atrim=start={max(a0, 0):.3f}:end={a1:.3f}", "asetpts=PTS-STARTPTS"]
+            n_in, off = at[k]
+            src = f"[{n_in}:a:{(audio_map or {}).get(s.file, 0)}]"
+            chain = [f"atrim=start={max(a0, 0) - off:.3f}:end={a1 - off:.3f}",
+                     "asetpts=PTS-STARTPTS"]
             if sp != 1.0:
                 chain.append(atempo(sp))
         chain += ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo",
