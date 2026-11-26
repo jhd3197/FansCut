@@ -116,12 +116,6 @@ class Core:
         from .posters import Posters
 
         self.posters = Posters(self)
-        handlers.update({
-            "scene_index": self.scenes.job_index,
-            "scene_tag": self.scenes.job_ai,
-            "scene_signals": self.scenes.job_signals,
-            "scene_label": self.scenes.job_label,
-        })
         self.worker = Worker(self.jobs, {k: self._pin(fn) for k, fn in handlers.items()},
                              on_finish=self._job_finished)
         self._apply_lock = threading.Lock()
@@ -180,6 +174,7 @@ class Core:
                 http_jikan=CachedHttp(self.db, 0.4, cat.cache_days, cat.offline, self.session),
                 http_anilist=CachedHttp(self.db, 0.8, cat.cache_days, cat.offline, self.session))
             self._fillers: anifiller.FillerIndex | None = None
+            self.scenes.link.apply_config(cfg)  # Marcarr's settings follow FansCut's
 
     # -- filler data ----------------------------------------------------------
     @property

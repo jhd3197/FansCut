@@ -1,29 +1,27 @@
-"""The shared tag list (``tags_v1.json``, see docs/markers.md).
+"""The shared tag list, from Marcarr (``marcarr.stages.vocab``, see docs/markers.md).
 
 Content tags have plain ids (``christmas``); FansCut's own cut tags carry
 ``fc:`` (``fc:filler``). The app shows names only, never the prefix.
-``signals`` are what FansCut measures (faces, shots, brightness, sound): they
+``signals`` are what Marcarr measures (faces, shots, brightness, sound): they
 are not tags and are never shown as tags.
 """
 
 from __future__ import annotations
 
-import json
 from functools import cache
-from importlib import resources
 from typing import Any
 
-SMART = "fc:"
+from marcarr.stages import vocab as _m
+
+SMART = _m.SMART
 
 
-@cache
 def load() -> dict[str, Any]:
-    raw = resources.files("fanscut.scenes").joinpath("tags_v1.json").read_text(encoding="utf-8")
-    return json.loads(raw)
+    return _m.load()
 
 
 def families() -> list[str]:
-    return list(load()["families"])
+    return _m.families()
 
 
 def content_tags(families_off: list[str] | tuple[str, ...] = ()) -> list[dict[str, Any]]:

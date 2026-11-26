@@ -157,7 +157,7 @@ def add_tag(core: CoreDep, body: TagBody) -> dict[str, Any]:
 def list_tags(
     core: CoreDep, key: str | None = None, tag: str | None = None, status: str | None = None
 ) -> dict[str, Any]:
-    return {"tags": core.scenes.store.tags([key] if key else None, tag, status)}
+    return {"tags": core.scenes.tags([key] if key else None, tag, status)}
 
 
 @router.get("/vocab")
@@ -170,7 +170,7 @@ def vocab_list() -> dict[str, Any]:
 
 @router.get("/tag-counts")
 def tag_counts(core: CoreDep) -> dict[str, Any]:
-    return {"tags": core.scenes.store.tag_counts()}
+    return {"tags": core.scenes.tag_counts()}
 
 
 @router.patch("/tags/{tid}")

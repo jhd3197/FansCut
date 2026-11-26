@@ -6,6 +6,23 @@ Harry Potter films in film order. Tagging can be done by hand, by FansCut's
 own AI job, or by an AI client such as Claude Code through the MCP server.
 Every AI suggestion arrives as a proposal that you accept or reject.
 
+## Marcarr does the analysis
+
+The analysis runs in [Marcarr](https://github.com/jhd3197/marcarr), which
+FansCut installs and runs inside itself: no second service to set up. Marcarr
+finds the shots, subtitle lines, scenes, measured signals, cast, faces and
+tags; FansCut keeps its own cut tags (`fc:filler`, `fc:recap`) and cuts the
+frames and clips its players show. Marcarr's database and caches live in
+`<data_dir>/marcarr` (`marcarr.data_dir` moves them), and its settings follow
+FansCut's: `ai.*`, `catalogues.tmdb_api_key`, the Plex server under
+`library.plex` (for cast), and `scenes.families_off`, `scenes.search_closely`,
+`scenes.auto_accept` and `scenes.signals`. `marcarr.faces: false` skips
+matching faces to the cast.
+
+A film becomes a Marcarr title (`movie:tmdb:<id>`, or `local:fanscut:<key>`
+without a TMDB id). Analysis jobs show on the film's steps and through
+`/api/jobs/{id}`.
+
 ## Index a film
 
 Open a film and choose **Scenes and tags**, then **Index scenes**. Indexing:
@@ -20,7 +37,7 @@ Open a film and choose **Scenes and tags**, then **Index scenes**. Indexing:
 - groups shots into scenes: a scene ends at a cut nobody is talking across.
 
 The index holds times and text only, never images or video, and indexing again
-keeps your tags.
+keeps your tags. Measuring signals and matching faces follow the index.
 
 ## The tagger
 
@@ -36,16 +53,19 @@ The side panel has:
 - **Tags**: accepted and rejected tags.
 - **Add**: tag the selected range yourself (your tags are accepted straight
   away), or run the AI on this film.
-- **X-Ray**: who is on screen at the playhead, from the tags covering it,
-  with photos from the cast, and the full cast list.
+- **X-Ray**: who is on screen at the playhead, from Marcarr's face matches and
+  the tags covering it, with photos from the cast, and the full cast list.
 
 Tags are short slugs (`great-hall`); people are matched to the film's cast,
 so "Harry" becomes Harry Potter (Daniel Radcliffe).
 
 ## The AI job
 
-**Add → Find with AI** asks for a tag and what it means ("Christmas at
-Hogwarts: snow, presents, the feast"). The job:
+**Tag** runs Marcarr's tags step over the whole tag list. **Add → Find with
+AI** asks for one tag and what it means ("Christmas at Hogwarts: snow,
+presents, the feast"): a tag from the list is searched closely, and one that
+is not becomes a Marcarr custom tag of this film, with what it means as its
+hint. Either way, Marcarr:
 
 1. sends the dialogue, a few minutes at a time, to `ai.model`, which names the
    stretches where the tag applies (a whole film is about 25k tokens);
@@ -113,9 +133,9 @@ travel as a `key` query parameter.
 
 ## Limits
 
-- Face recognition is not done yet. "Who is on screen" comes from the
-  dialogue and the vision model's reading of the frame grids, so it is only
-  as good as the tags.
+- Face matching needs `opencv-python-headless` (`pip install "fanscut[faces]"`)
+  and looks at a few frames per scene, so the face boxes at the playhead are
+  from the nearest frame Marcarr looked at.
 - HDR frames come out without tone mapping: flat colours, still readable.
 - Clips for **Play range** are capped at 5 minutes and cached under
   `<data_dir>/scenes`.

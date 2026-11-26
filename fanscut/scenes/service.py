@@ -1,39 +1,64 @@
-"""Scene tagging for the API, the MCP server and the jobs: one place over Core."""
+"""Scene tagging for the API, the MCP server and the posters: one place over Core.
+
+The analysis itself (shots, subtitles, scenes, signals, cast, faces and the AI
+tagger) runs in the embedded Marcarr (link.py). This service turns FansCut films
+into Marcarr videos and Marcarr's answers back into the shapes FansCut's pages
+read. FansCut keeps its own cut tags (``fc:``), and the frames, contact sheets
+and clips it cuts from the file for its players.
+"""
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
+import re
 import subprocess
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..errors import FansCutError, NotFoundError
-from . import cast as cast_mod
-from . import faces as faces_mod
-from . import index as idx
-from . import label as label_mod
-from . import signals as sig
 from . import store as st
-from . import tagger
+from .link import Link, title_id
 
 if TYPE_CHECKING:
     from ..core import Core
-    from ..jobs import JobContext
 
 MAX_CLIP = 300.0
 MAX_SHEET_TILES = 24
+INDEX_STEPS = ["shots", "subtitles", "scenes"]
+
+
+def _evidence_texts(ev: dict[str, Any]) -> list[str]:
+    """Marcarr's evidence ({"seen": [...], "heard": [...]}, items a text or {"text", "at"})
+    as FansCut's flat list of what was seen, then what was heard."""
+    out = []
+    for kind in ("seen", "heard"):
+        for x in ev.get(kind) or []:
+            text = x.get("text") if isinstance(x, dict) else x
+            if text:
+                out.append(str(text))
+    return list(dict.fromkeys(out))
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60]
 
 
 class SceneService:
     def __init__(self, core: Core):
         self.core = core
-        self.store = st.SceneStore(core.db)
-        self._face_engine: faces_mod.FaceEngine | None = None
-        self._face_refs: dict[str, dict[str, dict[str, Any]]] = {}
-        self._face_lock = threading.Lock()
+        self.store = st.SceneStore(core.db)  # FansCut's cut tags (fc:)
+        self.link = Link(lambda: self.core.cfg)
+        self._clip_lock = threading.Lock()
         self._clip_locks: dict[str, threading.Lock] = {}
+
+    @property
+    def marcarr(self) -> Any:
+        """The embedded Marcarr's Core."""
+        return self.link.core
+
+    def close(self) -> None:
+        self.link.close()
 
     # -- films --------------------------------------------------------------------
     def _movies(self) -> list[Any]:
@@ -52,20 +77,44 @@ class SceneService:
             raise NotFoundError(f"{m.title} has no file on disk")
         return m, m.file
 
+    def _video(self, key: str, register: bool = False) -> str | None:
+        return self.link.video(self.film(key), register=register)
+
+    def _doc(self, key: str) -> dict[str, Any] | None:
+        """The film's index (shots, subtitle lines, automatic scenes) once Marcarr has
+        found the scenes; None before."""
+        vid = self._video(key)
+        if vid is None:
+            return None
+        m = self.marcarr
+        if not m.store.result(vid, "scenes"):
+            return None
+        doc = m.pipeline.index_doc(vid)
+        subs = m.store.result(vid, "subtitles") or {}
+        src = subs.get("source") or {}
+        doc["subtitles"] = {**src, "kind": src.get("kind") or "none", "lines": len(doc["lines"])}
+        return doc
+
+    def _index_or_fail(self, key: str) -> dict[str, Any]:
+        doc = self._doc(key)
+        if doc is None:
+            raise FansCutError("this film has no scene index yet: index it first")
+        return doc
+
     def films(self, collection: str | None = None) -> list[dict[str, Any]]:
         from ..browse import NOT_A_FRANCHISE, _collections_of, resolve_collection
 
-        counts = self.store.scene_counts()
-        tags = self.store.tags()
-        out = []
         movies = self._movies()
         if collection:
             collection = resolve_collection(movies, collection)
+        rows = self.tags([m.key for m in movies])
+        out = []
         for m in movies:
             cols = _collections_of(m)
             if collection and collection not in cols:
                 continue
-            mine = [t for t in tags if t["film_key"] == m.key]
+            doc_scenes = self._scene_count(m)
+            mine = [t for t in rows if t["film_key"] == m.key]
             out.append(
                 {
                     "key": m.key,
@@ -77,8 +126,8 @@ class SceneService:
                     "collections": cols,
                     # what a cut may span: Plex smart lists ("Popular on My Server") aren't
                     "franchises": [c for c in cols if not NOT_A_FRANCHISE.search(c)],
-                    "indexed": m.key in counts,
-                    "scenes": counts.get(m.key),
+                    "indexed": doc_scenes is not None,
+                    "scenes": doc_scenes,
                     "tags": {
                         "proposed": sum(t["status"] == "proposed" for t in mine),
                         "accepted": sum(t["status"] == "accepted" for t in mine),
@@ -87,12 +136,18 @@ class SceneService:
             )
         return sorted(out, key=lambda f: (f["year"] or 0, f["title"]))
 
+    def _scene_count(self, film: Any) -> int | None:
+        vid = self.link.video(film)
+        if vid is None:
+            return None
+        doc = self.marcarr.store.result(vid, "scenes")
+        return len(doc.get("scenes") or []) if doc else None
+
     def overview(self, key: str, with_lines: bool = True) -> dict[str, Any]:
         m = self.film(key)
-        doc = self.store.index(key)
-        if doc:
-            drop = {"signals"} if with_lines else {"signals", "lines"}
-            doc = {k: v for k, v in doc.items() if k not in drop}
+        doc = self._doc(key)
+        if doc and not with_lines:
+            doc = {k: v for k, v in doc.items() if k != "lines"}
         from ..browse import NOT_A_FRANCHISE, _collections_of, collection_ids
 
         ids = collection_ids(self._movies())
@@ -111,121 +166,135 @@ class SceneService:
                 "on_disk": bool(m.file),
             },
             "index": doc,
-            "tags": self.store.tags([key]),
-            "cast": (self.store.cast(key) or {}).get("cast", []),
+            "tags": self.tags([key]),
+            "cast": self._cast_rows(title_id(m)),
         }
 
-    def _index_or_fail(self, key: str) -> dict[str, Any]:
-        doc = self.store.index(key)
-        if doc is None:
-            raise FansCutError("this film has no scene index yet: index it first")
-        return doc
-
-    # -- index job ----------------------------------------------------------------
-    def submit_index(self, key: str, transcribe: bool = False) -> dict[str, Any]:
+    # -- analysis jobs (run by Marcarr) -------------------------------------------------
+    def _run(self, key: str, steps: list[str]) -> dict[str, Any]:
         m, _ = self._file(key)
-        return self.core.worker.submit(
-            "scene_index",
-            f"Index scenes of {m.title}",
-            {"key": key, "transcribe": bool(transcribe)},
-        )
-
-    def job_index(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
-        key = payload["key"]
-        _, path = self._file(key)
-        ff = self.core.cfg.ffmpeg
-        doc = idx.build(
-            path,
-            ffmpeg=ff.binary,
-            ffprobe=ff.probe_binary,
-            transcribe=bool(payload.get("transcribe")),
-            cancel=ctx.cancel,
-            progress=ctx.progress,
-        )
-        self.store.save_index(key, doc)
-        with contextlib.suppress(FansCutError):
-            self.get_cast(key)
-        if self.core.cfg.scenes.signals:
-            with contextlib.suppress(FansCutError):
-                self.submit_signals(key)
+        vid = self.link.video(m, register=True)
+        assert vid is not None
+        out = self.marcarr.pipeline.submit(vid, steps)
         return {
-            "key": key,
-            "shots": len(doc["shots"]),
-            "scenes": len(doc["scenes"]),
-            "lines": len(doc["lines"]),
-            "subtitles": doc["subtitles"]["kind"],
+            "id": out.get("job"),
+            "kind": "marcarr",
+            "title": f"Analyse {m.title}",
+            "status": "queued" if out["queued"] else "done",
+            "video": vid,
+            "steps": out.get("steps") or [],
+            "position": out.get("position", 0),
         }
+
+    def submit_index(self, key: str, transcribe: bool = False) -> dict[str, Any]:
+        """Shots, subtitle lines and automatic scenes; with signals measured after
+        when Settings ask for it. *transcribe*: no text subtitles, so hear the audio."""
+        if transcribe:
+            m = self.marcarr
+            m.cfg = m.cfg.model_copy(
+                update={"analysis": m.cfg.analysis.model_copy(update={"transcribe": True})}
+            )
+        steps = [*INDEX_STEPS, "cast"]
+        if self.core.cfg.scenes.signals:
+            steps.append("signals")
+        return self._run(key, steps)
+
+    def submit_signals(self, key: str) -> dict[str, Any]:
+        self._index_or_fail(key)
+        return self._run(key, ["signals"])
+
+    def submit_label(
+        self, key: str, families: list[str] | None = None, sweep: bool = False, mode: str = "full"
+    ) -> dict[str, Any]:
+        """Tag a film with the whole tag list (Marcarr's tags step). *sweep* and *mode*
+        are kept for old callers: Marcarr always looks at quiet stretches and searches
+        the Settings tags closely."""
+        from . import vocab
+
+        self._file(key)
+        self._index_or_fail(key)
+        if not self.core.cfg.ai.model:
+            raise FansCutError("set an AI model in Settings first")
+        if mode not in ("full", "focused"):
+            raise FansCutError("mode is full or focused")
+        known = vocab.families()
+        if families is not None:
+            bad = [f for f in families if f not in known]
+            if bad:
+                raise FansCutError(f"unknown tag family: {', '.join(bad)}")
+            if not families:
+                raise FansCutError("pick at least one tag family")
+            m = self.marcarr
+            off = [f for f in known if f not in families]
+            m.cfg = m.cfg.model_copy(
+                update={"tags": m.cfg.tags.model_copy(update={"families_off": off})}
+            )
+        return self._run(key, ["tags"])
+
+    def submit_ai(
+        self, key: str, tag: str, description: str = "", verify: bool = True, sweep: bool = False
+    ) -> dict[str, Any]:
+        """Search a film closely for one tag. A tag outside the list becomes a Marcarr
+        custom tag of this film, with *description* as its hint."""
+        from . import vocab
+
+        film, _ = self._file(key)
+        self._index_or_fail(key)
+        t = st.norm_tag(tag)
+        if not self.core.cfg.ai.model:
+            raise FansCutError("set an AI model in Settings first")
+        m = self.marcarr
+        if vocab.get(t):
+            closely = list(dict.fromkeys([*m.cfg.tags.search_closely, t]))
+            m.cfg = m.cfg.model_copy(
+                update={"tags": m.cfg.tags.model_copy(update={"search_closely": closely})}
+            )
+        elif not any(x["id"] == t for x in m.store.custom_tags()):
+            self.link.video(film, register=True)
+            m.store.add_custom_tag(
+                t.replace("-", " ").title(),
+                tag_id=t,
+                hint=description[:300],
+                title_id=title_id(film),
+            )
+        return self._run(key, ["tags"])
+
+    def tidy(self, key: str) -> dict[str, int]:
+        """Merge duplicate cut-tag moments (Marcarr keeps sure AI tags by itself)."""
+        return self.store.tidy(key, self.core.cfg.scenes.auto_accept)
+
+    def job(self, jid: str) -> dict[str, Any] | None:
+        """A Marcarr analysis job, shaped like a FansCut job (for /api/jobs/{id})."""
+        try:
+            j = self.marcarr.jobs.get(jid)
+        except Exception:  # noqa: BLE001 - not one of Marcarr's
+            return None
+        return dict(j) if j else None
 
     # -- signals (measured, never tags) ---------------------------------------------
-    def submit_signals(self, key: str) -> dict[str, Any]:
-        m, _ = self._file(key)
-        self._index_or_fail(key)
-        return self.core.worker.submit(
-            "scene_signals", f"Measure signals of {m.title}", {"key": key}
-        )
+    def signals_of(self, key: str) -> dict[str, Any] | None:
+        vid = self._video(key)
+        return self.marcarr.store.result(vid, "signals") if vid else None
 
     def signals(self, key: str) -> dict[str, Any]:
-        found = self.store.signals(key)
+        found = self.signals_of(key)
         if found is None:
             raise NotFoundError("this film's signals haven't been measured yet")
         return {"key": key, **found}
-
-    def job_signals(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
-        """Brightness, movement and faces from one frame a second, loudness from the
-        sound, shots and lines from the index -> signals saved with the index."""
-        key = payload["key"]
-        m, path = self._file(key)
-        doc = self._index_or_fail(key)
-        ff = self.core.cfg.ffmpeg
-        engine = None
-        with contextlib.suppress(FansCutError):
-            engine = self.face_engine()
-        w, h = doc.get("width") or 1920, doc.get("height") or 1080
-        width = sig.WIDTH
-        height = max(2, round(width * h / w / 2) * 2)
-        total = float(doc.get("duration") or m.duration or 0)
-        samples = []
-        for t, img in sig.frames(path, width, height, ffmpeg=ff.binary, cancel=ctx.cancel):
-            luma, thumb, nf, fh = sig.measure(img, engine)
-            samples.append(sig.Sample(t, luma, thumb, nf, fh))
-            if total and len(samples) % 30 == 0:
-                ctx.progress(
-                    0.85 * min(t / total, 1.0), f"Looking at the picture ({int(t // 60)} min)"
-                )
-        if ctx.cancel.is_set():
-            return {"key": key, "cancelled": True}
-        ctx.progress(0.87, "Listening")
-        loud = sig.levels(path, ffmpeg=ff.binary)
-        ranges = sig.label(doc, samples, loud)
-        self.store.save_signals(
-            key,
-            {
-                "version": sig.VERSION,
-                "faces": engine is not None,
-                "signals": {k: [[a, b] for a, b in rs] for k, rs in ranges.items()},
-            },
-        )
-        # measured ranges used to be stored as tags (source "auto"): they go
-        dropped = self.store.delete_source(key, "auto")
-        return {
-            "key": key,
-            "frames": len(samples),
-            "faces": engine is not None,
-            "signals": {k: len(rs) for k, rs in ranges.items()},
-            "old_tags_removed": dropped,
-        }
 
     # -- looking at the film ------------------------------------------------------
     def transcript(
         self, key: str, start: float = 0, end: float | None = None, speech: bool = False
     ) -> list[dict[str, Any]]:
         """Subtitle lines in [start, end]; *speech* leaves sound descriptions out."""
+        from marcarr.stages.signals import speech as is_speech
+
         doc = self._index_or_fail(key)
         hi = end if end is not None else float("inf")
         return [
             x
             for x in doc.get("lines") or []
-            if x["end"] > start and x["start"] < hi and (not speech or sig.speech(x["text"]))
+            if x["end"] > start and x["start"] < hi and (not speech or is_speech(x["text"]))
         ]
 
     def shots(self, key: str, start: float = 0, end: float | None = None) -> list[list[float]]:
@@ -281,7 +350,7 @@ class SceneService:
         a, b = st.clean_range(start, end)
         b = min(b, a + MAX_CLIP)
         out = self._cache("clips", path, a, b, ext="mp4")
-        with self._face_lock:  # one lock per clip, so two requests cut it once
+        with self._clip_lock:  # one lock per clip, so two requests cut it once
             lock = self._clip_locks.setdefault(out.name, threading.Lock())
         with lock:
             if not out.is_file():
@@ -289,193 +358,378 @@ class SceneService:
         return out
 
     def _cut_clip(self, path: str, a: float, b: float, out: Path) -> None:
-        if not out.is_file():
-            tmp = out.with_suffix(".tmp.mp4")
-            proc = subprocess.run(  # noqa: S603 - argv list
-                [
-                    self.core.cfg.ffmpeg.binary,
-                    "-v",
-                    "error",
-                    "-nostdin",
-                    "-y",
-                    "-ss",
-                    f"{a:.3f}",
-                    "-i",
-                    path,
-                    "-t",
-                    f"{b - a:.3f}",
-                    "-map",
-                    "0:v:0",
-                    "-map",
-                    "0:a:0?",
-                    "-vf",
-                    "scale=-2:480",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "veryfast",
-                    "-crf",
-                    "26",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-c:a",
-                    "aac",
-                    "-ac",
-                    "2",
-                    "-b:a",
-                    "128k",
-                    "-sn",
-                    "-movflags",
-                    "+faststart",
-                    str(tmp),
-                ],
-                capture_output=True,
-                timeout=900,
-                check=False,
+        tmp = out.with_suffix(".tmp.mp4")
+        proc = subprocess.run(  # noqa: S603 - argv list
+            [
+                self.core.cfg.ffmpeg.binary,
+                "-v",
+                "error",
+                "-nostdin",
+                "-y",
+                "-ss",
+                f"{a:.3f}",
+                "-i",
+                path,
+                "-t",
+                f"{b - a:.3f}",
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0?",
+                "-vf",
+                "scale=-2:480",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "26",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-ac",
+                "2",
+                "-b:a",
+                "128k",
+                "-sn",
+                "-movflags",
+                "+faststart",
+                str(tmp),
+            ],
+            capture_output=True,
+            timeout=900,
+            check=False,
+        )
+        if proc.returncode:
+            tmp.unlink(missing_ok=True)
+            raise FansCutError(
+                "could not cut the clip: " + (proc.stderr or b"").decode("utf-8", "replace")[-300:]
             )
-            if proc.returncode:
-                tmp.unlink(missing_ok=True)
-                raise FansCutError(
-                    "could not cut the clip: "
-                    + (proc.stderr or b"").decode("utf-8", "replace")[-300:]
-                )
-            tmp.replace(out)
+        tmp.replace(out)
 
-    # -- cast -----------------------------------------------------------------------
+    # -- cast and people ----------------------------------------------------------------
+    def _cast_rows(self, tid: str) -> list[dict[str, Any]]:
+        """Marcarr's cast of a title in FansCut's shape: {name (the actor), character,
+        photo, id}."""
+        return [
+            {
+                "name": c.get("actor") or "",
+                "character": c.get("character") or "",
+                "photo": c.get("photo") or "",
+                "id": c["person"],
+            }
+            for c in self.marcarr.store.cast(tid)
+        ]
+
     def get_cast(self, key: str, refresh: bool = False) -> list[dict[str, Any]]:
-        if not refresh and (cached := self.store.cast(key)) is not None:
-            return list(cached.get("cast") or [])
-        m = self.film(key)
-        people: list[dict[str, Any]] = []
-        source = ""
-        plex = self.core.library.plex()
-        if plex and m.key.startswith("plexmovie:"):
-            people, source = cast_mod.fetch_plex(plex, m.key.split(":", 1)[1]), "plex"
-        if not people and m.tmdb_id and self.core.cfg.catalogues.tmdb_api_key:
-            people = cast_mod.fetch_tmdb(
-                self.core.cfg.catalogues.tmdb_api_key, m.tmdb_id, self.core.session
-            )
-            source = "tmdb"
-        if not source:
+        film = self.film(key)
+        tid = title_id(film)
+        m = self.marcarr
+        if not refresh and m.store.cast(tid):
+            return self._cast_rows(tid)
+        self.link._upsert_title(film, tid)
+        source, people = m.pipeline.fetch_cast(tid)
+        if not people:
             raise FansCutError("no cast source: the film isn't in Plex and no TMDB API key is set")
-        self.store.save_cast(key, {"source": source, "cast": people})
-        return people
+        m.store.save_cast(tid, source, people)
+        return self._cast_rows(tid)
 
-    def _cast_or_empty(self, key: str) -> list[dict[str, Any]]:
-        try:
-            return self.get_cast(key)
-        except FansCutError:
-            return []
-
-    # -- faces ----------------------------------------------------------------------
-    def face_engine(self) -> faces_mod.FaceEngine:
-        if not faces_mod.available():
-            raise FansCutError("face recognition needs OpenCV: pip install opencv-python-headless")
-        with self._face_lock:
-            if self._face_engine is None:
-                det, rec = faces_mod.ensure_models(
-                    self.core.cfg.data_dir / "models", self.core.session
-                )
-                self._face_engine = faces_mod.FaceEngine(det, rec)
-            return self._face_engine
-
-    def face_refs(self, key: str) -> dict[str, dict[str, Any]]:
-        """Reference faces of the film's cast, from their photos (cached per film)."""
-        if key in self._face_refs:
-            return self._face_refs[key]
-        engine = self.face_engine()
-        cache = self.core.cfg.data_dir / "scenes" / "faces" / "cast"
-        refs: dict[str, dict[str, Any]] = {}
-        for c in self._cast_or_empty(key):
-            name, url = c.get("name"), c.get("photo") or ""
-            if not name or name in refs or not url:
-                continue
-            photo = faces_mod.photo_cache(cache, url, self.core.session)
-            feat = engine.reference(photo) if photo else None
-            if feat is not None:
-                refs[name] = {"character": c.get("character") or "", "photo": url, "feature": feat}
-        self._face_refs[key] = refs
-        return refs
-
-    def faces_at(self, key: str, t: float) -> dict[str, Any]:
-        """Faces in the frame at *t*, named against the cast where they match."""
-        engine = self.face_engine()
-        img = engine.read(self.frame(key, t, 720))
-        candidates = {
-            p["name"]
-            for x in self.store.tags([key])
-            if x["status"] != "rejected" and x["start"] <= t + 1 and x["end"] >= t - 1
-            for p in x["people"]
-            if p.get("name")
+    def _people_out(self, tid: str) -> dict[str, dict[str, str]]:
+        """Person id -> {name, character} for the tags of a title."""
+        return {
+            c["id"]: {k: c[k] for k in ("name", "character") if c[k]} for c in self._cast_rows(tid)
         }
-        found = faces_mod.name_faces(engine, img, self.face_refs(key), candidates)
-        return {"t": t, "width": int(img.shape[1]), "height": int(img.shape[0]), "faces": found}
+
+    def _person_ids(self, tid: str, people: list[dict[str, str]]) -> list[str]:
+        """FansCut's people ({name, character}) -> Marcarr person ids: a cast member
+        when one matches, else the name as an id."""
+        from marcarr.stages.cast import match_person
+
+        cast = [
+            {"name": c["name"], "character": c["character"], "person": c["id"]}
+            for c in self._cast_rows(tid)
+        ]
+        out = []
+        for p in people:
+            said = p.get("character") or p.get("name") or ""
+            hit = match_person(cast, said) or (
+                match_person(cast, p["name"]) if p.get("name") else None
+            )
+            pid = hit["person"] if hit else _slug(said)
+            if pid:
+                out.append(pid)
+        return list(dict.fromkeys(out))
+
+    @staticmethod
+    def _readable(pid: str) -> dict[str, str]:
+        return {"character": pid.replace("-", " ").title()}
 
     # -- tags -----------------------------------------------------------------------
+    def _films_by_title(self) -> dict[str, Any]:
+        return {title_id(m): m for m in self._movies()}
+
+    def _row(
+        self, r: dict[str, Any], film: Any, people: dict[str, dict[str, str]]
+    ) -> dict[str, Any]:
+        """A Marcarr tag in FansCut's tag shape."""
+        return {
+            "id": r["id"],
+            "film_key": film.key,
+            "tmdb_id": film.tmdb_id,
+            "start": r["start"],
+            "end": r["end"],
+            "tags": [r["tag"]],
+            "people": [people.get(p) or self._readable(p) for p in r["people"]],
+            "summary": r["summary"],
+            "source": "user" if r["source"] == "person" else r["source"],
+            "status": r["status"],
+            "confidence": r["confidence"],
+            "evidence": _evidence_texts(r["evidence"]),
+            "created_at": r["created_at"],
+            "updated_at": r["updated_at"],
+        }
+
+    def tags(
+        self, film_keys: list[str] | None = None, tag: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Tagged moments: Marcarr's content tags and FansCut's own cut tags together."""
+        local = self.store.tags(film_keys, tag, status)
+        want = st.norm_tag(tag) if tag else None
+        if want and want.startswith(st.SMART):
+            return local
+        movies = self._movies()
+        if film_keys is not None:  # unknown keys (a film gone from the library) have none
+            by_key = {m.key: m for m in movies}
+            movies = [by_key[k] for k in film_keys if k in by_key]
+        m = self.marcarr
+        out = []
+        for film in movies:
+            vid = self.link.video(film)
+            if vid is None:
+                continue
+            rows = m.store.tags(video=vid, tag=want, status=status)
+            if rows:
+                people = self._people_out(title_id(film))
+                out += [self._row(r, film, people) for r in rows]
+        return sorted([*out, *local], key=lambda r: (r["film_key"], r["start"]))
+
+    def tag_counts(self) -> list[dict[str, Any]]:
+        from . import vocab
+
+        counts: dict[str, dict[str, int]] = {}
+        for r in self.tags():
+            for t in r["tags"]:
+                c = counts.setdefault(t, {"proposed": 0, "accepted": 0, "rejected": 0})
+                c[r["status"]] += 1
+        return [
+            {
+                "tag": t,
+                "name": vocab.name(t),
+                "family": (vocab.get(t) or {}).get("family"),
+                "smart": vocab.is_smart(t),
+                **c,
+            }
+            for t, c in sorted(counts.items())
+        ]
+
     def add_tag(self, key: str, body: dict[str, Any], source: str = "user") -> dict[str, Any]:
-        m = self.film(key)
-        doc = self.store.index(key)
+        """Tag a range. Content tags go to Marcarr, cut tags (fc:) stay in FansCut; a
+        person's tag is kept at once. Returns the first moment made."""
+        from marcarr.stages import index as idx
+
+        film = self.film(key)
+        tags = st.clean_tags(body.get("tags"))
+        content = [t for t in tags if not t.startswith(st.SMART)]
+        smart = [t for t in tags if t.startswith(st.SMART)]
+        doc = self._doc(key)
         a, b = st.clean_range(
-            body.get("start"), body.get("end"), (doc or {}).get("duration") or m.duration
+            body.get("start"), body.get("end"), (doc or {}).get("duration") or film.duration
         )
-        if doc and body.get("snap", True):
+        if doc and doc.get("shots") and body.get("snap", True):
             a, b = idx.snap(doc, a), idx.snap(doc, b)
-        people = cast_mod.resolve_people(
-            self._cast_or_empty(key), st.clean_people(body.get("people"))
-        )
+        people = st.clean_people(body.get("people"))
         status = body.get("status") or ("accepted" if source == "user" else "proposed")
+        if status not in st.STATUSES:
+            raise FansCutError(f"status must be one of {', '.join(st.STATUSES)}")
         conf = body.get("confidence")
-        return self.store.add_tag(
-            key,
-            m.tmdb_id,
-            a,
-            b,
-            st.clean_tags(body.get("tags")),
-            people,
-            str(body.get("summary") or ""),
-            source=str(body.get("source") or source),
-            status=status,
-            confidence=float(conf) if conf is not None else None,
-            evidence=list(body.get("evidence") or []),
-        )
+        conf = float(conf) if conf is not None else None
+        src = str(body.get("source") or source)
+        evidence = [str(x) for x in body.get("evidence") or []]
+        out: dict[str, Any] | None = None
+        if content:
+            vid = self.link.video(film, register=True)
+            tid = title_id(film)
+            ids = self._person_ids(tid, people)
+            names = self._people_out(tid)
+            m = self.marcarr
+            made = [
+                m.store.add_tag(
+                    vid,
+                    tid,
+                    t,
+                    a,
+                    b,
+                    status=status,
+                    source="person" if src == "user" else src,
+                    confidence=conf,
+                    people=ids,
+                    evidence={"seen": evidence},
+                    summary=str(body.get("summary") or ""),
+                )
+                for t in content
+            ]
+            out = {
+                **self._row(made[0], film, names),
+                "tags": content,
+                "ids": [r["id"] for r in made],
+            }
+        if smart:
+            row = self.store.add_tag(
+                key,
+                film.tmdb_id,
+                a,
+                b,
+                smart,
+                people,
+                str(body.get("summary") or ""),
+                source=src,
+                status=status,
+                confidence=conf,
+                evidence=evidence,
+            )
+            out = out or row
+        assert out is not None
+        return out
+
+    def _marcarr_tag(self, tid: str) -> dict[str, Any] | None:
+        if not tid.startswith("tag_"):
+            return None
+        try:
+            return dict(self.marcarr.store.tag(tid))
+        except Exception:  # noqa: BLE001 - not a Marcarr tag
+            return None
+
+    def _as_row(self, r: dict[str, Any]) -> dict[str, Any]:
+        film = self._films_by_title().get(r["title_id"])
+        if film is None:
+            raise NotFoundError(f"the film of tag {r['id']} is not in the library")
+        return self._row(r, film, self._people_out(r["title_id"]))
 
     def update_tag(self, tid: str, changes: dict[str, Any]) -> dict[str, Any]:
+        cur = self._marcarr_tag(tid)
+        if cur is None:
+            return self.store.update_tag(tid, changes)
+        fields: dict[str, Any] = {}
+        if "start" in changes or "end" in changes:
+            fields["start"], fields["end"] = st.clean_range(
+                changes.get("start", cur["start"]), changes.get("end", cur["end"])
+            )
+        if "tags" in changes:
+            fields["tag"] = st.clean_tags(changes["tags"])[0]
         if "people" in changes:
-            row = self.store.tag(tid)
-            changes = {
-                **changes,
-                "people": cast_mod.resolve_people(
-                    self._cast_or_empty(row["film_key"]), st.clean_people(changes["people"])
-                ),
-            }
-        return self.store.update_tag(tid, changes)
+            fields["people"] = self._person_ids(cur["title_id"], st.clean_people(changes["people"]))
+        if "summary" in changes:
+            fields["summary"] = str(changes["summary"] or "")[: st.MAX_SUMMARY]
+        if "status" in changes:
+            if changes["status"] not in st.STATUSES:
+                raise FansCutError(f"status must be one of {', '.join(st.STATUSES)}")
+            fields["status"] = changes["status"]
+        row = self.marcarr.store.update_tag(tid, **fields) if fields else cur
+        return self._as_row(row)
 
     def delete_tag(self, tid: str) -> None:
-        self.store.delete_tag(tid)
+        if self._marcarr_tag(tid) is not None:
+            self.marcarr.store.delete_tag(tid)
+        else:
+            self.store.delete_tag(tid)
+
+    # -- who is on screen ---------------------------------------------------------------
+    def faces_at(self, key: str, t: float) -> dict[str, Any]:
+        """Faces Marcarr matched near *t* (its faces step looks at a few frames per
+        scene), as boxes in fractions of the frame, named from the cast."""
+        film = self.film(key)
+        vid = self.link.video(film)
+        m = self.marcarr
+        if vid is None:
+            raise FansCutError("this film's faces haven't been looked at yet: analyse it first")
+        v = m.store.video(vid)
+        cast = {c["id"]: c for c in self._cast_rows(title_id(film))}
+        near = sorted(
+            m.store.faces(video=vid, start=t - 2, end=t + 2), key=lambda f: abs(f["at"] - t)
+        )
+        sure = m.cfg.faces.sure
+        best: dict[str, dict[str, Any]] = {}
+        for f in near:
+            if f["confirmed"] == 0:
+                continue
+            slot = f["person_id"] or f["id"]
+            if slot in best:
+                continue
+            c = cast.get(f["person_id"] or "") or {}
+            known = bool(f["person_id"])
+            best[slot] = {
+                "box": f["box"],
+                "score": round(f["score"], 2),
+                "name": c.get("name") if known else None,
+                "character": c.get("character")
+                or (self._readable(f["person_id"])["character"] if known else ""),
+                "photo": c.get("photo") or "",
+                "match": round(f["score"], 2) if known else None,
+                "sure": known and (f["confirmed"] == 1 or f["score"] >= sure),
+                "at": f["at"],
+            }
+        return {
+            "t": t,
+            "width": v["width"] or 0,
+            "height": v["height"] or 0,
+            "faces": list(best.values()),
+        }
 
     def xray(self, key: str, t: float) -> dict[str, Any]:
-        """Who is on screen at *t*: the people of every non-rejected tag covering it."""
+        """Who is on screen at *t* (Marcarr's scene there) and the tags covering it, with
+        each person's other kept scenes."""
+        from marcarr.views import Views
+
+        film = self.film(key)
         here = [
-            x
-            for x in self.store.tags([key])
-            if x["status"] != "rejected" and x["start"] <= t < x["end"]
+            x for x in self.tags([key]) if x["status"] != "rejected" and x["start"] <= t < x["end"]
         ]
-        cast = {c["name"]: c for c in self._cast_or_empty(key)}
-        seen: dict[str, dict[str, Any]] = {}
+        vid = self.link.video(film)
+        cast = {c["id"]: c for c in self._cast_rows(title_id(film))}
+        scenes = Views(self.marcarr).scenes(vid) if vid else []
+        now = next((s for s in scenes if s["start"] <= t < s["end"]), None)
+        ids = list(now["seen"] if now else [])
+        people: list[dict[str, Any]] = []
+        for pid in ids:
+            c = cast.get(pid) or {
+                "name": "",
+                "character": self._readable(pid)["character"],
+                "photo": "",
+            }
+            others = [
+                {
+                    "start": s["start"],
+                    "end": s["end"],
+                    "tags": [r["tag"] for r in s["tags"] if r["status"] == "accepted"],
+                }
+                for s in scenes
+                if pid in s["seen"] and s is not now
+            ]
+            people.append(
+                {
+                    "name": c["name"],
+                    "character": c["character"],
+                    "photo": c["photo"],
+                    "scenes": others,
+                }
+            )
+        # people a tag names but no scene shows (a tag made by hand, say)
         for x in here:
             for p in x["people"]:
-                k = p.get("name") or p.get("character") or ""
-                if k and k not in seen:
-                    seen[k] = {**p, "photo": (cast.get(p.get("name", "")) or {}).get("photo", "")}
-        others = {}
-        for k, p in seen.items():
-            name = p.get("name")
-            if name:
-                others[k] = [
-                    {"start": x["start"], "end": x["end"], "tags": x["tags"]}
-                    for x in self.store.tags([key])
-                    if x["status"] == "accepted" and any(q.get("name") == name for q in x["people"])
-                ]
+                k = p.get("name") or p.get("character")
+                if k and k not in {q.get("name") or q.get("character") for q in people}:
+                    people.append({**p, "photo": "", "scenes": []})
         return {
             "t": t,
             "tags": [
@@ -488,268 +742,7 @@ class SceneService:
                 }
                 for x in here
             ],
-            "people": [{**p, "scenes": others.get(k, [])} for k, p in seen.items()],
-        }
-
-    # -- AI job ---------------------------------------------------------------------
-    def submit_ai(
-        self, key: str, tag: str, description: str = "", verify: bool = True, sweep: bool = False
-    ) -> dict[str, Any]:
-        m, _ = self._file(key)
-        self._index_or_fail(key)
-        t = st.norm_tag(tag)
-        if not self.core.cfg.ai.model:
-            raise FansCutError("set an AI model in Settings first")
-        return self.core.worker.submit(
-            "scene_tag",
-            f"Find '{t}' in {m.title}",
-            {
-                "key": key,
-                "tag": t,
-                "description": description[:500],
-                "verify": bool(verify),
-                "sweep": bool(sweep),
-            },
-        )
-
-    def job_ai(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
-        key, tag = payload["key"], payload["tag"]
-        desc = payload.get("description") or ""
-        m, path = self._file(key)
-        doc = self._index_or_fail(key)
-        cfg = self.core.cfg.ai
-        cast = self._cast_or_empty(key)
-        title = f"{m.title} ({m.year})" if m.year else m.title
-
-        def text_progress(p: float, msg: str) -> None:
-            ctx.progress(0.5 * p, msg)
-
-        cands = tagger.text_pass(cfg, doc, title, tag, desc, cast, ctx.cancel, text_progress)
-        if payload.get("sweep"):
-            cands += tagger.sweep_candidates(doc)
-        cands = tagger.merge(cands)
-        model = cfg.vision_model or cfg.model
-        made, dropped = [], 0
-        for i, c in enumerate(cands):
-            if ctx.cancel.is_set():
-                break
-            ctx.progress(0.5 + 0.5 * i / max(1, len(cands)), f"Checking {i + 1}/{len(cands)}")
-            summary, people, conf = c["why"], c["people"], c["confidence"]
-            if payload.get("verify", True):
-                from prompture.media.understand import contact_sheet, sample_times
-
-                cols, rows, tile_h = tagger.sheet_shape(c["end"] - c["start"])
-                times = sample_times(c["start"], c["end"], cols * rows)
-                sheet = contact_sheet(path, times=times, cols=cols, rows=rows, tile_height=tile_h)
-                check = tagger.look(cfg, sheet, title, tag, desc, cast)
-                if not check.match:
-                    dropped += 1
-                    continue
-                c["start"], c["end"] = tagger.refine(c, check, times)
-                summary = check.summary or summary
-                # Edge pass: frames 5 s apart around each edge pin it down.
-                ecols, erows = tagger.EDGE_GRID
-                for which in ("start", "end"):
-                    lo, hi = tagger.edge_window(c[which], doc.get("duration"))
-                    etimes = sample_times(lo, hi, ecols * erows)
-                    esheet = contact_sheet(path, times=etimes, cols=ecols, rows=erows)
-                    t = tagger.edge_time(
-                        etimes, tagger.edge(cfg, esheet, title, tag, desc, which, summary), which
-                    )
-                    if t is not None:
-                        c[which] = t
-                if c["end"] - c["start"] < 3:
-                    dropped += 1
-                    continue
-                people = list(dict.fromkeys([*check.people, *people]))
-                conf = (conf + check.confidence) / 2
-            # edges on a camera cut nobody talks across, so no line is cut off
-            a, b = idx.quiet_start(doc, c["start"]), idx.quiet_end(doc, c["end"])
-            if b - a < 3 or self.store.overlapping(key, a, b, tag):
-                continue
-            made.append(
-                self.add_tag(
-                    key,
-                    {
-                        "start": a,
-                        "end": b,
-                        "tags": [tag],
-                        "people": people,
-                        "summary": summary,
-                        "confidence": round(conf, 2),
-                        "snap": False,
-                        "status": "proposed",
-                    },
-                    source=f"ai:{model}",
-                )["id"]
-            )
-        self.tidy(key)
-        return {
-            "key": key,
-            "tag": tag,
-            "candidates": len(cands),
-            "proposed": len(made),
-            "rejected_by_look": dropped,
-        }
-
-    def tidy(self, key: str) -> dict[str, int]:
-        """Sure AI moments become tags; duplicate moments merge (see SceneStore.tidy)."""
-        return self.store.tidy(key, self.core.cfg.scenes.auto_accept)
-
-    # -- one-pass labelling ---------------------------------------------------------
-    def submit_label(
-        self,
-        key: str,
-        families: list[str] | None = None,
-        sweep: bool = False,
-        mode: str = "full",
-    ) -> dict[str, Any]:
-        from . import vocab
-
-        m, _ = self._file(key)
-        self._index_or_fail(key)
-        if not self.core.cfg.ai.model:
-            raise FansCutError("set an AI model in Settings first")
-        if mode not in ("full", "focused"):
-            raise FansCutError("mode is full or focused")
-        known = vocab.families()
-        if families is None:
-            off = set(self.core.cfg.scenes.families_off)
-            families = [f for f in known if f not in off]
-        bad = [f for f in families if f not in known]
-        if bad:
-            raise FansCutError(f"unknown tag family: {', '.join(bad)}")
-        if not families:
-            raise FansCutError("pick at least one tag family")
-        return self.core.worker.submit(
-            "scene_label",
-            f"Tag {m.title}" if mode == "full" else f"Search {m.title} closely",
-            {
-                "key": key,
-                "families": list(dict.fromkeys(families)),
-                "sweep": bool(sweep),
-                "mode": mode,
-            },
-        )
-
-    def _keywords(self, m: Any) -> list[str]:
-        api_key = self.core.cfg.catalogues.tmdb_api_key
-        if not (api_key and m.tmdb_id):
-            return []
-        try:
-            return cast_mod.fetch_keywords(api_key, m.tmdb_id, self.core.session)
-        except FansCutError:
-            return []
-
-    def job_label(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
-        """Read the dialogue once for every tag, check each stretch on a contact sheet,
-        then search some tags closely (see label.py)."""
-        from prompture.media.understand import contact_sheet, sample_times
-
-        key = payload["key"]
-        m, path = self._file(key)
-        doc = self._index_or_fail(key)
-        cfg = self.core.cfg.ai
-        cast = self._cast_or_empty(key)
-        title = f"{m.title} ({m.year})" if m.year else m.title
-        tags = label_mod.tag_list(payload["families"])
-        by_id = {t["id"]: t for t in tags}
-        model = cfg.vision_model or cfg.model
-        source = f"ai:{model}"
-        stats = {"candidates": 0, "proposed": 0, "rejected_by_look": 0, "looks": 0}
-        counts: dict[str, int] = {}
-
-        def look_and_propose(c: dict[str, Any], allowed: list[dict[str, Any]]) -> None:
-            cols, rows, tile_h = tagger.sheet_shape(c["end"] - c["start"])
-            times = sample_times(c["start"], c["end"], cols * rows)
-            sheet = contact_sheet(path, times=times, cols=cols, rows=rows, tile_height=tile_h)
-            stats["looks"] += 1
-            check = label_mod.look(cfg, sheet, title, c, allowed, cast)
-            keep = list(dict.fromkeys(check.tags))[: label_mod.MAX_KEEP]
-            # an occasion (or any tag with cues) needs one of its cues actually seen
-            keep = [t for t in keep if t not in by_id or label_mod.cue_seen(by_id[t], check.seen)]
-            if not check.match or not keep:
-                stats["rejected_by_look"] += 1
-                return
-            a, b = tagger.refine(c, check, times)
-            a, b = idx.quiet_start(doc, a), idx.quiet_end(doc, b)
-            if b - a < label_mod.MIN_LEN:
-                stats["rejected_by_look"] += 1
-                return
-            new = [t for t in keep if not self.store.overlapping(key, a, b, t)]
-            if not new:
-                return
-            self.add_tag(
-                key,
-                {
-                    "start": a,
-                    "end": b,
-                    "tags": new,
-                    "people": list(dict.fromkeys([*check.people, *c["people"]])),
-                    "summary": check.summary or c["why"],
-                    "confidence": round((c["confidence"] + check.confidence) / 2, 2),
-                    "evidence": list(dict.fromkeys(check.seen)),
-                    "snap": False,
-                    "status": "proposed",
-                },
-                source=source,
-            )
-            stats["proposed"] += 1
-            for t in new:
-                counts[t] = counts.get(t, 0) + 1
-
-        full = payload.get("mode", "full") == "full"
-        if full:
-            cands = label_mod.read(
-                cfg, doc, title, tags, cast, ctx.cancel, lambda p, msg: ctx.progress(0.3 * p, msg)
-            )
-            if payload.get("sweep"):
-                cands += label_mod.sweep(doc, cands, self.store.signals(key))
-            cands = label_mod.merge(cands)
-            stats["candidates"] = len(cands)
-            for i, c in enumerate(cands):
-                if ctx.cancel.is_set():
-                    break
-                ctx.progress(0.3 + 0.4 * i / max(1, len(cands)), f"Looking {i + 1}/{len(cands)}")
-                look_and_propose(c, tags)
-
-        # -- searching closely ------------------------------------------------------
-        hits = label_mod.cue_hits(doc, [t for t in tags if t["family"] == "occasion"])
-        picked = [t for t in self.core.cfg.scenes.search_closely if t in by_id]
-        from_keywords = label_mod.keyword_tags(self._keywords(m), tags)
-        every_scene = list(dict.fromkeys([*picked, *from_keywords]))
-        focus = list(dict.fromkeys([*every_scene, *hits]))
-        for n, tag in enumerate(focus):
-            if ctx.cancel.is_set():
-                break
-            t = by_id[tag]
-            ctx.progress(0.7 + 0.2 * n / max(1, len(focus)), f"Searching for {t['name']}")
-            found = tagger.text_pass(cfg, doc, title, tag, label_mod.focus_text(t), cast)
-            found = [{**c, "tags": [tag]} for c in found]
-            found += label_mod.around_hits(doc, hits.get(tag, []), tag)
-            for c in label_mod.merge(found):
-                if ctx.cancel.is_set():
-                    break
-                if self.store.overlapping(key, c["start"], c["end"], tag):
-                    continue
-                look_and_propose(c, [t])
-        if every_scene and not ctx.cancel.is_set():
-            rows = [x for x in self.store.tags([key]) if x["status"] != "rejected"]
-            scenes = label_mod.scenes_to_look(doc, every_scene, rows)
-            for i, c in enumerate(scenes):
-                if ctx.cancel.is_set():
-                    break
-                ctx.progress(0.9 + 0.1 * i / max(1, len(scenes)), f"Looking closely {i + 1}")
-                look_and_propose(c, [by_id[t] for t in c["look_for"]])
-        tidied = self.tidy(key)
-        return {
-            "key": key,
-            **stats,
-            **tidied,
-            "searched_closely": focus,
-            "every_scene_for": every_scene,
-            "keywords_matched": from_keywords,
-            "tags": counts,
+            "people": people,
         }
 
     # -- collections ----------------------------------------------------------------
@@ -776,12 +769,12 @@ class SceneService:
             films = self.films(name)
         if not films:
             raise NotFoundError(f"no films in collection {name!r}")
-        tags = self.store.tags([f["key"] for f in films], tag, status)
+        keys_ = [f["key"] for f in films]
         by_film: dict[str, list[dict[str, Any]]] = {f["key"]: [] for f in films}
-        for x in tags:
+        for x in self.tags(keys_, tag, status):
             by_film[x["film_key"]].append(x)
         counts: dict[str, int] = {}
-        for x in self.store.tags([f["key"] for f in films]):
+        for x in self.tags(keys_):
             if x["status"] != "rejected":
                 for t in x["tags"]:
                     counts[t] = counts.get(t, 0) + 1
@@ -810,7 +803,7 @@ class SceneService:
                 continue
             m = self.film(f["key"])
             src = f"M{f['tmdb_id']}"
-            dur = m.duration or (self.store.index(f["key"]) or {}).get("duration")
+            dur = m.duration or (self._doc(f["key"]) or {}).get("duration")
             sources[src] = {
                 "kind": "movie",
                 "tmdb": f["tmdb_id"],

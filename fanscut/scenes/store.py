@@ -1,4 +1,5 @@
-"""SQLite storage for scene indexes, scene tags and cast lists."""
+"""SQLite storage for FansCut's own cut tags (``fc:``). Everything else about a
+film's scenes (index, signals, cast, content tags) lives in Marcarr (link.py)."""
 
 from __future__ import annotations
 
@@ -90,44 +91,6 @@ def same_moment(a: dict[str, Any], b: dict[str, Any]) -> bool:
 class SceneStore:
     def __init__(self, db: Database):
         self.db = db
-
-    # -- index ------------------------------------------------------------------
-    def index(self, film_key: str) -> dict[str, Any] | None:
-        row = self.db.one("SELECT doc, updated_at FROM scene_index WHERE film_key = ?", (film_key,))
-        if row is None:
-            return None
-        return {**json.loads(row["doc"]), "updated_at": row["updated_at"]}
-
-    def save_index(self, film_key: str, doc: dict[str, Any]) -> None:
-        self.db.execute(
-            "INSERT OR REPLACE INTO scene_index (film_key, doc, updated_at) VALUES (?,?,?)",
-            (film_key, dumps(doc), _now()),
-        )
-
-    def indexed(self) -> set[str]:
-        return {r["film_key"] for r in self.db.query("SELECT film_key FROM scene_index")}
-
-    def save_signals(self, film_key: str, doc: dict[str, Any]) -> None:
-        """Signals live in the film's index document (re-indexing measures them again)."""
-        doc = {**doc, "measured_at": _now()}
-        self.db.execute(
-            "UPDATE scene_index SET doc = json_set(doc, '$.signals', json(?)) WHERE film_key = ?",
-            (dumps(doc), film_key),
-        )
-
-    def signals(self, film_key: str) -> dict[str, Any] | None:
-        row = self.db.one(
-            "SELECT json_extract(doc, '$.signals') AS s FROM scene_index WHERE film_key = ?",
-            (film_key,),
-        )
-        return json.loads(row["s"]) if row and row["s"] else None
-
-    def scene_counts(self) -> dict[str, int]:
-        """Automatic scenes per indexed film, without loading the documents."""
-        rows = self.db.query(
-            "SELECT film_key, json_array_length(doc, '$.scenes') AS n FROM scene_index"
-        )
-        return {r["film_key"]: int(r["n"] or 0) for r in rows}
 
     # -- tags -------------------------------------------------------------------
     @staticmethod
@@ -329,14 +292,3 @@ class SceneStore:
             }
             for t, c in sorted(counts.items())
         ]
-
-    # -- cast -------------------------------------------------------------------
-    def cast(self, film_key: str) -> dict[str, Any] | None:
-        row = self.db.one("SELECT doc FROM cast_cache WHERE film_key = ?", (film_key,))
-        return json.loads(row["doc"]) if row else None
-
-    def save_cast(self, film_key: str, doc: dict[str, Any]) -> None:
-        self.db.execute(
-            "INSERT OR REPLACE INTO cast_cache (film_key, doc, updated_at) VALUES (?,?,?)",
-            (film_key, dumps(doc), _now()),
-        )

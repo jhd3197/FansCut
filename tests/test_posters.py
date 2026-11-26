@@ -56,7 +56,7 @@ def pc(cfg, tmp_path, monkeypatch):
             {"key": "radarr:1", "tmdb_id": 671}])
         core.scenes.store.add_tag("radarr:1", 671, 0, 30, ["christmas", "snow"], [],
                                   source="user", status="accepted")
-        monkeypatch.setattr(core.scenes.store, "signals", lambda key: {
+        monkeypatch.setattr(core.scenes, "signals_of", lambda key: {
             "signals": {"no-face": [[18.0, 22.0], [30.0, 36.0]]}})
         import prompture.drivers.img_gen_registry as reg
 

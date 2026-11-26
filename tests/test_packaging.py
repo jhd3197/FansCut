@@ -27,10 +27,20 @@ def test_requirements_list_every_core_dependency():
     assert _names(required) == _names(pyproject["project"]["dependencies"])
 
 
+def test_the_dockerfile_installs_what_the_lock_cannot():
+    lines = (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    urls = [ln.split("#")[0].strip() for ln in lines if " @ " in ln and not ln.startswith("#")]
+    docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert urls and all(u in docker for u in urls)
+
+
 def test_the_lock_pins_every_requirement():
     """requirements.lock (what Docker installs) must cover requirements.txt."""
     lines = (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
-    required = _names([ln.split("#")[0] for ln in lines if ln.strip() and not ln.startswith("#")])
+    # A package from a URL (Marcarr) can't be hash-pinned: the Dockerfile installs it
+    # on its own, after the lock.
+    required = _names([ln.split("#")[0] for ln in lines
+                       if ln.strip() and not ln.startswith("#") and " @ " not in ln])
     lock = (ROOT / "requirements.lock").read_text(encoding="utf-8")
     pinned = {ln.split("==")[0].strip().lower().replace("_", "-")
               for ln in lock.splitlines() if "==" in ln and not ln.startswith((" ", "#"))}

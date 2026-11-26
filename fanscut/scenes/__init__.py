@@ -1,11 +1,11 @@
-"""Scene tagging: an index of each film, tags on time ranges, cast and X-Ray.
+"""Scene tagging: what is in each film, from an embedded Marcarr.
 
-* ``index``  — camera cuts (Prompture ``detect_shots``), timed subtitle lines
-  and automatic scenes for one film. Media-free: times and text only.
-* ``tags``   — labelled ranges ("christmas", "quidditch") with the people in
-  them. Anyone can propose one (a person, the AI job, an MCP client); a
-  person accepts or rejects it. Tags live apart from the index, so
-  re-indexing a film never loses them.
-* ``cast``   — the film's cast (Plex roles, or TMDB credits with a key).
-* ``tagger`` — the AI pass: subtitles first, then contact sheets to check.
+* ``link``     — the embedded Marcarr: a FansCut film becomes a Marcarr title and
+  its file a Marcarr video. Marcarr finds the shots, subtitle lines, scenes,
+  signals, cast, faces and tags.
+* ``service``  — what FansCut's pages, MCP server and posters call: Marcarr's
+  answers in FansCut's shapes, plus frames, contact sheets and clips.
+* ``store``    — FansCut's own cut tags (``fc:filler``), kept in FansCut.
+* ``analysis`` — the four steps the film page shows.
+* ``vocab``    — the shared tag list (Marcarr's).
 """

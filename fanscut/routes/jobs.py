@@ -55,11 +55,24 @@ def list_jobs(core: CoreDep, status: Status | None = None, skip: int = Query(0, 
 
 @router.get("/jobs/{job_id}", response_model=Job)
 def get_job(core: CoreDep, job_id: str) -> dict[str, Any]:
-    return core.jobs.get(job_id)
+    """A FansCut job, or a scene analysis job of the embedded Marcarr."""
+    try:
+        return core.jobs.get(job_id)
+    except NotFoundError:
+        found = core.scenes.job(job_id)
+        if found is None:
+            raise
+        return found
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=Job)
 def cancel_job(core: CoreDep, job_id: str) -> dict[str, Any]:
+    try:
+        core.jobs.get(job_id)
+    except NotFoundError:
+        if core.scenes.job(job_id) is None:
+            raise
+        return core.scenes.marcarr.worker.cancel(job_id)
     return core.worker.cancel(job_id)
 
 
