@@ -61,6 +61,34 @@ the closest today), content tags can map to it without renumbering anything.
 
 - `mood` tags are `subjective`: they need more agreement before they enter
   the KB (section 6).
+- Some tags carry **cues**: what to look for and what to listen for. Every
+  occasion has them, and so do snow, fire, water and graveyard:
+
+  ```json
+  "cues": {"see": ["pumpkins", "jack-o'-lanterns", "costumes", "bats"],
+           "hear": ["Halloween", "trick or treat"]}
+  ```
+
+  Cues are part of the list, so every copy of FansCut looks for the same
+  things.
+
+### How the content pass uses cues
+
+1. **Free first signal.** Subtitle lines that say a `hear` word mark their
+   window ("heard: halloween ('trick or treat')"); a word alone never makes
+   a tag, the scene has to be about it.
+2. **Prompts.** The text and vision prompts list each tag's `see` and `hear`
+   cues. The vision check names the cues it actually saw; they are kept with
+   the proposal as its evidence and shown next to it ("seen: pumpkins,
+   costumes"). Evidence stays local, like summaries.
+3. **Searching closely.** After the one-pass labelling, some tags get a
+   focused search of their own: the occasions picked in Settings ("Search
+   closely", Christmas and Halloween by default), the ones the film's TMDB
+   keywords name, and any whose `hear` words turn up in the subtitles. Each
+   gets a one-tag text pass with its cues and a look around every line that
+   says a cue word; the ones picked in Settings or named by keywords also get
+   a look at every scene the pass didn't already tag (that is how a Halloween
+   feast with no one saying "Halloween" is found).
 - `content` tags exist so a set or cut can leave scenes out (a family
   version), not to find them.
 

@@ -19,91 +19,340 @@
    "id": "christmas",
    "name": "Christmas",
    "family": "occasion",
-   "hint": "Christmas decorations, trees, presents, carols, a Christmas feast or Christmas Day"
+   "hint": "Christmas decorations, trees, presents, carols, a Christmas feast or Christmas Day",
+   "cues": {
+    "see": [
+     "Christmas tree",
+     "wrapped presents",
+     "stockings",
+     "wreaths",
+     "Santa",
+     "snow",
+     "Christmas crackers",
+     "fairy lights",
+     "holly",
+     "a Christmas feast"
+    ],
+    "hear": [
+     "Christmas",
+     "Merry Christmas",
+     "Happy Christmas",
+     "Christmas Eve",
+     "presents",
+     "Santa",
+     "carol"
+    ]
+   }
   },
   {
    "id": "halloween",
    "name": "Halloween",
    "family": "occasion",
-   "hint": "Halloween costumes, pumpkins, trick-or-treating or a Halloween feast"
+   "hint": "Halloween costumes, pumpkins, trick-or-treating or a Halloween feast",
+   "cues": {
+    "see": [
+     "pumpkins",
+     "jack-o'-lanterns",
+     "costumes",
+     "bats",
+     "black cats",
+     "skeletons",
+     "candles in pumpkins",
+     "witch hats",
+     "trick-or-treaters",
+     "cobwebs"
+    ],
+    "hear": [
+     "Halloween",
+     "trick or treat",
+     "All Hallows"
+    ]
+   }
   },
   {
    "id": "thanksgiving",
    "name": "Thanksgiving",
    "family": "occasion",
-   "hint": "a Thanksgiving dinner or holiday gathering"
+   "hint": "a Thanksgiving dinner or holiday gathering",
+   "cues": {
+    "see": [
+     "roast turkey",
+     "a family dinner table",
+     "pilgrims",
+     "pumpkin pie",
+     "cornucopia",
+     "autumn leaves"
+    ],
+    "hear": [
+     "Thanksgiving",
+     "grateful",
+     "give thanks",
+     "turkey"
+    ]
+   }
   },
   {
    "id": "new-year",
    "name": "New Year",
    "family": "occasion",
-   "hint": "New Year's Eve, a countdown, fireworks at midnight"
+   "hint": "New Year's Eve, a countdown, fireworks at midnight",
+   "cues": {
+    "see": [
+     "fireworks",
+     "a countdown clock",
+     "champagne",
+     "party hats",
+     "confetti",
+     "a midnight crowd"
+    ],
+    "hear": [
+     "Happy New Year",
+     "New Year's",
+     "midnight",
+     "countdown",
+     "resolution"
+    ]
+   }
   },
   {
    "id": "easter",
    "name": "Easter",
    "family": "occasion",
-   "hint": "Easter eggs, an egg hunt or an Easter gathering"
+   "hint": "Easter eggs, an egg hunt or an Easter gathering",
+   "cues": {
+    "see": [
+     "painted eggs",
+     "an egg hunt",
+     "Easter baskets",
+     "bunny ears",
+     "spring flowers",
+     "chocolate eggs"
+    ],
+    "hear": [
+     "Easter",
+     "Easter egg",
+     "Easter bunny"
+    ]
+   }
   },
   {
    "id": "valentines-day",
    "name": "Valentine's Day",
    "family": "occasion",
-   "hint": "Valentine's Day cards, gifts or dates"
+   "hint": "Valentine's Day cards, gifts or dates",
+   "cues": {
+    "see": [
+     "heart decorations",
+     "red roses",
+     "Valentine cards",
+     "boxes of chocolates",
+     "a candlelit dinner for two"
+    ],
+    "hear": [
+     "Valentine",
+     "Valentine's Day",
+     "be my valentine"
+    ]
+   }
   },
   {
    "id": "birthday",
    "name": "Birthday",
    "family": "occasion",
-   "hint": "a birthday party, cake with candles or birthday presents"
+   "hint": "a birthday party, cake with candles or birthday presents",
+   "cues": {
+    "see": [
+     "a cake with candles",
+     "blowing out candles",
+     "birthday presents",
+     "balloons",
+     "party hats",
+     "a birthday banner"
+    ],
+    "hear": [
+     "happy birthday",
+     "birthday",
+     "make a wish",
+     "years old"
+    ]
+   }
   },
   {
    "id": "wedding",
    "name": "Wedding",
    "family": "occasion",
-   "hint": "a wedding ceremony or reception"
+   "hint": "a wedding ceremony or reception",
+   "cues": {
+    "see": [
+     "a wedding dress",
+     "a veil",
+     "an altar",
+     "wedding rings",
+     "a wedding cake",
+     "bouquets",
+     "rows of guests"
+    ],
+    "hear": [
+     "wedding",
+     "I do",
+     "husband and wife",
+     "dearly beloved",
+     "bride",
+     "groom"
+    ]
+   }
   },
   {
    "id": "funeral",
    "name": "Funeral",
    "family": "occasion",
-   "hint": "a funeral, wake or burial"
+   "hint": "a funeral, wake or burial",
+   "cues": {
+    "see": [
+     "a coffin",
+     "a grave",
+     "mourners in black",
+     "a hearse",
+     "flowers on a grave",
+     "a headstone"
+    ],
+    "hear": [
+     "funeral",
+     "rest in peace",
+     "we are gathered",
+     "buried",
+     "eulogy"
+    ]
+   }
   },
   {
    "id": "graduation",
    "name": "Graduation",
    "family": "occasion",
-   "hint": "a graduation ceremony or end-of-school celebration"
+   "hint": "a graduation ceremony or end-of-school celebration",
+   "cues": {
+    "see": [
+     "caps and gowns",
+     "diplomas",
+     "throwing caps",
+     "a stage with a podium"
+    ],
+    "hear": [
+     "graduation",
+     "graduate",
+     "class of",
+     "diploma",
+     "commencement"
+    ]
+   }
   },
   {
    "id": "school-dance",
    "name": "School dance",
    "family": "occasion",
-   "hint": "a prom, ball or formal school dance"
+   "hint": "a prom, ball or formal school dance",
+   "cues": {
+    "see": [
+     "a ballroom",
+     "formal dresses",
+     "suits",
+     "a dance floor",
+     "a band or DJ",
+     "corsages",
+     "a decorated hall"
+    ],
+    "hear": [
+     "prom",
+     "the ball",
+     "dance with me",
+     "date to the dance",
+     "Yule Ball"
+    ]
+   }
   },
   {
    "id": "party",
    "name": "Party",
    "family": "occasion",
-   "hint": "a party that is not one of the occasions above"
+   "hint": "a party that is not one of the occasions above",
+   "cues": {
+    "see": [
+     "balloons",
+     "a crowded room with music",
+     "drinks",
+     "decorations",
+     "dancing"
+    ],
+    "hear": [
+     "party",
+     "celebrate",
+     "cheers"
+    ]
+   }
   },
   {
    "id": "festival",
    "name": "Festival or fair",
    "family": "occasion",
-   "hint": "a festival, fair, carnival or parade"
+   "hint": "a festival, fair, carnival or parade",
+   "cues": {
+    "see": [
+     "fairground rides",
+     "stalls",
+     "a parade",
+     "lanterns",
+     "flags and bunting",
+     "a crowd in costume"
+    ],
+    "hear": [
+     "festival",
+     "fair",
+     "carnival",
+     "parade"
+    ]
+   }
   },
   {
    "id": "summer-holiday",
    "name": "Summer holiday",
    "family": "occasion",
-   "hint": "a summer trip or holiday away from home"
+   "hint": "a summer trip or holiday away from home",
+   "cues": {
+    "see": [
+     "suitcases",
+     "a beach or pool",
+     "sunglasses",
+     "a holiday home",
+     "a road trip"
+    ],
+    "hear": [
+     "holiday",
+     "vacation",
+     "summer",
+     "trip"
+    ]
+   }
   },
   {
    "id": "snow",
    "name": "Snow",
    "family": "weather",
-   "hint": "snow falling or lying on the ground"
+   "hint": "snow falling or lying on the ground",
+   "cues": {
+    "see": [
+     "snow falling",
+     "snow on the ground",
+     "snowy roofs",
+     "frost",
+     "snowmen",
+     "breath in cold air"
+    ],
+    "hear": [
+     "snow",
+     "snowing",
+     "freezing"
+    ]
+   }
   },
   {
    "id": "rain",
@@ -301,7 +550,22 @@
    "id": "graveyard",
    "name": "Graveyard",
    "family": "place",
-   "hint": "a graveyard, cemetery or tomb"
+   "hint": "a graveyard, cemetery or tomb",
+   "cues": {
+    "see": [
+     "gravestones",
+     "tombs",
+     "a cemetery gate",
+     "a crypt",
+     "a freshly dug grave"
+    ],
+    "hear": [
+     "graveyard",
+     "cemetery",
+     "grave",
+     "tomb"
+    ]
+   }
   },
   {
    "id": "fight",
@@ -779,13 +1043,43 @@
    "id": "fire",
    "name": "Fire",
    "family": "element",
-   "hint": "fire or flames on screen: a fireplace, candles, torches, something burning"
+   "hint": "fire that matters in the scene: a fireplace, a bonfire, something burning, a fire spell (not candles or torches in the background)",
+   "cues": {
+    "see": [
+     "flames that matter to the scene",
+     "a lit fireplace",
+     "a bonfire",
+     "something burning",
+     "smoke from a blaze"
+    ],
+    "hear": [
+     "fire",
+     "burning",
+     "flames"
+    ]
+   }
   },
   {
    "id": "water",
    "name": "Water",
    "family": "element",
-   "hint": "water matters in the scene: a lake, river, pool, waterfall or flood (not just rain or the open sea)"
+   "hint": "water matters in the scene: a lake, river, pool, waterfall or flood (not just rain or the open sea)",
+   "cues": {
+    "see": [
+     "a lake",
+     "a river",
+     "a pool",
+     "a waterfall",
+     "a flood",
+     "boats"
+    ],
+    "hear": [
+     "water",
+     "lake",
+     "river",
+     "drown"
+    ]
+   }
   },
   {
    "id": "gore",
