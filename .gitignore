@@ -35,4 +35,5 @@ raw/
 # Playwright e2e output
 ui/playwright-report/
 ui/test-results/
+ui/.e2e-run/
 .coverage

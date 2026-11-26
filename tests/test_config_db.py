@@ -218,9 +218,13 @@ def test_failed_migration_leaves_the_database_untouched(tmp_path, monkeypatch):
 def test_transaction_rolls_back(db):
     import pytest
 
-    with pytest.raises(RuntimeError), db.transaction():
-        db.execute("INSERT INTO series_settings (series_key, settings) VALUES ('a', '{}')")
-        raise RuntimeError
+    def insert_then_fail():
+        with db.transaction():
+            db.execute("INSERT INTO series_settings (series_key, settings) VALUES ('a', '{}')")
+            raise RuntimeError
+
+    with pytest.raises(RuntimeError):
+        insert_then_fail()
     assert db.one("SELECT * FROM series_settings") is None
 
 

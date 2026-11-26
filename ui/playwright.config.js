@@ -4,7 +4,7 @@
 //   npm run e2e        # = playwright test
 //
 // The webServer command writes a throwaway config, data dir and fixture media
-// folder into <tmp>/fanscut-e2e (e2e/global-setup.mjs), then starts
+// folder into ui/.e2e-run (e2e/global-setup.mjs), then starts
 // `python -m fanscut serve` on port 6598 from the repo root.
 import { defineConfig, devices } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
