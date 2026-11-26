@@ -9,6 +9,9 @@ import { LibraryPage } from './pages/LibraryPage.jsx';
 import { CollectionPage } from './pages/Collection.jsx';
 import { MoviePage } from './pages/Movie.jsx';
 import { ScenesPage } from './pages/Scenes.jsx';
+import { MovieCast } from './pages/MovieCast.jsx';
+import { SetDetail, Sets } from './pages/Sets.jsx';
+import { CutPoster } from './pages/CutPoster.jsx';
 import { CollectionScenesPage } from './pages/CollectionScenes.jsx';
 import { ShowPage } from './pages/Show.jsx';
 import { SeasonPage } from './pages/Season.jsx';
@@ -57,6 +60,7 @@ function navItems(n) {
   return [
     ['/', t('nav.discover'), n.discover, true],
     ['/library', t('nav.library')],
+    ['/sets', t('nav.sets')],
     ['/my-cuts', t('nav.myCuts'), n.cuts],
     ['/jobs', t('nav.jobs'), n.jobs],
     ['/health', t('nav.health'), n.health],
@@ -139,7 +143,7 @@ export function App() {
   const where = useLocation().pathname;
   useEffect(() => {
     // detail pages set their own (the movie or show name); these are the fixed ones
-    const fixed = { '/': 'Discover', '/library': 'Library', '/my-cuts': 'My cuts', '/jobs': 'Jobs',
+    const fixed = { '/': 'Discover', '/library': 'Library', '/sets': 'Sets', '/my-cuts': 'My cuts', '/jobs': 'Jobs',
       '/health': 'Health', '/settings': 'Settings', '/logs': 'Logs' };
     if (fixed[where]) document.title = `${fixed[where]} · FansCut`;
   }, [where]);
@@ -177,6 +181,9 @@ export function App() {
           <Route path="/collections/:id/scenes" element={<CollectionScenesPage />} />
           <Route path="/movies/:key" element={<MoviePage />} />
           <Route path="/movies/:key/scenes" element={<ScenesPage />} />
+          <Route path="/movies/:key/cast" element={<MovieCast />} />
+          <Route path="/sets" element={<Sets />} />
+          <Route path="/sets/:tag" element={<SetDetail />} />
           <Route path="/series/:key" element={<ShowPage />} />
           <Route path="/series/:key/match" element={<MatchPage />} />
           <Route path="/series/:key/season/:season" element={<SeasonPage />} />
@@ -185,6 +192,7 @@ export function App() {
           <Route path="/series/:key/timelines/:tid" element={<OldTimeline />} />
           <Route path="/cuts/:id" element={<CutDetail />} />
           <Route path="/cuts/:id/build" element={<Build />} />
+          <Route path="/cuts/:id/poster" element={<CutPoster />} />
           <Route path="/cuts/:id/edit" element={<TimelineEdit />} />
           <Route path="/my-cuts" element={<MyCuts />} />
           <Route path="/new" element={<NewCutPage />} />
@@ -197,7 +205,7 @@ export function App() {
         </Suspense>
         </ErrorBoundary>
       </main>
-      <MobileNav items={items.slice(0, 5)} />
+      <MobileNav items={items.filter(([to]) => to !== '/sets').slice(0, 5)} />
       <Toasts />
     </div>
   );

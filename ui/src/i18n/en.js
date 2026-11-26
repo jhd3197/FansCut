@@ -3,6 +3,7 @@
 export default {
   'nav.discover': 'Discover',
   'nav.library': 'Library',
+  'nav.sets': 'Sets',
   'nav.myCuts': 'My cuts',
   'nav.jobs': 'Jobs',
   'nav.health': 'Health',

@@ -5,6 +5,7 @@ import { useAct, useLoad, useUrlState, useDebounced, useShelfLayout } from '../l
 import { Dialog, Empty, ErrorBox, Loading, Notice, SkeletonTiles } from '../components/ui.jsx';
 import { Backdrop, CutTile, KV, Search, Seg, Shelf, enc, hm } from '../components/kit.jsx';
 import { discoverShelves } from '../lib/shelves.js';
+import { SetCard, useSets } from './Sets.jsx';
 
 // -- shared with the Collection and Movie pages --------------------------------------------
 
@@ -170,6 +171,7 @@ export function Discover() {
   const [q, setQ] = useUrlState('q');
   const dq = useDebounced(q);
   const [adding, setAdding] = useState(false);
+  const { sets } = useSets();
 
   const needle = dq.trim().toLowerCase();
   const items = (data || []).filter((s) => (filter === 'all' || (filter === 'ready' ? s.status === 'ready' : s.status !== 'ready'))
@@ -207,6 +209,16 @@ export function Discover() {
       {data && data.length > 0 && items.length === 0 && (
         <Empty>Nothing matches. {needle ? 'Try another search' : 'Try another filter'}.</Empty>
       )}
+
+      {filter === 'all' && (() => {
+        const top = (sets || []).filter((x) => !x.smart && (!needle || x.name.toLowerCase().includes(needle))).slice(0, 12);
+        return top.length > 0 && (
+          <Shelf id="shelf-sets" title="Sets" count={sets.filter((x) => !x.smart).length} wide
+            actions={<Link to="/sets" className="btn btn-sm btn-ghost">All</Link>}>
+            {top.map((x) => <SetCard key={x.tag} s={x} />)}
+          </Shelf>
+        );
+      })()}
 
       {!needle && filter === 'all' && loaded?.collections?.length > 0 && (
         <Shelf id="shelf-coll" title="Your collections" count={loaded.collections.length} wide>
