@@ -242,3 +242,52 @@ def test_prune_drops_old_finished_jobs(db):
                " ('old','k','done','2000-01-01','2000-01-01'), ('q','k','queued','2000-01-01','2000-01-01')")
     assert db.prune()["jobs"] == 1
     assert [r["id"] for r in db.query("SELECT id FROM jobs")] == ["q"]
+
+
+def test_scene_marker_poster_defaults():
+    cfg = config.Config()
+    assert cfg.scenes.families_off == [] and cfg.scenes.smart_tags is True
+    assert cfg.scenes.extend == "ambient" and cfg.scenes.custom_tags == []
+    assert cfg.markers.check and not cfg.markers.auto_install and not cfg.markers.share
+    assert cfg.markers.reviewed_only and not cfg.markers.share_people
+    assert cfg.markers.index_url.endswith("fanscut-community/main/index.json")
+    assert cfg.posters.layout == "frame" and cfg.posters.title and cfg.posters.stills == 4
+    assert cfg.posters.weights.model_dump() == {"exposure": 30, "contrast": 25, "color": 25,
+                                                "detail": 20}
+
+
+def test_scene_marker_poster_update_and_validation():
+    cfg = config.merge_update(config.Config(), {
+        "scenes": {"families_off": ["mood", "mood"], "extend": "filler",
+                   "custom_tags": [" great-hall ", "", "great-hall"]},
+        "markers": {"share": True},
+        "posters": {"layout": "grid", "stills": 6, "weights": {"detail": 50}},
+    })
+    assert cfg.scenes.families_off == ["mood"] and cfg.scenes.extend == "filler"
+    assert cfg.scenes.custom_tags == ["great-hall"]
+    assert cfg.markers.share and cfg.posters.layout == "grid" and cfg.posters.stills == 6
+    assert cfg.posters.weights.detail == 50
+    for bad in ({"scenes": {"families_off": ["nope"]}}, {"scenes": {"extend": "all"}},
+                {"posters": {"stills": 3}}, {"posters": {"weights": {"color": 51}}},
+                {"posters": {"layout": "collage"}}, {"markers": {"nope": 1}}):
+        with pytest.raises(ConfigError):
+            config.merge_update(cfg, bad)
+
+
+def test_settings_api_returns_and_accepts_scene_keys(tmp_path, clean_env):
+    from fastapi.testclient import TestClient
+
+    from fanscut.server import create_app
+
+    p = tmp_path / "config.yaml"
+    p.write_text("")
+    with TestClient(create_app(config.load(p), p, start_worker=False)) as c:
+        got = c.get("/api/settings").json()
+        assert got["posters"]["weights"]["exposure"] == 30 and got["markers"]["check"] is True
+        got["scenes"]["families_off"] = ["content"]
+        got["posters"]["weights"]["contrast"] = 40
+        assert c.put("/api/settings", json=got).status_code == 200
+        got["posters"]["stills"] = 5
+        assert c.put("/api/settings", json=got).status_code >= 400
+    assert config.load(p).scenes.families_off == ["content"]
+    assert config.load(p).posters.weights.contrast == 40
