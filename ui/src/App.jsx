@@ -11,12 +11,11 @@ import { MoviePage } from './pages/Movie.jsx';
 import { ScenesPage } from './pages/Scenes.jsx';
 import { MovieCast } from './pages/MovieCast.jsx';
 import { SetDetail, Sets } from './pages/Sets.jsx';
-import { CutPoster } from './pages/CutPoster.jsx';
 import { CollectionScenesPage } from './pages/CollectionScenes.jsx';
 import { ShowPage } from './pages/Show.jsx';
 import { SeasonPage } from './pages/Season.jsx';
 import { EpisodePage } from './pages/Episode.jsx';
-import { CutDetail } from './pages/CutDetail.jsx';
+import { CutDetail, CutPosterRedirect } from './pages/CutDetail.jsx';
 import { CutScenes } from './pages/CutScenes.jsx';
 import { LibraryTag, LibraryTags } from './pages/LibraryTags.jsx';
 import { SuggestionPage } from './pages/Suggestion.jsx';
@@ -196,7 +195,7 @@ export function App() {
           <Route path="/series/:key/timelines/:tid" element={<OldTimeline />} />
           <Route path="/cuts/:id" element={<CutDetail />} />
           <Route path="/cuts/:id/build" element={<Build />} />
-          <Route path="/cuts/:id/poster" element={<CutPoster />} />
+          <Route path="/cuts/:id/poster" element={<CutPosterRedirect />} />
           <Route path="/cuts/:id/scenes" element={<CutScenes />} />
           <Route path="/cuts/:id/edit" element={<TimelineEdit />} />
           <Route path="/my-cuts" element={<MyCuts />} />

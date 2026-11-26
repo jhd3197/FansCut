@@ -164,3 +164,22 @@ def test_a_later_take_waits_to_be_kept(pc):
     pc.post("/api/timelines/t1/poster/ai", json={"stills": [{"src": "M671", "t": 20}]})
     st = _wait(pc)
     assert len(st["takes"]) == 2 and st["chosen"] == first  # the new one is only offered
+
+
+def test_a_poster_drawn_on_the_page_is_used(pc, tmp_path):
+    out = io.BytesIO()
+    Image.new("RGB", (60, 90), "green").save(out, "JPEG")
+    url = "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode()
+    st = pc.put("/api/timelines/t1/poster", json={"kind": "frame", "image": url}).json()
+    assert st["chosen"].startswith("frame-")
+    assert pc.get("/api/timelines/t1/poster").content[1:4] == b"PNG"
+    show = tmp_path / "show2"
+    show.mkdir()
+    assert pc.core.posters.write_for_build("t1", show) == str(show / "poster.jpg")
+    st = pc.put("/api/timelines/t1/poster", json={"kind": "title", "image": url}).json()
+    assert st["chosen"].startswith("title-")
+    assert pc.put("/api/timelines/t1/poster", json={"kind": "art", "image": url}).status_code == 422
+    bad = pc.put("/api/timelines/t1/poster",
+                 json={"kind": "frame", "image": base64.b64encode(b"nope").decode()})
+    assert bad.status_code == 400
+    assert pc.put("/api/timelines/t1/poster", json={"kind": "frame", "image": "%%"}).status_code == 400

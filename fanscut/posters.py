@@ -36,6 +36,8 @@ MAX_STILLS = 4  # reference images per take
 MAX_TAKES = 6  # older takes are deleted
 SIZE = "1024x1536"  # 2:3, a film poster
 TAKE_RE = re.compile(r"^take-\d{10,13}\.png$")
+USE_KINDS = ("frame", "title")  # posters drawn in the browser
+MAX_SIDE = 4000  # px, for a poster drawn in the browser
 
 PROMPT = """\
 A vertical film poster (2:3) for a fan-made cut called "{title}"{franchise}.
@@ -165,6 +167,29 @@ class Posters:
         self.take_path(tid, name).unlink()
         meta = self._meta(tid)
         meta.pop(name, None)
+        self._save_meta(tid, meta)
+        return self.state(tid)
+
+    def use_image(self, tid: str, data: bytes, kind: str) -> dict[str, Any]:
+        """A poster drawn in the browser (a frame from the cut with its title, or the
+        title only) as the cut's poster, in place of any AI take (takes are kept)."""
+        from PIL import Image, UnidentifiedImageError
+
+        if kind not in USE_KINDS:
+            raise FansCutError("kind is frame or title")
+        try:
+            with Image.open(io.BytesIO(data)) as im:
+                if max(im.size) > MAX_SIDE or min(im.size) < 16:
+                    raise FansCutError("the poster is too big or too small")
+                out = io.BytesIO()
+                im.convert("RGB").save(out, "PNG")
+        except (UnidentifiedImageError, OSError) as exc:
+            raise FansCutError("that is not an image") from exc
+        folder = self.folder(tid)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "chosen.png").write_bytes(out.getvalue())
+        meta = self._meta(tid)
+        meta["chosen"] = f"{kind}-{int(time.time() * 1000)}"
         self._save_meta(tid, meta)
         return self.state(tid)
 

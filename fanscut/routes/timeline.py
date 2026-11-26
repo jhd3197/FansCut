@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from ..errors import NotFoundError
+from ..errors import FansCutError, NotFoundError
 from . import CoreDep
 
 router = APIRouter(prefix="/api", tags=["timelines"])
@@ -54,6 +54,24 @@ def poster_file(core: CoreDep, tid: str) -> FileResponse:
     if p is None:
         raise NotFoundError("this cut has no AI poster")
     return FileResponse(p, media_type="image/png", headers={"Cache-Control": "no-cache"})
+
+
+class PosterImageBody(BaseModel):
+    kind: Literal["frame", "title"]
+    image: str = Field(max_length=16_000_000)  # base64, or a data: URL
+
+
+@router.put("/timelines/{tid}/poster")
+def poster_use_image(core: CoreDep, tid: str, body: PosterImageBody) -> dict[str, Any]:
+    """Use a poster drawn on the cut page (a frame with the title, or the title only)."""
+    import base64
+    import binascii
+
+    try:
+        data = base64.b64decode(body.image.split(",", 1)[-1], validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise FansCutError("the image is not base64") from exc
+    return core.posters.use_image(tid, data, body.kind)
 
 
 @router.delete("/timelines/{tid}/poster")
