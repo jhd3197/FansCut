@@ -1,7 +1,56 @@
 import { describe, expect, it } from 'vitest';
 import {
-  dedupeMoments, hasPerson, isAI, nextCut, personKeys, prevCut, segWindow, tagGroups, trimSegment,
+  buildScenes, dedupeMoments, edgeNote, hasPerson, isAI, midLine, nextCut, personKeys, prevCut, segWindow,
+  snapEdge, speechLines, tagGroups, trimSegment,
 } from './Scenes.jsx';
+
+describe('scenes from tag rows', () => {
+  it('groups rows over the same range: accepted tags, AI suggestions, every id', () => {
+    const rows = [
+      { id: 'a', start: 100, end: 200, tags: ['christmas', 'family'], status: 'accepted', summary: 'Presents' },
+      { id: 'b', start: 102, end: 198, tags: ['magic', 'family'], status: 'proposed', confidence: 0.7 },
+      { id: 'c', start: 300, end: 400, tags: ['night'], status: 'proposed', summary: 'The cloak' },
+      { id: 'd', start: 300, end: 400, tags: ['night'], status: 'rejected' },
+      { id: 'e', start: 500, end: 510, tags: ['fc:no-face'], status: 'accepted' },
+    ];
+    const s = buildScenes(rows);
+    expect(s.map((x) => x.id)).toEqual(['a', 'c']);
+    expect(s[0]).toMatchObject({ name: 'Presents', tags: ['christmas', 'family'], ai: ['magic'], start: 100, end: 200 });
+    expect(s[0].ids.sort()).toEqual(['a', 'b']);
+    expect(s[1].kept).toEqual([]);
+    expect(s[1].ai).toEqual(['night']);
+  });
+});
+
+describe('clean edges', () => {
+  const lines = speechLines([
+    { start: 10, end: 14, text: 'Happy Christmas, Harry.' },
+    { start: 14.5, end: 16, text: '[door creaks]' },
+    { start: 20, end: 25, text: 'What is it?' },
+  ]);
+  it('leaves sound descriptions out of speech', () => {
+    expect(lines).toHaveLength(2);
+    expect(midLine(lines, 12)?.start).toBe(10);
+    expect(midLine(lines, 10.02)).toBeNull();
+    expect(midLine(lines, 17)).toBeNull();
+  });
+  it('moves a start before the line, onto a quiet cut first', () => {
+    expect(snapEdge(12, { later: false, lines, cuts: [8, 9.5], silence: [[7, 9]] })).toEqual({ t: 8, why: 'cut' });
+    expect(snapEdge(12, { later: false, lines, cuts: [9.5] })).toEqual({ t: 9.5, why: 'cut' });
+  });
+  it('moves an end past the line: quiet, then the pause, then the line edge', () => {
+    expect(snapEdge(22, { later: true, lines, cuts: [], silence: [[26, 30]] })).toEqual({ t: 26.5, why: 'quiet' });
+    expect(snapEdge(22, { later: true, lines, cuts: [] })).toEqual({ t: 25.3, why: 'pause' });
+    expect(snapEdge(22, { later: true, lines, cuts: [], hi: 25.1 })).toEqual({ t: 25.05, why: 'line' });
+    expect(snapEdge(22, { later: true, lines, cuts: [], hi: 23 })).toBeNull();
+  });
+  it('says what a clean edge lands on', () => {
+    expect(edgeNote(12, { lines })).toBeNull();
+    expect(edgeNote(17, { lines, silence: [[16, 19]] })).toBe('Lands in quiet');
+    expect(edgeNote(18, { lines, cuts: [18.1] })).toBe('Lands on a camera cut');
+    expect(edgeNote(18, { lines })).toBe('Lands between lines');
+  });
+});
 
 const shots = [[0, 4.2], [4.2, 9.8], [9.8, 20]];
 
