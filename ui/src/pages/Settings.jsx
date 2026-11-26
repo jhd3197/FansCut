@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAct } from '../lib/hooks.js';
 import { ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import { EditTag, Switch } from '../components/v2.jsx';
 import './Settings.css';
 import { useApi } from '../lib/store.js';
 
@@ -176,7 +177,7 @@ export const tagName = (t) => t.name || String(t.id ?? t).replace(/^fc:/, '').re
 export const toggleIn = (list, item, on) => (on ? list.filter((x) => x !== item) : [...new Set([...list, item])]);
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-const DETECT = [['auto', 'Cut tags found automatically'], ['ai', 'Checked by AI'], ['person', 'Needs a person']];
+const DETECT = [['auto', 'Found automatically'], ['ai', 'Checked by AI'], ['person', 'Needs a person']];
 const EXTEND = [
   ['none', 'Don’t extend'],
   ['ambient', 'Add ambient and establishing shots'],
@@ -196,113 +197,164 @@ function Choice({ name, value, options, onChange }) {
   );
 }
 
-function TagsSection({ get, put, check }) {
+// The occasion tags: pick one to see what it looks and listens for, and whether it is searched closely.
+function OccasionBox({ tags, on, onToggle, closely, setClosely }) {
+  const [pick, setPick] = useState(null);
+  const sel = tags.find((t) => t.id === pick) || tags[0];
+  if (!sel) return null;
+  const close = closely.includes(sel.id);
+  const nClose = tags.filter((t) => closely.includes(t.id)).length;
+  const looks = sel.cues?.see?.length ? `${cap(sel.cues.see.join(', '))}.` : sel.hint;
+  return (
+    <section className="set-occ" aria-label="Occasion tags">
+      <div className="set-group-head">
+        <Switch on={on} onChange={onToggle} label="Use Occasion tags when analysing films" />
+        <span className="hd set-group-name">Occasion</span>
+        <span className="mono set-n">{tags.length} tags · {nClose} searched closely</span>
+      </div>
+      <div className={`set-occ-body${on ? '' : ' is-off'}`}>
+        <div className="set-occ-tags">
+          {tags.map((t) => (
+            <button key={t.id} type="button" className={`set-tg${t.id === sel.id ? ' is-on' : ''}`} aria-pressed={t.id === sel.id}
+              onClick={() => setPick(t.id)}>
+              {closely.includes(t.id) && <span className="set-close-dot" aria-label="searched closely" />}
+              {tagName(t)}
+            </button>
+          ))}
+          <span className="set-legend"><span className="set-close-dot" aria-hidden="true" />searched closely</span>
+        </div>
+        <div className="set-occ-pick">
+          <div className="hd set-occ-name">{tagName(sel)}</div>
+          {looks && <div><div className="lab">Looks for</div><div className="set-looks">{looks}</div></div>}
+          {sel.cues?.hear?.length > 0 && (
+            <div>
+              <div className="lab">Listens for</div>
+              <div className="set-hears">{sel.cues.hear.map((w) => <span key={w} className="mono">{w}</span>)}</div>
+            </div>
+          )}
+          <div className="set-line">
+            <Switch on={close} disabled={!on} label="Search closely"
+              onChange={(v) => setClosely(v ? [...new Set([...closely, sel.id])] : closely.filter((x) => x !== sel.id))} />
+            <span>Search closely</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TagsSection({ get, put }) {
   const vocab = useApi('/scenes/vocab', { quiet: true });
   const [draft, setDraft] = useState('');
   const v = vocab.data;
   const off = get('scenes.families_off') || [];
   const custom = get('scenes.custom_tags') || [];
   const closely = get('scenes.search_closely') ?? ['christmas', 'halloween'];
+  const auto = get('scenes.auto_accept') ?? 0.75;
   const add = () => {
     const t = draft.trim();
     if (!t) return;
     if (!custom.includes(t)) put('scenes.custom_tags', [...custom, t]);
     setDraft('');
   };
+  const family = (f) => (v?.tags || []).filter((t) => t.family === f);
+  const flip = (f) => (on) => put('scenes.families_off', toggleIn(off, f, on));
   return (
-    <section id="tags" aria-labelledby="tags-h">
-      <h2 id="tags-h" className="sh">Tags</h2>
-      {!v && !vocab.loading && <Row label="Families"><div className="muted tiny" style={{ paddingTop: 8 }}>The tag list is not available.</div></Row>}
+    <section id="tags" aria-labelledby="tags-h" className="set-sec">
+      <h2 id="tags-h">Tags</h2>
+      {!v && !vocab.loading && <div className="set-empty">The tag list is not available.</div>}
       {!v && vocab.loading && <Loading />}
-      {v && (v.families || []).map((f) => {
-        const on = !off.includes(f);
-        return (
-          <Row key={f} label={cap(f)}>
-            <div className="stack10" style={{ paddingTop: 8 }}>
-              <label className="ck">
-                <input type="checkbox" checked={on} onChange={(e) => put('scenes.families_off', toggleIn(off, f, e.target.checked))} /> Use when analysing films
-              </label>
-              {f === 'occasion' ? (
-                <table className={`smart cues${on ? '' : ' off'}`}><tbody>
-                  {(v.tags || []).filter((t) => t.family === f).map((t) => (
-                    <tr key={t.id}>
-                      <td><span className="tchip" title={t.hint}>{tagName(t)}</span></td>
-                      <td className="muted tiny">
-                        {t.cues?.see?.length > 0 && <div>Looks for {t.cues.see.join(', ')}</div>}
-                        {t.cues?.hear?.length > 0 && <div>Listens for {t.cues.hear.map((w) => `“${w}”`).join(', ')}</div>}
-                      </td>
-                      <td>
-                        <label className="ck"><input type="checkbox" disabled={!on} checked={closely.includes(t.id)}
-                          onChange={(e) => put('scenes.search_closely', e.target.checked ? [...new Set([...closely, t.id])] : closely.filter((x) => x !== t.id))} /> Search closely</label>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody></table>
-              ) : (
-                <div className={`tagchips${on ? '' : ' off'}`}>
-                  {(v.tags || []).filter((t) => t.family === f).map((t) => (
-                    <span key={t.id} className="tchip" title={t.hint}>{tagName(t)}</span>
+      {v && (v.families || []).includes('occasion') && (
+        <OccasionBox tags={family('occasion')} on={!off.includes('occasion')} onToggle={flip('occasion')}
+          closely={closely} setClosely={(x) => put('scenes.search_closely', x)} />
+      )}
+      {v && (
+        <section aria-label="Tag groups" className="set-groups">
+          {(v.families || []).filter((f) => f !== 'occasion').map((f) => {
+            const on = !off.includes(f);
+            const ts = family(f);
+            return (
+              <div key={f} className="set-group">
+                <div className="set-group-head">
+                  <Switch on={on} onChange={flip(f)} label={`Use ${cap(f)} tags when analysing films`} />
+                  <span className="hd set-group-name">{cap(f)}</span>
+                  <span className="mono set-n">{ts.length}</span>
+                </div>
+                <div className={`set-chips${on ? '' : ' is-off'}`}>
+                  {ts.map((t) => <span key={t.id} className="set-tg" title={t.hint}>{tagName(t)}</span>)}
+                </div>
+              </div>
+            );
+          })}
+        </section>
+      )}
+      {v && (v.cut_tags || []).length > 0 && (
+        <section aria-labelledby="tags-made">
+          <h3 id="tags-made" className="hd set-h3">Tags FansCut makes itself</h3>
+          <div className="set-cols">
+            {DETECT.map(([d, label]) => {
+              const ts = (v.cut_tags || []).filter((t) => t.detect === d);
+              if (!ts.length) return null;
+              return (
+                <div key={d} className="set-card">
+                  <div className="lab">{label}</div>
+                  {ts.map((t) => (
+                    <div key={t.id} className="set-made">
+                      <span className="set-tg" title={t.hint}>{tagName(t)}</span>
+                      {t.how && <div className="set-how">{cap(t.how)}.</div>}
+                    </div>
                   ))}
                 </div>
-              )}
-            </div>
-          </Row>
-        );
-      })}
-      {v && DETECT.map(([d, label]) => {
-        const ts = (v.cut_tags || []).filter((t) => t.detect === d);
-        if (!ts.length) return null;
-        return (
-          <Row key={d} label={label}>
-            <div className="stack10" style={{ paddingTop: 8 }}>
-              {ts.length > 0 && (
-                <table className="smart"><tbody>
-                  {ts.map((t) => (
-                    <tr key={t.id}><td><span className="tchip" title={t.hint}>{tagName(t)}</span></td><td className="muted">{t.how}</td></tr>
-                  ))}
-                </tbody></table>
-              )}
-            </div>
-          </Row>
-        );
-      })}
-      <Row label="AI moments" hint="This sure or more: a tag straight away, marked AI. Below: a proposal." htmlFor="set-auto-accept">
-        <div className="row" style={{ gap: 8, paddingTop: 4, alignItems: 'center' }}>
-          <input id="set-auto-accept" type="range" min="50" max="100" step="5"
-            value={Math.round((get('scenes.auto_accept') ?? 0.75) * 100)}
-            onChange={(e) => put('scenes.auto_accept', Number(e.target.value) / 100)} />
-          <output className="mono tiny" htmlFor="set-auto-accept">{(get('scenes.auto_accept') ?? 0.75) >= 1 ? 'Never' : `${Math.round((get('scenes.auto_accept') ?? 0.75) * 100)}%`}</output>
+              );
+            })}
+          </div>
+        </section>
+      )}
+      <section aria-label="How tags are used" className="set-cols set-use">
+        <div className="set-card">
+          <label htmlFor="set-auto-accept" className="hd set-card-name">AI moments</label>
+          <div className="set-line">
+            <input id="set-auto-accept" type="range" min="50" max="100" step="5" className="set-range"
+              value={Math.round(auto * 100)} onChange={(e) => put('scenes.auto_accept', Number(e.target.value) / 100)} />
+            <output className="mono" htmlFor="set-auto-accept">{auto >= 1 ? 'Never' : `${Math.round(auto * 100)}%`}</output>
+          </div>
+          <div className="set-how">This sure or more: a tag straight away, marked AI. Below: a proposal.</div>
         </div>
-      </Row>
-      <Row label="Signals" hint="Faces, shots, brightness and sound. Used to pick posters and extend cuts; never shown as tags.">
-        <div style={{ paddingTop: 8 }}>{check('scenes.signals', 'Measure signals after indexing a film')}</div>
-      </Row>
-      <Row label="Extending cuts">
-        <div style={{ paddingTop: 8 }}>
-          <Choice name="Extending cuts" value={get('scenes.extend') ?? 'ambient'} options={EXTEND} onChange={(x) => put('scenes.extend', x)} />
+        <div className="set-card">
+          <div className="set-line"><span className="hd set-card-name">Signals</span>
+            <span className="set-push"><Switch on={!!get('scenes.signals')} onChange={(x) => put('scenes.signals', x)} label="Measure signals after indexing a film" /></span>
+          </div>
+          <div className="set-looks">Measure signals after indexing a film</div>
+          <div className="set-how">Faces, shots, brightness and sound. Used to pick posters and extend cuts; never shown as tags.</div>
         </div>
-      </Row>
-      <Row label="Your own tags" hint="Kept on this server, never shared." htmlFor="set-custom-tag">
-        <div className="stack10">
+        <div className="set-card" role="radiogroup" aria-label="Extending cuts">
+          <div className="hd set-card-name">Extending cuts</div>
+          {EXTEND.map(([x, label]) => {
+            const on = (get('scenes.extend') ?? 'ambient') === x;
+            return (
+              <button key={x} type="button" role="radio" aria-checked={on} className={`set-opt${on ? ' is-on' : ''}`}
+                onClick={() => put('scenes.extend', x)}>
+                <span className="set-radio" aria-hidden="true" />{label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="set-card">
+          <label htmlFor="set-custom-tag" className="hd set-card-name">Your own tags</label>
           {custom.length > 0 && (
-            <div className="tagchips">
-              {custom.map((t) => (
-                <span key={t} className="tchip">
-                  {t}
-                  <button type="button" className="tchip-x" aria-label={`Remove ${t}`}
-                    onClick={() => put('scenes.custom_tags', custom.filter((x) => x !== t))}>✕</button>
-                </span>
-              ))}
+            <div className="tags-row">
+              {custom.map((t) => <EditTag key={t} name={t} onRemove={() => put('scenes.custom_tags', custom.filter((x) => x !== t))} />)}
             </div>
           )}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <input id="set-custom-tag" className="inp" style={{ maxWidth: 260 }} placeholder="great hall" maxLength={60}
+          <div className="set-line">
+            <input id="set-custom-tag" className="inp" placeholder="great hall" maxLength={60}
               value={draft} onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} />
             <button className="btn" type="button" onClick={add} disabled={!draft.trim()}>Add</button>
           </div>
+          <div className="set-how">Kept on this server, never shared.</div>
         </div>
-      </Row>
+      </section>
     </section>
   );
 }
@@ -391,6 +443,20 @@ export function Settings() {
   const active = SECTIONS.some(([id]) => id === asked) ? asked : 'sources';
   // seed the form once; background refetches must not wipe unsaved edits
   useEffect(() => { if (data && !cfg) setCfg(data); }, [data, cfg]);
+  // check the saved connections once, so each source shows whether it is connected
+  const probed = useRef(false);
+  useEffect(() => {
+    if (!data || probed.current) return;
+    probed.current = true;
+    const lib0 = data.library || {};
+    for (const svc of ['plex', 'sonarr', 'radarr']) {
+      if (!lib0[svc]?.url) continue;
+      setTests((t) => ({ ...t, [svc]: { text: 'Checking' } }));
+      api(`/settings/test/${svc}`, { method: 'POST', body: {} })
+        .then((r) => setTests((t) => ({ ...t, [svc]: { ok: r.ok, text: r.message } })))
+        .catch((e) => setTests((t) => ({ ...t, [svc]: { ok: false, text: e.message } })));
+    }
+  }, [data]);
 
   if (error && !data) return <div className="page"><ErrorBox error={error} onRetry={reload} /></div>;
   if (loading || !cfg) return <div className="page"><Loading /></div>;
@@ -442,13 +508,29 @@ export function Settings() {
       setTests((t) => ({ ...t, [service]: { ok: false, text: e.message } }));
     }
   };
-  const testRow = (service, body, label = 'Test') => (
-    <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-      <button className="btn" type="button" onClick={() => test(service, body)}>{label}</button>
-      {tests[service] && (
-        <span role="status" style={{ fontSize: 13 }}
-          className={tests[service].ok == null ? 'muted' : tests[service].ok ? 'c-ready' : 'c-danger'}>{tests[service].text}</span>
-      )}
+  const testNote = (service) => tests[service] && tests[service].ok !== true && (
+    <span role="status" className={`set-how${tests[service].ok === false ? ' c-danger' : ''}`}>{tests[service].text}</span>
+  );
+  const appState = (service, url) => {
+    const t = tests[service];
+    if (t?.ok === true) return <span className="state state-ready" title={t.text}>Connected</span>;
+    if (t?.ok === false) return <span className="state state-look">Not connected</span>;
+    if (t) return <span className="state">Checking</span>;
+    return <span className="state">{url ? 'Not checked' : 'Not set up'}</span>;
+  };
+  const appCard = (service, name, desc, urlPath, urlHint, keyPath, keyLabel, body, extra) => (
+    <div className="set-card set-app">
+      <div>
+        <div className="set-line"><span className="hd set-card-name">{name}</span><span className="set-push">{appState(service, get(urlPath))}</span></div>
+        <div className="set-how set-desc">{desc}</div>
+      </div>
+      <div><label className="set-fl" htmlFor={idOf(urlPath)}>Address</label>{input(urlPath, { placeholder: urlHint, className: 'inp mono' })}</div>
+      <div><label className="set-fl" htmlFor={idOf(keyPath)}>{keyLabel}</label>{input(keyPath, { type: 'password', autoComplete: 'off', className: 'inp mono' })}</div>
+      <div className="set-line set-wrap">
+        <button className="btn btn-sm" type="button" onClick={() => test(service, body)}>Test</button>
+        {extra}
+      </div>
+      {testNote(service)}
     </div>
   );
   const refreshFillers = () => act(async () => {
@@ -461,74 +543,74 @@ export function Settings() {
   const lib = cfg.library;
 
   return (
-    <div className="page settings" style={{ maxWidth: 1060, gap: 24 }}>
-      
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <span className="muted tiny">Saved to config.yaml. Host and port changes need a restart.</span>
+    <div className="page settings">
+      <header className="set-head">
+        <div>
+          <h1>Settings</h1>
+          <div className="set-how">Saved to config.yaml. Host and port changes need a restart.</div>
+        </div>
         <button className="btn btn-primary" type="button" onClick={save} disabled={busy}>Save changes</button>
-      </div>
+      </header>
       <Notice msg={msg} onClose={clear} />
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 32, alignItems: 'flex-start' }}>
-        <nav className="sub" aria-label="Settings sections"
-          style={{ flex: '1 1 160px', maxWidth: 180, display: 'flex', flexDirection: 'column', gap: 2, position: 'sticky', top: 28 }}>
+      <div className="set-body">
+        <nav className="sub" aria-label="Settings sections">
           {SECTIONS.map(([id, name]) => (
             <Link key={id} to={{ search: id === 'sources' ? '' : `?section=${id}` }} aria-current={active === id ? 'page' : undefined}>{name}</Link>
           ))}
         </nav>
-        <div style={{ flex: '999 1 520px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 36 }}>
-          {active === 'sources' && (<section id="sources" aria-labelledby="src-h">
-            <h2 id="src-h" className="sh">Sources</h2>
-            <Row label="Find automatically" hint="Reads Plex, Radarr and Sonarr's own settings on this computer and fills any empty URL or key.">
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="set-main">
+          {active === 'sources' && (<section id="sources" aria-labelledby="src-h" className="set-sec">
+            <div className="set-sec-head">
+              <h2 id="src-h">Sources</h2>
+              <div className="set-find">
+                <span className="set-how">Reads Plex, Radarr and Sonarr&apos;s own settings on this computer and fills any empty URL or key.</span>
                 <button className="btn" type="button" disabled={busy} onClick={detect}>Find apps on this computer</button>
               </div>
-            </Row>
-            <Row label="Plex" hint="Optional. Shows and movies. Leave sections empty for every show library.">
-              <div className="stack10">
-                {input('library.plex.url', { 'aria-label': 'Plex URL', placeholder: 'http://plex:32400' })}
-                {input('library.plex.token', { 'aria-label': 'Plex token', type: 'password', autoComplete: 'off', placeholder: 'Token' })}
-                {testRow('plex', { url: lib.plex.url, token: lib.plex.token })}
-                <PlexSignIn onDone={(r) => setCfg((c) => setPath(setPath(c, 'library.plex.token', '***'), 'library.plex.url', r.url || c.library.plex.url))} />
+            </div>
+            <div className="set-cols">
+              {appCard('plex', 'Plex', 'Shows and movies. Leave sections empty for every show library.',
+                'library.plex.url', 'http://plex:32400', 'library.plex.token', 'Token', { url: lib.plex.url, token: lib.plex.token },
+                <PlexSignIn onDone={(r) => setCfg((c) => setPath(setPath(c, 'library.plex.token', '***'), 'library.plex.url', r.url || c.library.plex.url))} />)}
+              {appCard('sonarr', 'Sonarr', 'Series, episodes and file paths, plus webhooks.',
+                'library.sonarr.url', 'http://sonarr:8989', 'library.sonarr.api_key', 'API key', { url: lib.sonarr.url, api_key: lib.sonarr.api_key })}
+              {appCard('radarr', 'Radarr', 'Movie files and editions, as timeline sources.',
+                'library.radarr.url', 'http://radarr:7878', 'library.radarr.api_key', 'API key', { url: lib.radarr.url, api_key: lib.radarr.api_key })}
+            </div>
+            <div className="set-cols set-cols-2">
+              <div className="set-card">
+                <div>
+                  <div className="hd set-card-name">Media folders</div>
+                  <div className="set-how">Plain mode, no Sonarr needed: one subfolder per series. Movies: one subfolder per movie; &apos;{'{tmdb-123}'}&apos; in the name sets the id.</div>
+                </div>
+                <div><label className="set-fl" htmlFor={idOf('library.folder.path')}>Series folder</label>
+                  {input('library.folder.path', { placeholder: '/media', className: 'inp mono' })}</div>
+                <div><label className="set-fl" htmlFor={idOf('library.movies.path')}>Movies folder</label>
+                  {input('library.movies.path', { placeholder: '/movies', className: 'inp mono' })}</div>
+                <div className="set-line">
+                  <button className="btn btn-sm" type="button" onClick={() => test('folder', { path: lib.folder.path })}>Check folder</button>
+                  {testNote('folder')}
+                </div>
               </div>
-            </Row>
-            <Row label="Sonarr" hint="Optional. Series, episodes and file paths, plus webhooks.">
-              <div className="stack10">
-                {input('library.sonarr.url', { 'aria-label': 'Sonarr URL', placeholder: 'http://sonarr:8989' })}
-                {input('library.sonarr.api_key', { 'aria-label': 'Sonarr API key', type: 'password', autoComplete: 'off', placeholder: 'API key' })}
-                {testRow('sonarr', { url: lib.sonarr.url, api_key: lib.sonarr.api_key })}
-              </div>
-            </Row>
-            <Row label="Radarr" hint="Optional. Movie files and editions, as timeline sources.">
-              <div className="stack10">
-                {input('library.radarr.url', { 'aria-label': 'Radarr URL', placeholder: 'http://radarr:7878' })}
-                {input('library.radarr.api_key', { 'aria-label': 'Radarr API key', type: 'password', autoComplete: 'off', placeholder: 'API key' })}
-                {testRow('radarr', { url: lib.radarr.url, api_key: lib.radarr.api_key })}
-              </div>
-            </Row>
-            <Row label="Media folders" hint="Plain mode, no Sonarr needed: one subfolder per series. Movies: one subfolder per movie; '{tmdb-123}' in the name sets the id.">
-              <div className="stack10">
-                {input('library.folder.path', { 'aria-label': 'Series folder', placeholder: 'Series folder, e.g. /media', className: 'inp mono' })}
-                {input('library.movies.path', { 'aria-label': 'Movies folder', placeholder: 'Movies folder, e.g. /movies', className: 'inp mono' })}
-                {testRow('folder', { path: lib.folder.path }, 'Check folder')}
-              </div>
-            </Row>
-            <Row label="Path mapping" hint="When a server sees files under a different path than FansCut does.">
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className="set-card">
+                <div>
+                  <div className="hd set-card-name">Path mapping</div>
+                  <div className="set-how">When a server sees files under a different path than FansCut does.</div>
+                </div>
+                {maps.length === 0 && <div className="set-empty">No mappings yet.</div>}
                 {maps.map((m, i) => (
-                  <div key={i} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto minmax(0,1fr) auto', gap: 8, alignItems: 'center', maxWidth: 520 }}>
+                  <div key={i} className="set-map">
                     <input className="inp mono" aria-label={`Remote prefix ${i + 1}`} placeholder="remote, e.g. /tv" value={m.remote}
                       onChange={(e) => setMaps(maps.map((x, j) => (j === i ? { ...x, remote: e.target.value } : x)))} />
-                    <span className="muted" aria-hidden="true">→</span>
+                    <span className="set-how" aria-hidden="true">→</span>
                     <input className="inp mono" aria-label={`Local prefix ${i + 1}`} placeholder="local, e.g. /media/tv" value={m.local}
                       onChange={(e) => setMaps(maps.map((x, j) => (j === i ? { ...x, local: e.target.value } : x)))} />
-                    <button className="btn" type="button" aria-label={`Remove mapping ${i + 1}`} style={{ width: 36, padding: 0 }}
-                      onClick={() => setMaps(maps.filter((_, j) => j !== i))}>×</button>
+                    <button className="btn btn-sm btn-quiet" type="button" aria-label={`Remove mapping ${i + 1}`}
+                      onClick={() => setMaps(maps.filter((_, j) => j !== i))}>Remove</button>
                   </div>
                 ))}
-                <button className="btn" type="button" style={{ alignSelf: 'flex-start' }}
-                  onClick={() => setMaps([...maps, { remote: '', local: '' }])}>Add mapping</button>
+                <div><button className="btn btn-sm" type="button" onClick={() => setMaps([...maps, { remote: '', local: '' }])}>Add mapping</button></div>
               </div>
-            </Row>
+            </div>
           </section>)}
 
           {active === 'output' && (<section id="output" aria-labelledby="out-h">
@@ -616,7 +698,7 @@ export function Settings() {
             {text('ai.timeout', 'Timeout', 'Seconds.', { type: 'number', min: 5, className: 'inp mono', style: { width: 90 } })}
           </section>)}
 
-          {active === 'tags' && <TagsSection get={get} put={put} check={check} />}
+          {active === 'tags' && <TagsSection get={get} put={put} />}
           {active === 'markers' && <MarkersSection check={check} text={text} />}
           {active === 'posters' && <PostersSection get={get} put={put} check={check} />}
 
