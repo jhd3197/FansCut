@@ -347,7 +347,7 @@ export function CutDetail() {
   const films = useApi(hasMovies ? '/scenes/films' : null, { quiet: true });
   const [variant, setVariant] = useUrlState('variant');
   const [scene, setScene] = useUrlState('scene', '1');
-  const [play, setPlay] = useState(false);
+  const player = useRef(null);
   const crumb = useCrumbRoot();
   const aiState = useApi(`/timelines/${enc(id)}/poster/ai`, { quiet: true });
   const aiChosen = aiState.data?.chosen;
@@ -359,6 +359,7 @@ export function CutDetail() {
   const doc = pending || tl.data?.doc;
   const segs = useMemo(() => flatSegments(doc).segs, [doc]);
   const filmOf = useMemo(() => filmsBySource(doc, films.data?.films), [doc, films.data]);
+  const srcOrder = useMemo(() => Object.keys(doc?.sources || {}), [doc]);
 
   if (tl.error && !tl.data) return <div className="page"><ErrorBox error={tl.error} onRetry={tl.reload} /></div>;
   if (!tl.data) return <div className="page"><Loading /></div>;
@@ -445,10 +446,10 @@ export function CutDetail() {
       </div>
       {segs.length > 0 && (
         <div className="cut2-main">
-          <CutPreview id={id} segs={segs} filmOf={filmOf} srcName={name} n={n}
-            onN={(k) => setScene(String(k))} play={play} onPlay={setPlay} buildTo={buildTo} crumbState={crumb.state} />
+          <CutPreview ref={player} id={id} segs={segs} filmOf={filmOf} srcOrder={srcOrder} srcName={name} n={n}
+            onN={(k) => setScene(String(k))} buildTo={buildTo} crumbState={crumb.state} />
           <SegmentList id={id} doc={doc} segs={segs} filmOf={filmOf} values={chosen?.toggles} report={report}
-            current={n} onPick={(k) => { setScene(String(k)); setPlay(true); }} onMove={move} saving={saving} error={saveErr} />
+            current={n} onPick={(k) => { setScene(String(k)); player.current?.seekSegment(k, true); }} onMove={move} saving={saving} error={saveErr} />
         </div>
       )}
       <div className="cut2-more">
