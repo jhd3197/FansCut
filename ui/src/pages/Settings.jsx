@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
+import { Link, useLocation, useSearchParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useUrlState } from '../lib/hooks.js';
+import { useAct } from '../lib/hooks.js';
 import { ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import './Settings.css';
 import { useApi } from '../lib/store.js';
@@ -13,7 +14,7 @@ export function setPath(obj, path, value) {
 
 const SECTIONS = [
   ['sources', 'Sources'], ['output', 'Output'], ['plex-out', 'Add to Plex'], ['render', 'Rendering'], ['cut', 'Cut defaults'],
-  ['ai', 'AI'], ['auto', 'Automation'], ['data', 'Filler data'], ['system', 'Caches & network'],
+  ['ai', 'AI'], ['tags', 'Tags'], ['markers', 'Markers'], ['posters', 'Posters'], ['auto', 'Automation'], ['data', 'Filler data'], ['system', 'Caches & network'],
 ];
 
 const mb = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`);
@@ -169,20 +170,190 @@ function WebhookUrl() {
   );
 }
 
+// A tag's display name: never the fc: id ("fc:no-face" -> "no face" when the vocab has no name).
+export const tagName = (t) => t.name || String(t.id ?? t).replace(/^fc:/, '').replace(/-/g, ' ');
+// Families switched off are listed; switching one on removes it.
+export const toggleIn = (list, item, on) => (on ? list.filter((x) => x !== item) : [...new Set([...list, item])]);
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+const DETECT = [['auto', 'Measured'], ['ai', 'Checked by AI'], ['person', 'Needs a person']];
+const EXTEND = [
+  ['none', 'Don’t extend'],
+  ['ambient', 'Add ambient and establishing shots'],
+  ['filler', 'Also add filler from the same franchise'],
+];
+
+// A small radio group bound to one setting.
+function Choice({ name, value, options, onChange }) {
+  return (
+    <div className="choice" role="radiogroup" aria-label={name}>
+      {options.map(([v, label]) => (
+        <label key={v} className="ck">
+          <input type="radio" name={name} checked={value === v} onChange={() => onChange(v)} /> {label}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function TagsSection({ get, put, check }) {
+  const vocab = useApi('/scenes/vocab', { quiet: true });
+  const [draft, setDraft] = useState('');
+  const v = vocab.data;
+  const off = get('scenes.families_off') || [];
+  const custom = get('scenes.custom_tags') || [];
+  const add = () => {
+    const t = draft.trim();
+    if (!t) return;
+    if (!custom.includes(t)) put('scenes.custom_tags', [...custom, t]);
+    setDraft('');
+  };
+  return (
+    <section id="tags" aria-labelledby="tags-h">
+      <h2 id="tags-h" className="sh">Tags</h2>
+      {!v && !vocab.loading && <Row label="Families"><div className="muted tiny" style={{ paddingTop: 8 }}>The tag list is not available.</div></Row>}
+      {!v && vocab.loading && <Loading />}
+      {v && (v.families || []).map((f) => {
+        const on = !off.includes(f);
+        return (
+          <Row key={f} label={cap(f)}>
+            <div className="stack10" style={{ paddingTop: 8 }}>
+              <label className="ck">
+                <input type="checkbox" checked={on} onChange={(e) => put('scenes.families_off', toggleIn(off, f, e.target.checked))} /> Use when analysing films
+              </label>
+              <div className={`tagchips${on ? '' : ' off'}`}>
+                {(v.tags || []).filter((t) => t.family === f).map((t) => (
+                  <span key={t.id} className="tchip" title={t.hint}>{tagName(t)}</span>
+                ))}
+              </div>
+            </div>
+          </Row>
+        );
+      })}
+      {v && DETECT.map(([d, label]) => {
+        const ts = (v.cut_tags || []).filter((t) => t.detect === d);
+        if (!ts.length && d !== 'auto') return null;
+        return (
+          <Row key={d} label={label}>
+            <div className="stack10" style={{ paddingTop: 8 }}>
+              {d === 'auto' && check('scenes.smart_tags', 'Measure smart tags after indexing a film')}
+              {ts.length > 0 && (
+                <table className="smart"><tbody>
+                  {ts.map((t) => (
+                    <tr key={t.id}><td><span className="tchip" title={t.hint}>{tagName(t)}</span></td><td className="muted">{t.how}</td></tr>
+                  ))}
+                </tbody></table>
+              )}
+            </div>
+          </Row>
+        );
+      })}
+      <Row label="Extending cuts">
+        <div style={{ paddingTop: 8 }}>
+          <Choice name="Extending cuts" value={get('scenes.extend') ?? 'ambient'} options={EXTEND} onChange={(x) => put('scenes.extend', x)} />
+        </div>
+      </Row>
+      <Row label="Your own tags" hint="Kept on this server, never shared." htmlFor="set-custom-tag">
+        <div className="stack10">
+          {custom.length > 0 && (
+            <div className="tagchips">
+              {custom.map((t) => (
+                <span key={t} className="tchip">
+                  {t}
+                  <button type="button" className="tchip-x" aria-label={`Remove ${t}`}
+                    onClick={() => put('scenes.custom_tags', custom.filter((x) => x !== t))}>✕</button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input id="set-custom-tag" className="inp" style={{ maxWidth: 260 }} placeholder="great hall" maxLength={60}
+              value={draft} onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} />
+            <button className="btn" type="button" onClick={add} disabled={!draft.trim()}>Add</button>
+          </div>
+        </div>
+      </Row>
+    </section>
+  );
+}
+
+function MarkersSection({ check, text }) {
+  return (
+    <section id="markers" aria-labelledby="markers-h">
+      <h2 id="markers-h" className="sh">Markers</h2>
+      <Row label="Community markers" hint="Tags other people made for films you own.">
+        <div className="stack10" style={{ paddingTop: 8 }}>
+          {check('markers.check', 'Check for newer markers daily')}
+          {check('markers.auto_install', 'Install new markers without asking')}
+        </div>
+      </Row>
+      <Row label="Share yours" hint="Timestamps and tags only.">
+        <div className="stack10" style={{ paddingTop: 8 }}>
+          {check('markers.share', 'Offer my markers to the community index')}
+          {check('markers.reviewed_only', 'Only moments I reviewed')}
+          {check('markers.share_people', 'Include who is on screen')}
+        </div>
+      </Row>
+      {text('markers.index_url', 'Index', null, { className: 'inp mono' })}
+    </section>
+  );
+}
+
+const LAYOUTS = [['frame', 'Frame'], ['strip', 'Strip'], ['grid', 'Grid']];
+const STILLS = [[2, '2'], [4, '4'], [6, '6']];
+const WEIGHTS = [['exposure', 'Exposure'], ['contrast', 'Contrast'], ['color', 'Colour'], ['detail', 'Detail']];
+
+function PostersSection({ get, put, check }) {
+  return (
+    <section id="posters" aria-labelledby="posters-h">
+      <h2 id="posters-h" className="sh">Posters</h2>
+      <Row label="Layout">
+        <div style={{ paddingTop: 8 }}>
+          <Choice name="Layout" value={get('posters.layout') ?? 'frame'} options={LAYOUTS} onChange={(x) => put('posters.layout', x)} />
+        </div>
+      </Row>
+      <Row label="Title">
+        <div style={{ paddingTop: 8 }}>{check('posters.title', 'Title on the poster')}</div>
+      </Row>
+      <Row label="Stills per scene">
+        <div style={{ paddingTop: 8 }}>
+          <Choice name="Stills per scene" value={Number(get('posters.stills') ?? 4)} options={STILLS} onChange={(x) => put('posters.stills', x)} />
+        </div>
+      </Row>
+      <Row label="Scoring" hint="How a still is picked.">
+        <div className="sliders" style={{ paddingTop: 8 }}>
+          {WEIGHTS.map(([k, label]) => {
+            const val = Number(get(`posters.weights.${k}`) ?? 0);
+            return (
+              <label key={k} htmlFor={`set-w-${k}`}>
+                <span>{label}</span>
+                <input id={`set-w-${k}`} type="range" min="0" max="50" value={val}
+                  onChange={(e) => put(`posters.weights.${k}`, Number(e.target.value))} />
+                <output className="mono tiny" htmlFor={`set-w-${k}`}>{val}</output>
+              </label>
+            );
+          })}
+        </div>
+      </Row>
+    </section>
+  );
+}
+
 export function Settings() {
   const { data, error, loading, reload } = useApi('/settings');
   const fillers = useApi('/fillers');
   const [cfg, setCfg] = useState(null);
   const { act, msg, busy, clear } = useAct();
   const [tests, setTests] = useState({});
-  const [active, setActive] = useUrlState('section', 'sources');
+  // one section at a time, picked by ?section= (links elsewhere open e.g. ?section=render)
+  // (older links use a hash, e.g. /settings#ai)
+  const [params] = useSearchParams();
+  const { hash } = useLocation();
+  const asked = params.get('section') || hash.slice(1);
+  const active = SECTIONS.some(([id]) => id === asked) ? asked : 'sources';
   // seed the form once; background refetches must not wipe unsaved edits
   useEffect(() => { if (data && !cfg) setCfg(data); }, [data, cfg]);
-  // a link to /settings?section=plex-out opens at that section
-  const loaded = Boolean(cfg);
-  useEffect(() => {
-    if (loaded && active !== 'sources') document.getElementById(active)?.scrollIntoView({ block: 'start' });
-  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error && !data) return <div className="page"><ErrorBox error={error} onRetry={reload} /></div>;
   if (loading || !cfg) return <div className="page"><Loading /></div>;
@@ -211,6 +382,7 @@ export function Settings() {
   const check = (path, label) => (
     <label className="ck"><input type="checkbox" checked={!!get(path)} onChange={set(path)} /> {label}</label>
   );
+  const put = (path, v) => setCfg((c) => setPath(c, path, v));
   const maps = cfg.library.path_mappings;
   const setMaps = (next) => setCfg((c) => setPath(c, 'library.path_mappings', next));
 
@@ -249,11 +421,6 @@ export function Settings() {
     return r;
   }, (r) => r.message || 'Filler data refreshed');
   const f = fillers.data;
-  const jump = (id) => (e) => {
-    e.preventDefault();
-    setActive(id);
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
   const lib = cfg.library;
 
   return (
@@ -268,11 +435,11 @@ export function Settings() {
         <nav className="sub" aria-label="Settings sections"
           style={{ flex: '1 1 160px', maxWidth: 180, display: 'flex', flexDirection: 'column', gap: 2, position: 'sticky', top: 28 }}>
           {SECTIONS.map(([id, name]) => (
-            <a key={id} href={`#${id}`} aria-current={active === id} onClick={jump(id)}>{name}</a>
+            <Link key={id} to={{ search: id === 'sources' ? '' : `?section=${id}` }} aria-current={active === id ? 'page' : undefined}>{name}</Link>
           ))}
         </nav>
         <div style={{ flex: '999 1 520px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 36 }}>
-          <section id="sources" aria-labelledby="src-h">
+          {active === 'sources' && (<section id="sources" aria-labelledby="src-h">
             <h2 id="src-h" className="sh">Sources</h2>
             <Row label="Find automatically" hint="Reads Plex, Radarr and Sonarr's own settings on this computer and fills any empty URL or key.">
               <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -325,9 +492,9 @@ export function Settings() {
                   onClick={() => setMaps([...maps, { remote: '', local: '' }])}>Add mapping</button>
               </div>
             </Row>
-          </section>
+          </section>)}
 
-          <section id="output" aria-labelledby="out-h">
+          {active === 'output' && (<section id="output" aria-labelledby="out-h">
             <h2 id="out-h" className="sh">Output</h2>
             {text('paths.output_dir', 'Output folder', null, { className: 'inp mono' })}
             <Row label="Data folder" hint="Set at startup." htmlFor="set-data-dir">
@@ -343,9 +510,9 @@ export function Settings() {
               <div style={{ paddingTop: 8 }}>{check('render.keep', 'Keep renders by default')}</div>
             </Row>
             {text('render.language', 'Audio language', 'Preferred audio track, e.g. jpn or eng. Empty uses the first track.', { placeholder: 'jpn', className: 'inp mono', style: { width: 120 } })}
-          </section>
+          </section>)}
 
-          <section id="plex-out" aria-labelledby="plexout-h">
+          {active === 'plex-out' && (<section id="plex-out" aria-labelledby="plexout-h">
             <h2 id="plexout-h" className="sh">Add to Plex</h2>
             <p className="muted tiny" style={{ margin: '0 0 8px' }}>
               After every build. Needs Plex under Sources; without it, files still land in the output folder.
@@ -357,9 +524,9 @@ export function Settings() {
             <Row label="Poster" hint="The cut’s own poster when it has one, else a frame from the build.">
               <div style={{ paddingTop: 8 }}>{check('render.poster', 'Write poster.jpg next to each build')}</div>
             </Row>
-          </section>
+          </section>)}
 
-          <section id="render" aria-labelledby="ren-h">
+          {active === 'render' && (<section id="render" aria-labelledby="ren-h">
             <h2 id="ren-h" className="sh">Rendering</h2>
             <p className="muted tiny" style={{ margin: '0 0 8px' }}>Stream copy is used when files match; these apply to re-encodes.</p>
             {select('ffmpeg.container', 'Container', ['mkv', 'mp4'])}
@@ -385,9 +552,9 @@ export function Settings() {
                 {check('render.effectcraft_grade', 'Send segment colour grades through EffectCraft')}
               </div>
             </Row>
-          </section>
+          </section>)}
 
-          <section id="cut" aria-labelledby="cut-h">
+          {active === 'cut' && (<section id="cut" aria-labelledby="cut-h">
             <h2 id="cut-h" className="sh">Cut defaults</h2>
             <p className="muted tiny" style={{ margin: '0 0 8px' }}>Used for every series unless it has its own settings.</p>
             {select('cut.preset', 'Preset', ['canon_only', 'canon_mixed', 'everything', 'custom'])}
@@ -399,9 +566,9 @@ export function Settings() {
             <Row label="Opening">
               <div style={{ paddingTop: 8 }}>{check('cut.keep_intro_first_episode', 'Keep the OP in the first episode')}</div>
             </Row>
-          </section>
+          </section>)}
 
-          <section id="ai" aria-labelledby="ai-h">
+          {active === 'ai' && (<section id="ai" aria-labelledby="ai-h">
             <h2 id="ai-h" className="sh">AI</h2>
             <p className="muted tiny" style={{ margin: '0 0 8px' }}>Turns cut notes into recipes and tags scenes. Models go through Prompture: claude/…, google/…, ollama/…, or a bare name for the OpenAI-compatible endpoint in Base URL.</p>
             {text('ai.model', 'Model', 'Provider and name, e.g. claude/claude-opus-5-5 or ollama/qwen3:8b.', { placeholder: 'ollama/qwen3:8b', className: 'inp mono' })}
@@ -410,9 +577,13 @@ export function Settings() {
             {text('ai.api_key', 'API key', 'Prefer FANSCUT_AI_API_KEY over the config file.', { type: 'password', autoComplete: 'off' })}
             {text('catalogues.tmdb_api_key', 'TMDB key', 'Cast for films outside Plex (scene tagging). Prefer FANSCUT_TMDB_API_KEY.', { type: 'password', autoComplete: 'off' })}
             {text('ai.timeout', 'Timeout', 'Seconds.', { type: 'number', min: 5, className: 'inp mono', style: { width: 90 } })}
-          </section>
+          </section>)}
 
-          <section id="auto" aria-labelledby="auto-h">
+          {active === 'tags' && <TagsSection get={get} put={put} check={check} />}
+          {active === 'markers' && <MarkersSection check={check} text={text} />}
+          {active === 'posters' && <PostersSection get={get} put={put} check={check} />}
+
+          {active === 'auto' && (<section id="auto" aria-labelledby="auto-h">
             <h2 id="auto-h" className="sh">Automation</h2>
             <Row label="Sonarr webhook" hint="Add a Webhook connection in Sonarr (Settings, Connect) with this URL. The key in it is FansCut's API key.">
               <div className="stack10" style={{ paddingTop: 8 }}>
@@ -428,9 +599,9 @@ export function Settings() {
             <Row label="Scheduled tasks" hint="Cron: minute hour day month weekday, local time. Empty = off. Saved as you go.">
               <Schedules />
             </Row>
-          </section>
+          </section>)}
 
-          <section id="data" aria-labelledby="data-h">
+          {active === 'data' && (<section id="data" aria-labelledby="data-h">
             <h2 id="data-h" className="sh">Filler data</h2>
             <Row label="AniFiller" hint="Downloaded at runtime from the AniFiller project; nothing is bundled. Check their terms before relying on it.">
               <div className="stack10" style={{ paddingTop: 8 }}>
@@ -441,9 +612,9 @@ export function Settings() {
                 </div>
               </div>
             </Row>
-          </section>
+          </section>)}
 
-          <section id="system" aria-labelledby="system-h">
+          {active === 'system' && (<section id="system" aria-labelledby="system-h">
             <h2 id="system-h" className="sh">Caches & network</h2>
             <Row label="Caches"><CachePanel /></Row>
             <Row label="Remote art" hint="Fetch TMDB/TVDB posters through FansCut and keep them, so browsers never contact those sites. Good for offline or private setups.">
@@ -453,7 +624,7 @@ export function Settings() {
             {text('network.timeout', 'Server timeout', 'Seconds to wait for Sonarr, Radarr and Plex.', { type: 'number', min: 2, className: 'inp mono', style: { width: 90 } })}
             {text('network.proxy', 'Outbound proxy', 'For internet calls (catalogues, GitHub, TMDB). Empty = none.', { placeholder: 'http://proxy:3128', className: 'inp mono' })}
             <Row label="Proxy bypass"><div style={{ paddingTop: 8 }}>{check('network.proxy_bypass_local', 'Reach LAN servers (Plex, Sonarr, Radarr) directly')}</div></Row>
-          </section>
+          </section>)}
         </div>
       </div>
     </div>

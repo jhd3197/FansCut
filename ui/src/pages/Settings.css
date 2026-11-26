@@ -1,6 +1,6 @@
 /* Settings page (scoped under .settings) */
 .settings .sub a { display:block; padding:6px 10px; border-radius:5px; color:var(--muted); font-size:13px; }
-.settings .sub a:hover, .settings .sub a[aria-current=true] { color:var(--text); background:var(--panel2); }
+.settings .sub a:hover, .settings .sub a[aria-current=page] { color:var(--text); background:var(--panel2); }
 .settings .srow { display:grid; grid-template-columns:minmax(0,220px) minmax(0,1fr); gap:8px 24px; align-items:start; padding:16px 0; border-top:1px solid var(--raised); }
 .settings .srow > .lbl { font-size:13px; font-weight:500; padding-top:8px; }
 .settings .hint { display:block; font-weight:400; color:var(--muted); font-size:12px; margin-top:2px; }
@@ -11,4 +11,18 @@
 .settings .ck { display:flex; gap:10px; align-items:center; font-size:13px; }
 .settings .ck input { accent-color:var(--accent); margin:0; width:16px; height:16px; }
 .settings h2.sh { margin:0 0 4px; font-size:17px; font-weight:700; }
+.settings .choice { display:flex; flex-wrap:wrap; gap:8px 20px; }
+.settings .choice input { accent-color:var(--accent); margin:0; width:16px; height:16px; }
+.settings .tagchips { display:flex; flex-wrap:wrap; gap:6px; }
+.settings .tagchips.off { opacity:.45; }
+.settings .tchip { display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:5px; background:var(--panel2); border:1px solid var(--line); font-size:12px; white-space:nowrap; }
+.settings .tchip-x { background:none; border:0; padding:0; color:var(--muted); cursor:pointer; font-size:11px; line-height:1; }
+.settings .tchip-x:hover { color:var(--text); }
+.settings table.smart { border-collapse:collapse; font-size:13px; }
+.settings table.smart td { padding:5px 16px 5px 0; vertical-align:top; border-top:1px solid var(--raised); }
+.settings table.smart tr:first-child td { border-top:0; }
+.settings .sliders { display:flex; flex-direction:column; gap:10px; max-width:420px; }
+.settings .sliders label { display:grid; grid-template-columns:90px 1fr 32px; gap:12px; align-items:center; font-size:13px; }
+.settings .sliders input[type=range] { accent-color:var(--accent); width:100%; }
+.settings .sliders output { text-align:right; }
 @media (max-width: 640px) { .settings .srow { grid-template-columns:1fr; } }
