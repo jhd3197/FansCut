@@ -9,6 +9,7 @@ import { fmtTime } from '../lib/time.js';
 import { flatSegments, nudge } from '../lib/timeline.js';
 import { cleanWeights, drawPoster, measureStill, posterStills, rankStills, scoreStill, stillTimes } from '../lib/stills.js';
 import { ArtPoster, Crumbs, enc, hm, KV, Poster, SRC_COLOURS } from '../components/kit.jsx';
+import { TagChip, isShownTag, tagName } from '../components/TagChip.jsx';
 import { ErrorBox, Loading } from '../components/ui.jsx';
 import { useApi } from '../lib/store.js';
 
@@ -313,8 +314,8 @@ export function PosterCanvas({ srcs, layout, title, sub, label = 'Poster' }) {
   return <canvas ref={ref} className="reel-poster" width={600} height={900} role="img" aria-label={label} />;
 }
 
-// A tag's vocab name; else its id without the "fc:" prefix, dashes as spaces.
-const tagLabel = (names, id) => names[id] || String(id).replace(/^fc:/, '').replace(/[-_]/g, ' ');
+// A person's row on the film's cast page (its search box preset to the name).
+export const castTo = (filmKey, name) => `/movies/${enc(filmKey)}/cast${name ? `?${new URLSearchParams({ q: name })}` : ''}`;
 
 // Is the element on screen yet? (once true, stays true)
 function useSeen() {
@@ -329,15 +330,16 @@ function useSeen() {
   return [ref, seen];
 }
 
+// Only faces matched to a cast member: solid when sure, dashed "Name?" when not.
+// An unmatched face draws nothing.
 function FaceBoxes({ film, t, seen }) {
   const path = seen && film?.indexed ? `/scenes/faces?key=${enc(film.key)}&t=${t}` : null;
   const { data } = useApi(path, { quiet: true });
   return (data?.faces || []).map((f, i) => {
     const [x, y, w, h] = f.box || [];
-    if (w == null) return null;
+    if (w == null || f.name == null) return null;
     const who = f.character || f.name;
     const style = { left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${h * 100}%` };
-    if (!who) return <span key={i} className="reel-fb reel-fb-faint" style={style} />;
     return (
       <span key={i} className={`reel-fb ${f.sure ? 'reel-fb-sure' : 'reel-fb-maybe'}`} style={style}>
         <em>{f.sure ? who : `${who}?`}</em>
@@ -349,7 +351,8 @@ function FaceBoxes({ film, t, seen }) {
 // Tag names and the people (with cast photos) of the tags overlapping this scene.
 function SceneTags({ film, seg, seen, names }) {
   const tags = useApi(seen && film?.indexed ? `/scenes/tags?key=${enc(film.key)}` : null, { quiet: true });
-  const hits = (tags.data?.tags || []).filter((x) => x.status !== 'rejected' && x.start < seg.end && x.end > seg.start);
+  const hits = (tags.data?.tags || []).filter((x) => x.status !== 'rejected' && x.start < seg.end && x.end > seg.start
+    && (x.tags || []).some(isShownTag));
   const people = [];
   for (const x of hits) {
     for (const p of x.people || []) {
@@ -362,14 +365,15 @@ function SceneTags({ film, seg, seen, names }) {
   if (!film?.indexed) return <p className="muted tiny reel-note">Not analysed</p>;
   if (!tags.data) return null;
   if (!hits.length) return <p className="muted tiny reel-note">No tags here</p>;
-  const labels = [...new Set(hits.flatMap((x) => x.tags || []).map((t) => tagLabel(names, t)))];
+  const tagIds = [...new Set(hits.flatMap((x) => x.tags || []).filter(isShownTag))]
+    .sort((a, b) => tagName(a, names).localeCompare(tagName(b, names)));
   const low = (v) => (v || '').toLowerCase();
   const castOf = (p) => (cast.data?.cast || []).find((c) => (p.name && low(c.name) === low(p.name))
     || (p.character && low(c.character).includes(low(p.character)))
     || (!p.character && p.name && low(c.character).includes(low(p.name))));
   return (
     <>
-      <div className="reel-tags">{labels.map((l) => <span key={l} className="chip">{l}</span>)}</div>
+      {tagIds.length > 0 && <div className="reel-tags tag-links-sm">{tagIds.map((t) => <TagChip key={t} tag={t} names={names} />)}</div>}
       {people.length > 0 && (
         <ul className="reel-people">
           {people.map((p) => {
@@ -379,7 +383,9 @@ function SceneTags({ film, seg, seen, names }) {
             return (
               <li key={label}>
                 {c?.photo ? <img src={c.photo} alt="" loading="lazy" /> : <span className="reel-noface">{(label || '?').slice(0, 1)}</span>}
-                <span><b>{label}</b>{actor && actor !== label && <span className="muted"> · {actor}</span>}</span>
+                <Link to={castTo(film.key, actor || label)} style={{ color: 'var(--text)' }}>
+                  <b>{label}</b>{actor && actor !== label && <span className="muted"> · {actor}</span>}
+                </Link>
               </li>
             );
           })}
@@ -590,6 +596,7 @@ export function CutDetail() {
           <div className="row wrap">
             <Link className="btn btn-primary" to={buildTo} state={crumb.state}>Build this cut</Link>
             <Link className="btn" to={`/cuts/${enc(id)}/edit`} state={crumb.state}>Open in editor</Link>
+            <Link className="btn" to={`/cuts/${enc(id)}/scenes`} state={crumb.state}>Scenes</Link>
             {url && <a className="btn" href={url} target="_blank" rel="noreferrer">View on GitHub</a>}
           </div>
           <Variants view={variants.data} value={chosen?.id ?? ''} onChange={setVariant} />
