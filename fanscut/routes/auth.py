@@ -32,7 +32,9 @@ def login(core: CoreDep, body: Login, request: Request, response: Response) -> d
     role = role_of(body.key.strip(), core.cfg.server)
     if role is None:
         raise HTTPException(401, "wrong key")
-    response.set_cookie(COOKIE, body.key.strip(), httponly=True, samesite="strict",
+    # the cookie carries the configured key the login matched, never request text
+    stored = core.cfg.server.api_key if role == "admin" else core.cfg.server.viewer_key
+    response.set_cookie(COOKIE, stored, httponly=True, samesite="strict",
                         secure=request.url.scheme == "https", max_age=30 * 86400)
     return {"role": role}
 
