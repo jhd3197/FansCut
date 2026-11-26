@@ -18,6 +18,7 @@ import { EditorSteps, FilmDot, FilterChip, Label, Tick, filmColours } from '../c
 import { ClipVideo, CLIP_MAX, clipUrl, q, sceneFrameUrl, shownTags, sourceFrameUrl } from '../components/ScenePlayer.jsx';
 import { isShownTag, tagName, useTagNames } from '../components/TagChip.jsx';
 import logoWhite from '../brand/logo-white.svg';
+import { TrailerPicks } from './Trailer.jsx';
 import './Find.css';
 
 const ACTIVE = ['queued', 'running'];
@@ -89,6 +90,7 @@ export function Find() {
   usePageTitle(cut.doc ? `${cut.doc.title}: find scenes` : 'Find scenes');
   if (cut.error && !cut.data) return <div className="page"><ErrorBox error={cut.error} onRetry={cut.reload} /></div>;
   if (!cut.doc) return <div className="page"><Loading /></div>;
+  if (isTrailer(cut.doc)) return <TrailerPicks id={id} cut={cut} />;
   return <FindScenes id={id} cut={cut} />;
 }
 

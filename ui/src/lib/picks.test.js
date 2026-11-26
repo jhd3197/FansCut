@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   addPicks, analysed, cutLength, dedupeRows, filmsForCut, inCut, isSure, matchRows, removeAt, removePicks,
-  shortTitle, tagCounts, topPeople,
+  shortTitle, tagCounts, topPeople, actOf, isSpoiler, shotFor, trimDoc, trimToFit,
 } from './picks.js';
 
 const film = (key, tmdb, year, extra = {}) => ({
@@ -88,5 +88,40 @@ describe('ticking scenes in and out', () => {
     expect(out.parts[0].segments).toHaveLength(1);
     expect(Object.keys(out.sources)).toEqual(['M1']);
     expect(Object.keys(removeAt(doc, 0, { prune: false }).sources)).toEqual(['M1', 'M2']);
+  });
+});
+
+describe('trailers', () => {
+  it('puts shots in acts by where they sit in the film', () => {
+    expect([0, 30, 59, 80, 95].map((t) => actOf(t, 100))).toEqual([0, 1, 1, 2, 3]);
+  });
+
+  it('takes the longest camera shot of a moment, cut around its middle', () => {
+    const row = { start: 100, end: 160 };
+    expect(shotFor(row, [[90, 101], [100, 104], [104, 120], [120, 125]])).toEqual({ start: 108, end: 116 });
+    expect(shotFor(row, [[100, 104], [104, 109]])).toEqual({ start: 104, end: 109 });
+    expect(shotFor(row, [])).toEqual({ start: 100, end: 106 });
+    expect(shotFor(row, [[130, 130.5]])).toEqual({ start: 130, end: 132 });
+  });
+
+  it('marks moments covered by a spoiler range', () => {
+    const rows = [
+      { film_key: 'a', start: 0, end: 100, tags: ['fc:spoiler'], status: 'accepted' },
+      { film_key: 'a', start: 10, end: 20, tags: ['fire'], status: 'accepted' },
+      { film_key: 'a', start: 200, end: 210, tags: ['fire'], status: 'accepted' },
+    ];
+    expect(isSpoiler(rows[1], rows)).toBe(true);
+    expect(isSpoiler(rows[2], rows)).toBe(false);
+  });
+
+  it('trims every shot by the same share until the trailer fits', () => {
+    const segs = [{ start: 0, end: 10 }, { start: 50, end: 56 }, { start: 90, end: 91 }];
+    const out = trimToFit(segs, 12, 1);
+    expect(out.reduce((t, s) => t + s.end - s.start, 0)).toBeCloseTo(12, 3);
+    expect(out[2]).toEqual(segs[2]);
+    expect(out.every((s, i) => s.start === segs[i].start)).toBe(true);
+    expect(trimToFit(segs, 30)).toBe(segs);
+    const doc = addPicks(blank, [{ src: 'M1', start: 0, end: 10, source: src(1) }, { src: 'M1', start: 50, end: 60, source: src(1) }]);
+    expect(cutLength(trimDoc(doc, 10, 1))).toBeCloseTo(10, 3);
   });
 });

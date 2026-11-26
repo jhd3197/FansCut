@@ -162,3 +162,56 @@ function round3(v) { return Math.round(v * 1000) / 1000; }
 
 // Total length of the cut in seconds.
 export const cutLength = (doc) => segList(doc).reduce((t, { seg }) => t + len(seg), 0);
+
+// -- trailers ------------------------------------------------------------------------
+
+export const TRAILER_LENGTHS = [60, 120, 150];
+export const ACTS = ['Open', 'Build', 'Peak', 'Close'];
+
+// The act a shot falls in, by where it sits in the film.
+export function actOf(t, duration) {
+  const x = duration > 0 ? t / duration : 0;
+  return x < 0.2 ? 0 : x < 0.6 ? 1 : x < 0.9 ? 2 : 3;
+}
+
+// The shot a tagged moment gives a trailer: its longest camera shot (from the film's
+// index), cut to `max` seconds around its middle; without shots, the moment's first seconds.
+export function shotFor(row, shots, { min = 2, max = 8 } = {}) {
+  const inside = (shots || []).filter(([a, b]) => a >= row.start - 0.05 && b <= row.end + 0.05 && b > a);
+  let [a, b] = inside.length
+    ? inside.reduce((best, s) => (s[1] - s[0] > best[1] - best[0] ? s : best))
+    : [row.start, Math.min(row.end, row.start + 6)];
+  if (b - a > max) { const mid = (a + b) / 2; a = mid - max / 2; b = mid + max / 2; }
+  if (b - a < min) b = Math.min(row.end, a + min);
+  return { start: round3(a), end: round3(b) };
+}
+
+const SPOILER = new Set(['spoiler', 'fc:spoiler']);
+const spoilerRow = (r) => r.status !== 'rejected' && (r.tags || []).some((t) => SPOILER.has(t));
+
+// A moment is a spoiler when it, or a spoiler range over it, is tagged Spoiler.
+export function isSpoiler(row, rows) {
+  return spoilerRow(row) || (rows || []).some((r) => r.film_key === row.film_key && spoilerRow(r) && overlapShare(r, row) > 0.5);
+}
+
+// Shorten every shot by the same share of what it has above `min` seconds (keeping its
+// start) until the segments fit in `target`. Returns new segments.
+export function trimToFit(segs, target, min = 1.5) {
+  const total = segs.reduce((t, s) => t + len(s), 0);
+  const spare = segs.reduce((t, s) => t + Math.max(0, len(s) - min), 0);
+  if (total <= target || spare <= 0) return segs;
+  const share = Math.min(1, (total - target) / spare);
+  return segs.map((s) => {
+    const extra = Math.max(0, len(s) - min);
+    return extra ? { ...s, end: round3(s.end - extra * share) } : s;
+  });
+}
+
+// trimToFit over a whole recipe.
+export function trimDoc(doc, target, min) {
+  const next = structuredClone(doc);
+  const flat = segList(next);
+  const out = trimToFit(flat.map(({ seg }) => seg), target, min);
+  flat.forEach(({ pi, si }, i) => { next.parts[pi].segments[si] = out[i]; });
+  return next;
+}

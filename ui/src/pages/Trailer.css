@@ -1,0 +1,31 @@
+/* Trailer picks: step 1 for a trailer. Builds on Find.css. */
+.trl-side { flex-basis: 230px; max-width: 280px; gap: 18px; }
+.trl-film { display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--panel); border: 1px solid #19333F; border-radius: 10px; color: var(--porcelain); text-decoration: none; }
+.trl-film:hover { border-color: var(--border-hover); color: var(--porcelain); text-decoration: none; }
+.trl-film img { flex: none; width: 34px; aspect-ratio: 2 / 3; border-radius: 4px; object-fit: cover; background: var(--raised); }
+.trl-film > span { display: flex; flex-direction: column; min-width: 0; }
+.trl-film-name { font-size: 13px; font-weight: 600; line-height: 1.2; }
+.trl-switches { display: flex; flex-direction: column; gap: 10px; }
+.trl-switch { display: flex; align-items: center; gap: 10px; font-size: 13px; cursor: pointer; }
+.trl-switch.is-off { color: var(--faint); cursor: not-allowed; }
+
+.trl-meter { padding: 14px 16px; }
+.trl-meter-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.trl-meter-head h1 { font-size: 24px; font-weight: 600; font-family: var(--display); }
+.trl-meter-head .btn { align-self: center; }
+.trl-meter-note { font-size: 13px; font-weight: 500; color: var(--dim); }
+.trl-meter-note.is-over { color: var(--coral); }
+.trl-bar { position: relative; margin-top: 12px; height: 12px; border-radius: 6px; background: var(--raised); overflow: hidden; }
+.trl-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 6px; background: var(--sky); transition: width .2s; }
+.trl-fill.is-over { background: var(--coral); }
+.trl-mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--porcelain); }
+
+.trl-act { margin-top: 22px; }
+.trl-grid { grid-template-columns: repeat(auto-fill, minmax(min(170px, 100%), 1fr)); gap: 16px 14px; }
+.trl-n { position: absolute; right: 6px; top: 6px; min-width: 18px; padding: 1px 5px; border-radius: 4px; background: #07141AD1; font-size: 11px; text-align: center; }
+.trl-name { margin-top: 7px; font-size: 13px; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.trl-spoiler { margin-top: 2px; font-size: 11.5px; font-weight: 700; color: var(--apricot); }
+.trl-plist { max-height: 340px; }
+.trl-plist li { gap: 9px; height: 32px; }
+.trl-pn { flex: none; width: 16px; text-align: right; font-size: 11px; color: var(--faint); }
+.trl-plist .fnd-pthumb { width: 48px; height: 20px; box-shadow: none; }
