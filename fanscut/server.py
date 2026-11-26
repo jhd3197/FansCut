@@ -115,17 +115,17 @@ def _mount_ui(app: FastAPI, ui: Path) -> None:
     def spa(path: str) -> FileResponse:
         if path.split("/", 1)[0] in ("api", "docs", "redoc", "openapi.json", "healthz"):
             raise HTTPException(404, "Not Found")
-        # normpath + a prefix check: the form path scanners recognise as a guard
+        # normpath, then a prefix check on that same string before any file access: the
+        # form path scanners recognise as a guard against ../ escapes
         full = os.path.normpath(os.path.join(base, path))
-        f = Path(full)
-        if path and full.startswith(base + os.sep) and f.is_file():
-            # Vite's assets/ names carry a content hash: cache them for good
-            immutable = path.startswith("assets/")
+        if path and full.startswith(base + os.sep) and os.path.isfile(full):
             if path == "sw.js":  # browsers must always see the current worker
-                return FileResponse(f, headers={"Cache-Control": "no-cache",
-                                                "Service-Worker-Allowed": "/"})
-            return FileResponse(f, headers={"Cache-Control": "public, max-age=31536000, immutable"
-                                            if immutable else "no-cache"})
+                return FileResponse(full, headers={"Cache-Control": "no-cache",
+                                                   "Service-Worker-Allowed": "/"})
+            # Vite's assets/ names carry a content hash: cache them for good
+            cache = ("public, max-age=31536000, immutable" if path.startswith("assets/")
+                     else "no-cache")
+            return FileResponse(full, headers={"Cache-Control": cache})
         # index.html names the current bundle; never let a browser keep a stale one
         return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
 

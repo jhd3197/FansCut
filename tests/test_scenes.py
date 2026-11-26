@@ -343,4 +343,5 @@ def test_scene_api_end_to_end(sc, monkeypatch):
                                                        "films": ["nope:1"]})
     assert unknown.status_code == 404
 
-    assert sc.delete(f"/api/scenes/tags/{t['id']}").status_code == 204
+    gone = sc.delete(f"/api/scenes/tags/{t['id']}")
+    assert gone.status_code == 204
