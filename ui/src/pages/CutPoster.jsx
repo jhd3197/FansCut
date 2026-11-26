@@ -1,6 +1,9 @@
 // A cut's poster: layout, title, which stills, and how stills are scored. The choice is
 // kept in this browser (see usePosterPrefs); Settings > Posters holds the defaults.
+// "AI poster" draws one with an image model from the same stills (kept on the server).
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router';
+import { api } from '../lib/api.js';
 import { useCrumbRoot, usePageTitle } from '../lib/hooks.js';
 import { posterSlots, WEIGHT_KEYS } from '../lib/stills.js';
 import { useApi } from '../lib/store.js';
@@ -10,6 +13,77 @@ import { PosterCanvas, tc, useReel } from './CutDetail.jsx';
 
 const WEIGHT_LABELS = { exposure: 'Exposure', contrast: 'Contrast', color: 'Colour', detail: 'Detail' };
 
+export const aiPosterUrl = (id, v) => `/api/timelines/${enc(id)}/poster${v ? `?v=${encodeURIComponent(v)}` : ''}`;
+const takeUrl = (id, name) => `/api/timelines/${enc(id)}/poster/ai/${encodeURIComponent(name)}`;
+
+// The cut's AI poster takes: state from the server, polled while one is being drawn.
+export function useAiPoster(id) {
+  const st = useApi(`/timelines/${enc(id)}/poster/ai`, { quiet: true });
+  const running = st.data?.task?.status === 'running';
+  const { reload } = st;
+  useEffect(() => {
+    if (!running) return undefined;
+    const timer = setInterval(reload, 2000);
+    return () => clearInterval(timer);
+  }, [running, reload]);
+  return st;
+}
+
+function AiPoster({ id, stills, title, view, setView }) {
+  const st = useAiPoster(id);
+  const [err, setErr] = useState('');
+  const data = st.data;
+  const task = data?.task;
+  const running = task?.status === 'running';
+  const call = async (path, opts) => {
+    setErr('');
+    try { await api(path, opts); } catch (e) { setErr(e.message || String(e)); }
+    st.reload();
+  };
+  const generate = () => call(`/timelines/${enc(id)}/poster/ai`, {
+    method: 'POST', body: { stills: stills.slice(0, 4).map((x) => ({ src: x.source, t: x.t })), title },
+  });
+  useEffect(() => { if (task?.status === 'done' && task.take) setView(task.take); }, [task?.status, task?.take, setView]);
+  if (!data) return null;
+  if (!data.model) return <p className="muted" style={{ margin: 0 }}>Set an image model under Settings, Posters to draw posters.</p>;
+  return (
+    <section className="stack" style={{ gap: 10 }} aria-labelledby="pp-ai">
+      <div className="section-head">
+        <h2 id="pp-ai">AI poster</h2>
+        <span className="n">{data.takes.length ? `${data.takes.length} take${data.takes.length === 1 ? '' : 's'}` : ''}</span>
+        <button type="button" className="btn btn-sm btn-primary end" disabled={running || !stills.length} onClick={generate}>
+          {data.takes.length ? 'Generate again' : 'Generate with AI'}
+        </button>
+      </div>
+      <span className="tiny muted">Draws a poster from the {Math.min(4, stills.length)} stills the poster uses, with {data.model}. It costs a few cents and stays on this server.</span>
+      {running && <span className="tiny">{task.message || 'Drawing'}…</span>}
+      {task?.status === 'failed' && <span className="tiny" style={{ color: 'var(--bad)' }}>{task.message}</span>}
+      {err && <span className="tiny" style={{ color: 'var(--bad)' }}>{err}</span>}
+      {data.takes.length > 0 && (
+        <div className="reel-cands">
+          {data.takes.map((t) => (
+            <div key={t.name} className="stack" style={{ gap: 4 }}>
+              <button type="button" aria-pressed={view === t.name} onClick={() => setView(t.name)}
+                aria-label={`Take from ${new Date(Number(t.name.slice(5, -4))).toLocaleTimeString()}`}>
+                <img src={takeUrl(id, t.name)} alt="" loading="lazy" />
+                <span className="mono tiny">{data.chosen === t.name ? 'In use' : t.cost ? `$${t.cost.toFixed(2)}` : ''}</span>
+              </button>
+              <div className="row" style={{ gap: 4 }}>
+                {data.chosen !== t.name && <button type="button" className="btn btn-sm" onClick={() => call(`${takeUrl(id, t.name).replace('/api', '')}/keep`, { method: 'POST' })}>Keep</button>}
+                <button type="button" className="btn btn-sm" onClick={() => { if (view === t.name) setView(''); call(takeUrl(id, t.name).replace('/api', ''), { method: 'DELETE' }); }}>Discard</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {data.chosen && (
+        <button type="button" className="btn btn-sm" style={{ alignSelf: 'flex-start' }}
+          onClick={() => { setView(''); call(`/timelines/${enc(id)}/poster`, { method: 'DELETE' }); }}>Use the stills poster instead</button>
+      )}
+    </section>
+  );
+}
+
 export function CutPoster() {
   const { id } = useParams();
   const tl = useApi(`/timelines/${enc(id)}`);
@@ -17,6 +91,8 @@ export function CutPoster() {
   usePageTitle(doc ? `Poster · ${doc.title}` : 'Poster');
   const crumb = useCrumbRoot();
   const reel = useReel(id, doc);
+  const ai = useAiPoster(id);
+  const [view, setView] = useState('');
 
   if (tl.error && !tl.data) return <div className="page"><ErrorBox error={tl.error} onRetry={tl.reload} /></div>;
   if (!doc) return <div className="page"><Loading /></div>;
@@ -39,7 +115,9 @@ export function CutPoster() {
       <Crumbs items={[crumb.root, [doc.title, back, crumb.state], ['Poster']]} />
       <div className="reel-pp">
         <div className="stack" style={{ gap: 12 }}>
-          {used.length
+          {view || ai.data?.chosen
+            ? <img className="reel-poster" src={view ? takeUrl(id, view) : aiPosterUrl(id, ai.data.chosen)} alt="AI poster" />
+            : used.length
             ? <PosterCanvas srcs={used.map((x) => x.src)} layout={prefs.layout} title={prefs.title ? doc.title : ''} sub={subtitle} label="Poster preview" />
             : <div className="reel-poster reel-poster-empty" />}
           <Link className="btn btn-primary" to={back} state={crumb.state}>Done</Link>
@@ -76,6 +154,7 @@ export function CutPoster() {
             )}
             {waiting && top.length > 0 && <span className="tiny muted">Still scoring the rest…</span>}
           </section>
+          <AiPoster id={id} stills={used.length ? used : top} title={prefs.title} view={view} setView={setView} />
           <section className="stack" style={{ gap: 10 }} aria-labelledby="pp-score">
             <h2 id="pp-score">Scoring</h2>
             <div className="reel-sliders">

@@ -323,6 +323,7 @@ function MarkersSection({ check, text }) {
 
 const LAYOUTS = [['frame', 'Frame'], ['strip', 'Strip'], ['grid', 'Grid']];
 const STILLS = [[2, '2'], [4, '4'], [6, '6']];
+const QUALITY = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
 const WEIGHTS = [['exposure', 'Exposure'], ['contrast', 'Contrast'], ['color', 'Colour'], ['detail', 'Detail']];
 
 function PostersSection({ get, put, check }) {
@@ -355,6 +356,13 @@ function PostersSection({ get, put, check }) {
               </label>
             );
           })}
+        </div>
+      </Row>
+      <Row label="AI posters" hint="Draws a poster from the cut's stills. The key comes from the environment (OPENAI_API_KEY for openai/…). Empty = off." htmlFor="set-ai-poster">
+        <div className="stack10">
+          <input id="set-ai-poster" className="inp mono" placeholder="openai/gpt-image-2" value={get('posters.ai_model') ?? ''}
+            onChange={(e) => put('posters.ai_model', e.target.value)} />
+          <Choice name="Quality" value={get('posters.ai_quality') ?? 'medium'} options={QUALITY} onChange={(x) => put('posters.ai_quality', x)} />
         </div>
       </Row>
     </section>

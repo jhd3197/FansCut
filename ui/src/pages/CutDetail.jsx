@@ -543,6 +543,7 @@ export function CutDetail() {
   const crumb = useCrumbRoot();
   const films = useApi(hasMovies ? '/scenes/films' : null, { quiet: true });
   const reel = useReel(id, tl.data?.doc);
+  const aiState = useApi(`/timelines/${enc(id)}/poster/ai`, { quiet: true });
 
   if (tl.error && !tl.data) return <div className="page"><ErrorBox error={tl.error} onRetry={tl.reload} /></div>;
   if (!tl.data) return <div className="page"><Loading /></div>;
@@ -575,12 +576,15 @@ export function CutDetail() {
     k === 'repo' || k === 'repository' || k === 'url' ? <span className="mono tiny">{v}</span> : v,
   ]);
 
+  const aiChosen = aiState.data?.chosen;
   return (
     <div className="page">
       <Crumbs items={[crumb.root, [doc.title]]} />
       <div className="hero">
         <div className="stack" style={{ width: 240, flex: 'none', gap: 10 }}>
-          {reel.used.length > 0
+          {aiChosen
+            ? <img className="reel-poster" src={`/api/timelines/${enc(id)}/poster?v=${encodeURIComponent(aiChosen)}`} alt={`${doc.title} poster`} />
+            : reel.used.length > 0
             ? <PosterCanvas srcs={reel.used.map((x) => x.src)} layout={reel.prefs.layout} title={reel.prefs.title ? doc.title : ''} sub={subtitle} />
             : <ArtPoster keys={heroArt} layout={heroArt.length > 1 ? 'split' : 'single'}
               fallback={<Poster title={doc.title} sub={subtitle} kind={posterKind(doc)} bare />} />}
