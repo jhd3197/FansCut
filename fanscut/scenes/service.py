@@ -217,11 +217,16 @@ class SceneService:
 
     # -- looking at the film ------------------------------------------------------
     def transcript(
-        self, key: str, start: float = 0, end: float | None = None
+        self, key: str, start: float = 0, end: float | None = None, speech: bool = False
     ) -> list[dict[str, Any]]:
+        """Subtitle lines in [start, end]; *speech* leaves sound descriptions out."""
         doc = self._index_or_fail(key)
         hi = end if end is not None else float("inf")
-        return [x for x in doc.get("lines") or [] if x["end"] > start and x["start"] < hi]
+        return [
+            x
+            for x in doc.get("lines") or []
+            if x["end"] > start and x["start"] < hi and (not speech or sig.speech(x["text"]))
+        ]
 
     def shots(self, key: str, start: float = 0, end: float | None = None) -> list[list[float]]:
         doc = self._index_or_fail(key)

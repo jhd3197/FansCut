@@ -57,9 +57,14 @@ def get_signals(core: CoreDep, key: str) -> dict[str, Any]:
 
 @router.get("/transcript")
 def transcript(
-    core: CoreDep, key: str, start: float = Query(0, ge=0), end: float | None = Query(None, gt=0)
+    core: CoreDep,
+    key: str,
+    start: float = Query(0, ge=0),
+    end: float | None = Query(None, gt=0),
+    speech: bool = False,
 ) -> dict[str, Any]:
-    return {"lines": core.scenes.transcript(key, start, end)}
+    """Subtitle lines; ``speech=true`` keeps only what is said (the join check uses it)."""
+    return {"lines": core.scenes.transcript(key, start, end, speech)}
 
 
 @router.get("/shots")

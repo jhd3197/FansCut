@@ -643,3 +643,15 @@ def test_tidy_accepts_sure_ai_moments_and_merges_twins(db):
     assert other["id"] in ids  # different tags: not the same moment
     assert s.tidy("radarr:1", 0.75) == {"auto_accepted": 0, "merged": 0}
     assert not st.same_moment({"start": 0, "end": 10, "tags": ["a"]}, {"start": 8, "end": 20, "tags": ["a"]})
+
+
+def test_transcript_can_keep_only_speech(cfg, tmp_path):
+    with TestClient(create_app(cfg, tmp_path / "config.yaml", start_worker=False)) as c:
+        lines = [{"start": 1, "end": 2, "text": "[door slams]"},
+                 {"start": 3, "end": 5, "text": "Happy Christmas, Ron."},
+                 {"start": 6, "end": 8, "text": "♪ carol ♪"}]
+        c.app.state.core.scenes.store.save_index("radarr:9", {"lines": lines, "shots": []})
+        q = {"key": "radarr:9"}
+        assert len(c.get("/api/scenes/transcript", params=q).json()["lines"]) == 3
+        said = c.get("/api/scenes/transcript", params={**q, "speech": "true"}).json()["lines"]
+        assert [x["text"] for x in said] == ["Happy Christmas, Ron."]

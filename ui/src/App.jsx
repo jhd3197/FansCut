@@ -31,7 +31,7 @@ import { t } from './i18n/index.js';
 
 // The two editors are the heaviest pages: load them only when opened.
 const Build = lazy(() => import('./pages/Build.jsx').then((m) => ({ default: m.Build })));
-const TimelineEdit = lazy(() => import('./pages/TimelineEdit.jsx').then((m) => ({ default: m.TimelineEdit })));
+const Arrange = lazy(() => import('./pages/Arrange.jsx').then((m) => ({ default: m.Arrange })));
 const Find = lazy(() => import('./pages/Find.jsx').then((m) => ({ default: m.Find })));
 import { useApi } from './lib/store.js';
 
@@ -102,7 +102,12 @@ function OldCut() {
 }
 function OldTimeline() {
   const { tid } = useParams();
-  return <Navigate to={`/cuts/${encodeURIComponent(tid)}/edit`} replace />;
+  return <Navigate to={`/cuts/${encodeURIComponent(tid)}/arrange`} replace />;
+}
+// The old timeline editor's URL: Arrange is the editor now.
+function OldEdit() {
+  const { id } = useParams();
+  return <Navigate to={`/cuts/${encodeURIComponent(id)}/arrange`} replace />;
 }
 
 // server.auth = "api_key": ask for the key once; the server keeps it in a cookie.
@@ -150,7 +155,7 @@ export function App() {
   }, [where]);
   if (locked) return <KeyGate />;
   // The editor is full screen, like an NLE: no app sidebar (its bar has a Home link).
-  if (/^\/cuts\/[^/]+\/(edit|find)\/?$/.test(where)) {
+  if (/^\/cuts\/[^/]+\/(arrange|find)\/?$/.test(where)) {
     return (
       <div className="shell-full">
         <LoadingBar />
@@ -158,7 +163,7 @@ export function App() {
           <StatusChecker />
           <ErrorBoundary resetKey={where}>
             <Suspense fallback={<div className="page"><Loading /></div>}>
-              <Routes><Route path="/cuts/:id/edit" element={<TimelineEdit />} /><Route path="/cuts/:id/find" element={<Find />} /></Routes>
+              <Routes><Route path="/cuts/:id/arrange" element={<Arrange />} /><Route path="/cuts/:id/find" element={<Find />} /></Routes>
             </Suspense>
           </ErrorBoundary>
         </main>
@@ -197,7 +202,7 @@ export function App() {
           <Route path="/cuts/:id/build" element={<Build />} />
           <Route path="/cuts/:id/poster" element={<CutPosterRedirect />} />
           <Route path="/cuts/:id/scenes" element={<CutScenes />} />
-          <Route path="/cuts/:id/edit" element={<TimelineEdit />} />
+          <Route path="/cuts/:id/edit" element={<OldEdit />} />
           <Route path="/my-cuts" element={<MyCuts />} />
           <Route path="/new" element={<NewCutPage />} />
           <Route path="/jobs" element={<Jobs />} />

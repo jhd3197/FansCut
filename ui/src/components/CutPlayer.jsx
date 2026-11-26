@@ -112,7 +112,7 @@ class Stale extends Error {}
 // -- the player -------------------------------------------------------------------------
 
 // `start` is the segment to open on; `onSegment(n)` reports the segment playing; the ref
-// gets { seekSegment(n, play) } for a list beside it.
+// gets { seekSegment(n, play), seekTime(t, play) } for a list beside it.
 export function CutPlayer({ id, segs, filmOf, srcOrder, srcName, start = 1, onSegment, ref }) {
   // Kept while what plays is the same: a refetched doc or film list must not restart it.
   const fresh = useMemo(() => cutPieces(segs, filmOf), [segs, filmOf]);
@@ -395,6 +395,7 @@ export function CutPlayer({ id, segs, filmOf, srcOrder, srcName, start = 1, onSe
 
   useImperativeHandle(ref, () => ({
     seekSegment: (n, play = true) => api.current?.seek(segmentStart(pieces, n), play),
+    seekTime: (to, play = true) => api.current?.seek(Math.max(0, to), play), // cut time
   }), [pieces]);
 
   const any = playableFrom(pieces, 0) >= 0;
