@@ -7,16 +7,19 @@ probes (detail pages do, and the probe is cached).
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .art import art_ref
 from .errors import NotFoundError
 from .library import check, known
 
 if TYPE_CHECKING:
     from .core import Core
-    from .models import Movie
+    from .models import Movie, Series
 
 
 def _edition(m: Movie) -> str | None:
@@ -32,6 +35,138 @@ def _collections_of(m: Movie) -> list[str]:
     return out
 
 
+def _copy_rank(m: Movie) -> tuple[bool, bool, bool, bool]:
+    """Lower is better: on disk, not a temp file (muxing.tmp.mkv), Extended, from Radarr."""
+    name = Path(m.file).name if m.file else ""
+    return (not m.file, bool(check.TEMP_NAME.search(name)),
+            "extended" not in (_edition(m) or "").lower(), m.source != "radarr")
+
+
+def _tmdb_collections(name: str, members: list[Movie]) -> set[int]:
+    """TMDB collection ids behind a collection: Radarr's, or the built-in set's."""
+    out = {m.tmdb_collection for m in members if m.tmdb_collection}
+    for m in members:
+        k = known.movie(m.tmdb_id, m.title, m.year)
+        if k and k["set"] == name and k.get("collection"):
+            out.add(k["collection"])
+    return out
+
+
+def _name_id(name: str) -> str:
+    """A short id for a collection TMDB doesn't know: stable, and no words in URLs."""
+    return "c-" + hashlib.sha1(known.norm(name).encode()).hexdigest()[:8]
+
+
+def collection_ids(movies: list[Movie]) -> dict[str, str]:
+    """Every collection name -> its URL id: "tmdb-<n>" when one TMDB collection is
+    behind it (and no other name took it first), else "c-<hash of the name>"."""
+    named: dict[str, list[Movie]] = {}
+    for m in movies:
+        for c in _collections_of(m):
+            named.setdefault(c, []).append(m)
+    out: dict[str, str] = {}
+    used: set[str] = set()
+    # a franchise name owns its TMDB id before an auto-list or a longer alias does
+    for name in sorted(named, key=lambda n: (bool(NOT_A_FRANCHISE.search(n)), len(n), n)):
+        cids = _tmdb_collections(name, named[name])
+        gid = f"tmdb-{next(iter(cids))}" if len(cids) == 1 else _name_id(name)
+        if gid in used:
+            gid = _name_id(name)
+        used.add(gid)
+        out[name] = gid
+    return out
+
+
+def resolve_collection(movies: list[Movie], ref: str) -> str:
+    """A collection's name from its id, or from its name (old links)."""
+    ids = collection_ids(movies)
+    return next((n for n, i in ids.items() if i == ref), ref)
+
+
+# Plex lists that aren't franchises ("IMDb Top 250", "Popular on My Server")
+NOT_A_FRANCHISE = re.compile(
+    r"\b(top \d+|popular|most (watched|played)|recently|trending|on deck|watchlist"
+    r"|favou?rites?|best of|award|oscars?|my server)\b", re.IGNORECASE)
+
+
+def collection_groups(movies: list[Movie]) -> list[dict[str, Any]]:
+    """Every collection with 2+ films, one copy per film, oldest first.
+
+    `id` is "tmdb-<n>" when Radarr knows the TMDB collection, else the collection's
+    name. Groups holding the same films (a Plex tag and the built-in set) are one.
+    A copy's `plex_key` falls back to another copy's, so playlists still work.
+    Suggestions stay inside one franchise: a list whose films belong to two or more
+    TMDB collections, or a Plex auto-list ("IMDb Top 250"), is not a group."""
+    named: dict[str, list[Movie]] = {}
+    for m in movies:
+        for c in _collections_of(m):
+            named.setdefault(c, []).append(m)
+    plex_of: dict[object, str] = {}
+    for m in movies:
+        if m.plex_key:
+            plex_of.setdefault(_version_key(m), m.plex_key)
+    out: list[dict[str, Any]] = []
+    seen_sets: dict[frozenset[object], dict[str, Any]] = {}
+    ids = collection_ids(movies)
+    for name in sorted(named):
+        best: dict[object, Movie] = {}
+        for m in named[name]:
+            k = _version_key(m)
+            if k not in best or _copy_rank(m) < _copy_rank(best[k]):
+                best[k] = m
+        films = sorted(best.values(), key=lambda m: (m.year or 0, m.title))
+        if len(films) < 2:
+            continue
+        members = frozenset(best)
+        if members in seen_sets:  # same films under another name: an alias for old links
+            seen_sets[members]["aliases"].append(name)
+            continue
+        cids = {m.tmdb_collection for m in films if m.tmdb_collection}
+        if len(cids) > 1 or NOT_A_FRANCHISE.search(name):
+            continue
+        gid = ids[name]
+        for m in films:
+            m.plex_key = m.plex_key or plex_of.get(_version_key(m))
+        out.append({"id": gid, "name": name, "movies": films, "aliases": []})
+        seen_sets[members] = out[-1]
+    return out
+
+
+def find_group(movies: list[Movie], ref: str) -> dict[str, Any] | None:
+    """A collection by its id or, for old links, its name."""
+    groups = collection_groups(movies)
+    name = resolve_collection(movies, ref)
+    return (next((g for g in groups if g["id"] == ref), None)
+            or next((g for g in groups if name == g["name"] or name in g["aliases"]), None))
+
+
+def _franchise(name: str) -> str:
+    """"The Hobbit Collection" -> "the hobbit": what a show's title must equal to join."""
+    n = known.norm(name)
+    return n[:-len(" collection")] if n.endswith(" collection") else n
+
+
+def _show_members(core: Core, names: list[str]) -> dict[str, list[Series]]:
+    """Shows in each collection: Plex's own show collections, or a show whose title is
+    the collection's franchise ("Attack on Titan" joins "Attack on Titan Collection")."""
+    try:
+        series, _ = core.library.list_series()
+    except Exception:  # noqa: BLE001 - collections still list their films
+        return {}
+    out: dict[str, list[Series]] = {}
+    for name in names:
+        f = _franchise(name)
+        hits = [s for s in series if name in s.collections or (f and known.norm(s.title) == f)]
+        if hits:
+            out[name] = hits
+    return out
+
+
+def show_row(s: Series) -> dict[str, Any]:
+    return {"key": s.key, "title": s.title, "year": s.year, "seasons": s.season_count,
+            "episodes": s.episode_count, "art": art_ref(s)}
+
+
 def _health_by_file(core: Core) -> dict[str, list[dict[str, Any]]]:
     out: dict[str, list[dict[str, Any]]] = {}
     for f in (core.last_check() or {}).get("findings", []):
@@ -40,21 +175,82 @@ def _health_by_file(core: Core) -> dict[str, list[dict[str, Any]]]:
     return out
 
 
-def movie_row(m: Movie, health: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+CODEC = {"hevc": "HEVC", "h264": "H.264", "av1": "AV1", "vp9": "VP9", "mpeg2video": "MPEG-2"}
+
+
+def video_facts(info: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Resolution, HDR and codec from a cached probe ({"res": "4K", "hdr": "HDR10", ...})."""
+    v = (info or {}).get("video") or {}
+    if not v:
+        return None
+    w, h = v.get("width") or 0, v.get("height") or 0
+    res = ("4K" if w >= 3200 or h >= 1600 else "1080p" if w >= 1800 or h >= 1000
+           else "720p" if w >= 1200 or h >= 700 else "SD")
+    hdr = v.get("hdr") if v.get("hdr") and v.get("hdr") != "SDR" else None
+    codec = v.get("codec") or ""
+    return {"res": res, "hdr": hdr, "codec": CODEC.get(codec, codec.upper() or None)}
+
+
+def _probes(core: Core, ms: list[Movie]) -> dict[str, dict[str, Any]]:
+    cached = getattr(core.prober, "cached", None)  # tests swap in a plain function
+    return cached([m.file for m in ms if m.file]) if cached else {}
+
+
+def _version_key(m: Movie) -> object:
+    return ("tmdb", m.tmdb_id) if m.tmdb_id else ("title", m.title.lower(), m.year)
+
+
+def _cut_sources(core: Core) -> dict[str, list[str]]:
+    """movie key -> titles of the installed cuts that use that exact copy."""
+    out: dict[str, list[str]] = {}
+    for r in core.db.query("SELECT title, doc FROM timelines"):
+        for s in json.loads(r["doc"]).get("sources", {}).values():
+            if s.get("kind") != "movie":
+                continue
+            m = core.library.find_movie(s.get("tmdb"), edition=s.get("edition", ""))
+            if m and r["title"] not in out.setdefault(m.key, []):
+                out[m.key].append(r["title"])
+    return out
+
+
+def movie_row(m: Movie, health: dict[str, list[dict[str, Any]]],
+              probes: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     problems = [f for f in health.get(m.file or "", []) if f["severity"] in ("error", "warn")
                 and f["check"] != "mismatch"]
-    return {"key": m.key, "title": m.title, "year": m.year, "tmdb_id": m.tmdb_id,
+    row = {"key": m.key, "title": m.title, "year": m.year, "tmdb_id": m.tmdb_id,
             "source": m.source, "file": m.file, "on_disk": bool(m.file),
             "minutes": round(m.duration / 60) if m.duration else None,
             "edition": _edition(m), "collections": _collections_of(m),
             "problem": problems[0]["message"] if problems else None,
-            "problem_severity": problems[0]["severity"] if problems else None}
+            "problem_severity": problems[0]["severity"] if problems else None,
+            "art": art_ref(m)}
+    if probes is not None:  # None with a file = never probed: the UI says "Not analysed"
+        row["video"] = video_facts(probes.get(m.file or ""))
+    return row
 
 
 def movies(core: Core) -> dict[str, Any]:
     ms, errors = core.library.list_movies()
     health = _health_by_file(core)
-    return {"errors": errors, "movies": [movie_row(m, health) for m in ms]}
+    probes = _probes(core, ms)
+    used = _cut_sources(core)
+    rows = [movie_row(m, health, probes) for m in ms]
+    # several copies of one film (Theatrical, Extended): one tile; the first is the
+    # copy a cut uses, else the first listed, and the rest hang off it as versions
+    groups: dict[object, list[dict[str, Any]]] = {}
+    for m, row in zip(ms, rows, strict=True):
+        row["source_for"] = used.get(m.key, [])
+        groups.setdefault(_version_key(m), []).append(row)
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda r: (not r["source_for"], not r["on_disk"]))
+        head = group[0]
+        head["versions"] = [{"key": r["key"], "edition": r["edition"], "video": r.get("video"),
+                             "source_for": r["source_for"]} for r in group]
+        for r in group[1:]:
+            r["version_of"] = head["key"]
+    return {"errors": errors, "movies": rows}
 
 
 def collections(core: Core) -> dict[str, Any]:
@@ -64,17 +260,28 @@ def collections(core: Core) -> dict[str, Any]:
         for c in _collections_of(m):
             groups.setdefault(c, []).append(m)
     cuts = all_cuts(core)["cuts"]
+    shows = _show_members(core, list(groups))
+    ids = collection_ids(ms)
     out = []
     for name, members in sorted(groups.items()):
         tmdbs = {m.tmdb_id for m in members if m.tmdb_id}
-        n_cuts = sum(1 for c in cuts if tmdbs & set(c.get("tmdb_ids", [])))
-        out.append({"name": name, "films": len(members), "cuts": n_cuts,
-                    "years": sorted({m.year for m in members if m.year})})
+        keys = {s.key for s in shows.get(name, [])}
+        n_cuts = sum(1 for c in cuts if tmdbs & set(c.get("tmdb_ids", []))
+                     or c["series_key"] in keys)
+        by_year = sorted(members, key=lambda m: m.year or 0)
+        out.append({"id": ids[name], "name": name, "films": len(members), "cuts": n_cuts,
+                    "shows": [s.key for s in shows.get(name, [])],
+                    "years": sorted({m.year for m in members if m.year}),
+                    # poster and backdrop refs, first film first (an https URL or a key)
+                    "art": [art_ref(m) for m in by_year],
+                    "backdrops": [art_ref(m, "backdrop") for m in by_year]})
     return {"collections": out}
 
 
-def collection(core: Core, name: str) -> dict[str, Any]:
+def collection(core: Core, ref: str) -> dict[str, Any]:
+    """A collection by its id ("tmdb-1241", "c-…") or, for old links, its name."""
     ms, _ = core.library.list_movies()
+    name = resolve_collection(ms, ref)
     health = _health_by_file(core)
     members = sorted([m for m in ms if name in _collections_of(m)],
                      key=lambda m: (m.year or 0, m.title))
@@ -82,32 +289,51 @@ def collection(core: Core, name: str) -> dict[str, Any]:
         raise NotFoundError(f"collection {name!r} not found")
     tmdbs = {m.tmdb_id for m in members if m.tmdb_id}
     total = sum(m.duration or 0 for m in members)
+    # suggestions built from these films (a group may carry another name for the same set)
+    keys = {m.key for m in members}
     sugg = [s for s in core.suggestions()["suggestions"]
-            if s["id"].partition(":")[2] == name or name.lower() in s["title"].lower()]
-    cuts = [c for c in all_cuts(core)["cuts"] if tmdbs & set(c.get("tmdb_ids", []))]
-    return {"name": name, "films": [movie_row(m, health) for m in members],
+            if s["kind"] in ("collection_merge", "watch_order") and set(s.get("keys", [])) & keys]
+    shows = _show_members(core, [name]).get(name, [])
+    keys = {s.key for s in shows}
+    cuts = [c for c in all_cuts(core)["cuts"]
+            if tmdbs & set(c.get("tmdb_ids", [])) or c["series_key"] in keys]
+    probes = _probes(core, members)
+    return {"id": collection_ids(ms)[name], "name": name,
+            "films": [movie_row(m, health, probes) for m in members],
+            "shows": [show_row(s) for s in shows],
             "minutes": round(total / 60), "suggestions": sugg, "cuts": cuts}
 
 
 def movie(core: Core, key: str) -> dict[str, Any]:
     ms, _ = core.library.list_movies()
-    m = next((x for x in ms if x.key == key), None)
-    if m is None:
-        raise NotFoundError(f"movie {key} not found")
+    m = next((x for x in ms if x.key == key), None) or core.library.get_movie(key)
     health = _health_by_file(core)
-    row = movie_row(m, health)
+    row = movie_row(m, health, _probes(core, [m]))
     info: dict[str, Any] | None = None
     findings: list[dict[str, Any]] = []
     if m.file and Path(m.file).is_file():
         findings, edition, info = core.checker.check_file(m.file, m.title, m.year, m.tmdb_id)
         row["edition"] = edition or row["edition"]
     siblings = []
-    for c in row["collections"]:
-        siblings.append({"name": c, "films": [movie_row(x, health) for x in sorted(
+    near = [x for x in ms if set(_collections_of(x)) & set(row["collections"])]
+    probes = _probes(core, near)
+    show_sets = _show_members(core, row["collections"])
+    ids = collection_ids(ms)
+    # franchises only: "Popular on My Server" is not a shelf worth showing on a film
+    for c in [c for c in row["collections"] if not NOT_A_FRANCHISE.search(c)]:
+        siblings.append({"id": ids.get(c, _name_id(c)), "name": c,
+                         "shows": [show_row(s) for s in show_sets.get(c, [])],
+                         "films": [movie_row(x, health, probes) for x in sorted(
             (x for x in ms if c in _collections_of(x)), key=lambda x: (x.year or 0, x.title))]})
     cuts = [c for c in all_cuts(core)["cuts"] if m.tmdb_id and m.tmdb_id in c["tmdb_ids"]]
+    if info is not None:
+        row["video"] = video_facts(info)
+    versions = [{"key": x.key, "edition": _edition(x), "on_disk": bool(x.file)}
+                for x in ms if x.key != m.key and _version_key(x) == _version_key(m)]
+    used = _cut_sources(core)
     return {**row, "probe": info, "findings": findings + health.get(m.file or "", []),
-            "collection_films": siblings, "cuts": cuts}
+            "collection_films": siblings, "cuts": cuts, "other_versions": versions,
+            "source_for": used.get(m.key, [])}
 
 
 def episode(core: Core, key: str, episode_id: str) -> dict[str, Any]:
@@ -153,5 +379,13 @@ def all_cuts(core: Core) -> dict[str, Any]:
             "repo": installs.get(r["id"], ""),
             "synced": core.db.one("SELECT 1 FROM timeline_syncs WHERE timeline_id = ?",
                                   (r["id"],)) is not None})
+    # watch-order playlists FansCut made in Plex (nothing rendered)
+    for p in core.plex_items("playlist"):
+        films = p["detail"].get("films", [])
+        cuts.append({"kind": "playlist", "id": f"playlist:{p['rating_key']}",
+                     "playlist_id": p["rating_key"], "suggestion": p["ref"],
+                     "title": p["title"], "films": films, "parts": 1, "segments": len(films),
+                     "minutes": None, "tmdb_ids": [], "episode_ids": [], "series_key": "",
+                     "updated_at": p["created_at"], "synced": True})
     renders = core.list_renders()
     return {"cuts": cuts, "renders": renders}

@@ -156,3 +156,43 @@ def test_safe_name_and_unique_path(tmp_path):
 def test_to_dict_is_json_ready():
     import json
     json.dumps(build().to_dict())
+
+
+UHD_HDR = {"codec": "hevc", "width": 3840, "height": 1600, "pix_fmt": "yuv420p10le",
+           "fps": 23.976, "color_transfer": "smpte2084"}
+
+
+def test_fast_quality_is_1080p_sdr_h264_and_tone_maps_only_hdr():
+    probe = lambda f: info(video=UHD_HDR) if f == "/m/a.mkv" else info()  # noqa: E731
+    best = build(probe=probe)
+    assert "libx265" in best.command and "hdr10=1" in " ".join(best.command)
+    fast = build(probe=probe, quality="fast")
+    cmd = " ".join(fast.command)
+    assert fast.mode == "encode" and "libx264" in fast.command and "bt2020" not in cmd
+    assert fast.reason == "files differ in codec, size, frame rate or audio format"
+    assert build(probe=lambda f: info(video=UHD_HDR), quality="fast").reason == "fast quality: 1080p"
+    script = fast.files["filter.txt"]
+    chains = [line for line in script.splitlines() if line.startswith(("[0:v", "[1:v"))]
+    a_chain, b_chain = chains[0], chains[-1]  # a.mkv (HDR) first, b.mkv (SDR) last
+    assert "scale=1920:800" in a_chain and "tonemap=hable" in a_chain  # the HDR 4K file
+    assert "tonemap" not in b_chain  # the SDR one is only scaled
+    assert any("fast quality: 1920x800 H.264, HDR tone-mapped" in w for w in fast.warnings)
+
+
+def test_fast_quality_changes_nothing_for_small_sdr_files():
+    assert rp.fast_size(1280, 720) == (1280, 720)  # never upscaled
+    assert rp.fast_size(3840, 2160) == (1920, 1080) and rp.fast_size(4096, 1716) == (1920, 804)
+    assert not rp.fast_differs([info()])
+    plan = build(quality="fast")
+    assert plan.mode == "copy"  # same as best: nothing to make smaller
+    with pytest.raises(ValueError, match="fast quality"):
+        build(probe=lambda f: info(video=UHD_HDR), quality="fast", mode="copy")
+
+
+def test_fast_quality_tone_maps_edited_segments_too():
+    probe = lambda f: info(video=UHD_HDR)  # noqa: E731
+    seg = Segment("S01E01", "/m/a.mkv", 0, 40)
+    seg.fx = {"video": {"grade": {"saturation": 0.9}}}
+    fast = build(segs=[seg, Segment("S01E01", "/m/a.mkv", 50, 90)], probe=probe, quality="fast")
+    assert fast.files["filter.txt"].count("tonemap=hable") == 2
+    assert "scale=1920:800" in fast.files["filter.txt"] and "libx264" in fast.command

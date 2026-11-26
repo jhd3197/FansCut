@@ -50,7 +50,8 @@ def list_folder_series(root: Path) -> list[Series]:
             title, year = clean_title(d.name)
             out.append(
                 Series(key=f"folder:{d.name}", source="folder", title=title, year=year,
-                       episode_count=len(eps))
+                       episode_count=len(eps), episode_total=len(eps),
+                       season_count=len({e.season for e in eps if e.season > 0}))
             )
     return out
 
@@ -70,7 +71,7 @@ def scan_series_dir(d: Path) -> list[Episode]:
     return [eps[k] for k in sorted(eps)]
 
 
-_TEMP = re.compile(r"(^muxing|\.tmp|\.part|\.partial)", re.IGNORECASE)
+_TEMP = re.compile(r"(^muxing|\.tmp\b|\.part\b|\.partial\b)", re.IGNORECASE)
 _TMDB_TAG = re.compile(r"\{tmdb[=-](\d+)\}", re.IGNORECASE)
 
 

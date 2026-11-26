@@ -1,13 +1,12 @@
 // A cut (timeline recipe) as a page: what it is, what it needs, what's in it.
-import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useLoad } from '../lib/hooks.js';
+import { useCrumbRoot, useLoad, usePageTitle, useUrlState } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
-import { Crumbs, enc, hm, KV, Poster } from '../components/kit.jsx';
+import { ArtPoster, Crumbs, enc, hm, KV, Poster, SRC_COLOURS } from '../components/kit.jsx';
 import { ErrorBox, Loading } from '../components/ui.jsx';
+import { useApi } from '../lib/store.js';
 
-const SRC_COLOURS = ['#7FA8F0', '#B9A3F2', '#6CC5CC', '#F2A93B', '#E98CC0', '#3FA37A'];
 const CREDIT_LABELS = {
   author: 'Made by', based_on: 'Based on', repo: 'Repository', repository: 'Repository',
   url: 'Link', version: 'Version', license: 'License',
@@ -134,6 +133,43 @@ function Segments({ doc, values, report }) {
   );
 }
 
+// "about 30 GB" / "about 800 MB"
+export function gb(bytes) {
+  if (!bytes) return '';
+  return bytes >= 1e9 ? `about ${Math.round(bytes / 1e9)} GB` : `about ${Math.max(1, Math.round(bytes / 1e8) * 100)} MB`;
+}
+
+// "about 2 h 10 min" for an estimate
+export function about(sec) {
+  if (sec < 90) return 'about a minute';
+  const m = Math.round(sec / 60);
+  if (m < 60) return `about ${m} min`;
+  const h = Math.floor(m / 60);
+  const r = Math.round((m % 60) / 5) * 5;
+  return `about ${h} h${r ? ` ${r} min` : ''}`;
+}
+
+// "Build on this PC": how long, why, and the quick way to make it faster.
+function Estimate({ id, variant }) {
+  const est = useApi(`/timelines/${enc(id)}/estimate${variant ? `?variant=${enc(variant)}` : ''}`, { quiet: true });
+  const e = est.data;
+  if (!e) return null;
+  const encode = e.reasons.some((r) => r.startsWith('re-encoded'));
+  return (
+    <section aria-labelledby="c-est" className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: 620 }}>
+      <h2 id="c-est" style={{ fontSize: 14 }}>Build on this PC: {e.label} · {about(e.seconds)}{e.best?.bytes ? ` · ${gb(e.best.bytes)}` : ''}</h2>
+      <span style={{ fontSize: 13, color: 'var(--text2)' }}>Why: {e.reasons.join(', ')}</span>
+      {e.fast && (
+        <span style={{ fontSize: 13 }}>Faster option: {e.fast.name} · {about(e.fast.seconds)} · {gb(e.fast.bytes)}. Pick it on the build page.</span>
+      )}
+      {encode && !e.gpu && (
+        <span style={{ fontSize: 13 }}>{e.fast ? 'Also' : 'Faster option'}: turn on the GPU encoder in <Link to="/settings?section=render">Settings</Link>, usually several times quicker.</span>
+      )}
+      <span className="tiny muted">{e.basis === 'measured' ? 'Timed from your last builds on this PC.' : 'From typical speeds; it gets closer after your first build.'}</span>
+    </section>
+  );
+}
+
 function Variants({ view, value, onChange }) {
   const rows = view?.variants || [];
   const offToggles = (view?.toggles || []).filter((t) => !t.enabled);
@@ -148,6 +184,7 @@ function Variants({ view, value, onChange }) {
               <input type="radio" name="variant" checked={value === v.id} onChange={() => onChange(v.id)} style={{ margin: '3px 0 0' }} />
               <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 <b style={{ fontWeight: 600 }}>{v.label}</b>
+                {v.description && <span className="tiny" style={{ color: 'var(--text2)' }}>{v.description}</span>}
                 <span className="tiny muted">{hm(v.runtime / 60)}</span>
                 {v.blocked.map((b) => (
                   <span key={b.id} className="tiny c-danger">{b.label}: {b.reason}</span>
@@ -168,12 +205,14 @@ function Variants({ view, value, onChange }) {
 
 export function CutDetail() {
   const { id } = useParams();
-  const tl = useLoad(() => api(`/timelines/${enc(id)}`), [id]);
-  const variants = useLoad(() => api(`/timelines/${enc(id)}/variants`), [id]);
-  const sync = useLoad(() => api(`/timelines/${enc(id)}/sync`), [id]);
+  const tl = useApi(`/timelines/${enc(id)}`);
+  usePageTitle(tl.data?.title);
+  const variants = useApi(`/timelines/${enc(id)}/variants`);
+  const sync = useApi(`/timelines/${enc(id)}/sync`);
   const hasMovies = Object.values(tl.data?.doc?.sources || {}).some((s) => s.kind === 'movie');
   const movies = useLoad(() => (hasMovies ? api('/library/movies') : Promise.resolve({ movies: [] })), [hasMovies]);
-  const [variant, setVariant] = useState('');
+  const [variant, setVariant] = useUrlState('variant');
+  const crumb = useCrumbRoot();
 
   if (tl.error && !tl.data) return <div className="page"><ErrorBox error={tl.error} onRetry={tl.reload} /></div>;
   if (!tl.data) return <div className="page"><Loading /></div>;
@@ -195,6 +234,11 @@ export function CutDetail() {
     movieKeys[`${m.tmdb_id}|${m.edition || ''}`] ??= m.key;
     movieKeys[`${m.tmdb_id}|`] ??= m.key;
   }
+  // the films' own posters, in recipe order, for the hero (no text drawn on the art)
+  const artByKey = new Map((movies.data?.movies || []).map((m) => [m.key, m.art]));
+  const heroArt = [...new Set(Object.values(doc.sources).filter((s) => s.kind === 'movie')
+    .map((s) => artByKey.get(movieKeys[`${s.tmdb}|${s.edition || ''}`] || movieKeys[`${s.tmdb}|`]))
+    .filter(Boolean))];
   const buildTo = `/cuts/${enc(id)}/build${variant ? `?variant=${enc(variant)}` : ''}`;
   const kv = Object.entries(credits).filter(([k]) => !NOT_KV.has(k)).map(([k, v]) => [
     CREDIT_LABELS[k] || k.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()),
@@ -203,24 +247,26 @@ export function CutDetail() {
 
   return (
     <div className="page">
-      <Crumbs items={[['My cuts', '/my-cuts'], [doc.title]]} />
+      <Crumbs items={[crumb.root, [doc.title]]} />
       <div className="hero">
         <div style={{ width: 240, flex: 'none' }}>
-          <Poster title={doc.title} sub={subtitle} tag={doc.category || 'Cut'} kind={posterKind(doc)} />
+          <ArtPoster keys={heroArt} layout={heroArt.length > 1 ? 'split' : 'single'}
+            fallback={<Poster title={doc.title} sub={subtitle} kind={posterKind(doc)} bare />} />
         </div>
         <div className="hero-body" style={{ gap: 18 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <h1 className="display" style={{ font: '700 40px/1 var(--display)' }}>{doc.title}</h1>
-            {subtitle && <span style={{ fontSize: 16, color: '#C4C7CD' }}>{subtitle}</span>}
+            {subtitle && <span style={{ fontSize: 16, color: 'var(--text2)' }}>{subtitle}</span>}
             <span className="mono muted" style={{ fontSize: 13 }}>{meta}</span>
           </div>
-          {description && <p style={{ margin: 0, color: '#C4C7CD', maxWidth: 620 }}>{description}</p>}
+          {description && <p style={{ margin: 0, color: 'var(--text2)', maxWidth: 620 }}>{description}</p>}
           <div className="row wrap">
-            <Link className="btn btn-primary" to={buildTo}>Build this cut</Link>
-            <Link className="btn" to={`/cuts/${enc(id)}/edit`}>Open in editor</Link>
+            <Link className="btn btn-primary" to={buildTo} state={crumb.state}>Build this cut</Link>
+            <Link className="btn" to={`/cuts/${enc(id)}/edit`} state={crumb.state}>Open in editor</Link>
             {url && <a className="btn" href={url} target="_blank" rel="noreferrer">View on GitHub</a>}
           </div>
           <Variants view={variants.data} value={chosen?.id ?? ''} onChange={setVariant} />
+          <Estimate id={id} variant={chosen?.id || ''} />
           {variants.error && <ErrorBox error={variants.error} onRetry={variants.reload} />}
         </div>
       </div>
@@ -228,6 +274,11 @@ export function CutDetail() {
         <SourceList doc={doc} missing={tl.data.missing || []} report={report} movieKeys={movieKeys} seriesKey={tl.data.series_key} />
         <Segments doc={doc} values={chosen?.toggles} report={report} />
       </div>
+      <p className="tiny muted" style={{ margin: 0, maxWidth: 720 }}>
+        Joining is automatic: every cut point is lined up with your own copies, the audio track in your preferred
+        language is picked, each source’s text subtitles are re-timed to the cut, and chapters mark where each
+        source starts. Sources that share codecs are copied without re-encoding.
+      </p>
       <section aria-labelledby="c-about" className="section" style={{ gap: 12 }}>
         <h2 id="c-about">About this cut</h2>
         <KV rows={[

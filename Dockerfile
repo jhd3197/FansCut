@@ -1,26 +1,33 @@
+# syntax=docker/dockerfile:1
 # FansCut: UI build stage, then a slim Python image with ffmpeg.
-FROM node:22-slim AS ui
+# Base images are pinned by digest so a rebuild of one commit gets the same
+# bytes; Dependabot's docker ecosystem proposes digest bumps.
+FROM node:22-slim@sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb AS ui
 WORKDIR /src/ui
 COPY ui/package.json ui/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 COPY ui ./
-RUN npm run build
+RUN npm run build && find dist -name '*.map' -delete
 
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:61e01f72680f86a5279ad510818ab7b2ee9f049822589d4e34e33e044360356c
 
 LABEL org.opencontainers.image.title=fanscut \
       org.opencontainers.image.description="Fan cuts of the movies and shows you own, built locally" \
       org.opencontainers.image.source=https://github.com/jhd3197/FansCut \
       org.opencontainers.image.licenses=MIT
 
-RUN apt-get update \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# requirements.lock pins every package (and its hashes) that requirements.txt
+# pulls in, so two builds of one commit install the same bytes.
+COPY requirements.lock .
+RUN --mount=type=cache,target=/root/.cache/pip pip install --require-hashes -r requirements.lock
 
 COPY pyproject.toml README.md ./
 COPY fanscut ./fanscut
@@ -42,9 +49,12 @@ USER fanscut
 # Relative paths in a missing config.yaml (./data, ./output) then land somewhere writable.
 WORKDIR /data
 
+# The commit the image was built from, shown in /healthz, /api/status and bug reports.
+ARG FANSCUT_COMMIT=""
 ENV PYTHONUNBUFFERED=1 \
     FANSCUT_CONFIG=/config/config.yaml \
-    FANSCUT_UI_DIR=/app/ui/dist
+    FANSCUT_UI_DIR=/app/ui/dist \
+    FANSCUT_COMMIT=${FANSCUT_COMMIT}
 EXPOSE 6464
 
 # No curl in python:slim, so use urllib.

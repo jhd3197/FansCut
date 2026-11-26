@@ -6,22 +6,27 @@ Durations missing from the source come from ffprobe, cached in SQLite.
 
 from __future__ import annotations
 
-import time
+import copy
+import os
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Any
 
+from ..cache import SourceCache
 from ..clients.plex import PlexClient
 from ..clients.radarr import RadarrClient
 from ..clients.sonarr import SonarrClient
 from ..config import Config
 from ..errors import ClientError, NotFoundError
 from ..models import Episode, Movie, Series
+from ..net import apply_proxy
 from . import scan
 from .paths import map_path
 
-TTL = 30.0  # seconds a source listing is reused
+# Seconds a listing is fresh. Older ones are still served while a background
+# refresh runs (see cache.SourceCache), so these only bound how stale a page can be.
+TTLS = {"series": 300.0, "movies": 300.0, "eps": 120.0}
 
 
 def _hms(text: str | None) -> float | None:
@@ -38,31 +43,65 @@ class Library:
     def __init__(self, cfg: Config, prober: Callable[[str], dict[str, Any]] | None = None):
         self.cfg = cfg
         self.prober = prober
-        self._cache: dict[str, tuple[float, Any]] = {}
+        self.cache = SourceCache(TTLS, max_entries=400)
+        self._clients: dict[tuple[str, str, str, float], Any] = {}
 
     # -- plumbing -----------------------------------------------------------
     def _cached(self, key: str, fn: Callable[[], Any]) -> Any:
-        hit = self._cache.get(key)
-        if hit and time.monotonic() - hit[0] < TTL:
-            return hit[1]
+        return self.cache.get(key, partial(self._guarded, key, fn))
+
+    def _guarded(self, key: str, fn: Callable[[], Any]) -> Any:
+        """A source that listed things before and now lists nothing is more likely
+        mid-scan or misconfigured than empty: count it as a failure, so the cache
+        keeps serving the last list (and the error shows) instead of an empty library."""
         val = fn()
-        self._cache[key] = (time.monotonic(), val)
+        if not val and key.startswith(("series:", "movies:")):
+            before = self.cache.peek(key)
+            if before:
+                raise ClientError(f"{key.split(':', 1)[1]} listed nothing (it had "
+                                  f"{len(before)}); keeping the last list")
         return val
 
     def refresh(self) -> None:
-        self._cache.clear()
+        self.cache.clear()
+
+    def warm(self) -> dict[str, int]:
+        """Re-list every source in place (the scheduled background refresh): pages keep
+        serving the current lists until the new ones are in. Returns items per list."""
+        out: dict[str, int] = {}
+        for src in self.sources():
+            key = f"series:{src}"
+            self.cache.reload(key, partial(self._guarded, key, partial(self._series_of, src)))
+            out[key] = len(self.cache.peek(key) or [])
+        for src in self._movie_sources():
+            key = f"movies:{src}"
+            self.cache.reload(key, partial(self._guarded, key, partial(self._movies_of, src)))
+            out[key] = len(self.cache.peek(key) or [])
+        return out
+
+    def _client(self, cls: type[Any], url: str, secret: str) -> Any:
+        """One client (and so one pooled HTTP session) per server, reused across calls."""
+        timeout = self.cfg.network.timeout
+        k = (cls.__name__, url, secret, timeout)
+        c = self._clients.get(k)
+        if c is None:
+            if len(self._clients) > 16:
+                self._clients.clear()
+            c = self._clients[k] = cls(url, secret, timeout=timeout)
+            apply_proxy(c.session, self.cfg.network, url)
+        return c
 
     def sonarr(self) -> SonarrClient | None:
         c = self.cfg.library.sonarr
-        return SonarrClient(c.url, c.api_key) if c.url else None
+        return self._client(SonarrClient, c.url, c.api_key) if c.url else None
 
     def radarr(self) -> RadarrClient | None:
         c = self.cfg.library.radarr
-        return RadarrClient(c.url, c.api_key) if c.url else None
+        return self._client(RadarrClient, c.url, c.api_key) if c.url else None
 
     def plex(self) -> PlexClient | None:
         c = self.cfg.library.plex
-        return PlexClient(c.url, c.token) if c.url else None
+        return self._client(PlexClient, c.url, c.token) if c.url else None
 
     def sources(self) -> list[str]:
         lib = self.cfg.library
@@ -73,15 +112,24 @@ class Library:
         return map_path(path, self.cfg.library.path_mappings)
 
     # -- series ---------------------------------------------------------------
-    def list_series(self) -> tuple[list[Series], dict[str, str]]:
-        """All series plus {source: error} for sources that failed (others still list)."""
+    def list_series(self, merged: bool = True) -> tuple[list[Series], dict[str, str]]:
+        """All series plus {source: error} for sources that failed (others still list).
+
+        With Sonarr and Plex both on, a show they both have is listed once, as
+        Sonarr's (it knows the series type and alternate titles); merged=False
+        keeps every source's copy, for looking a series up by any of its keys.
+        """
         out: list[Series] = []
         errors: dict[str, str] = {}
         for src in self.sources():
             try:
-                out.extend(self._cached(f"series:{src}", partial(self._series_of, src)))
+                # copies: merging fills ids and art in, and must not edit the cached list
+                out.extend(copy.copy(x) for x in
+                           self._cached(f"series:{src}", partial(self._series_of, src)))
             except ClientError as exc:
                 errors[src] = str(exc)
+        if merged:
+            out = _merge_series(out)
         return sorted(out, key=lambda s: s.title.lower()), errors
 
     def _series_of(self, src: str) -> list[Series]:
@@ -111,7 +159,13 @@ class Library:
             alt_titles=[a.get("title", "") for a in s.get("alternateTitles", []) if a.get("title")],
             tvdb_id=s.get("tvdbId") or None, tmdb_id=s.get("tmdbId") or None,
             episode_count=stats.get("episodeFileCount", 0),
+            episode_total=stats.get("episodeCount", 0),
+            season_count=sum(1 for x in s.get("seasons") or [] if x.get("seasonNumber", 0) > 0)
+            or max(stats.get("seasonCount", 0) - _has_specials(s), 0),
             is_anime=s.get("seriesType") == "anime",
+            genres=[g for g in s.get("genres") or [] if isinstance(g, str)],
+            poster=_remote_image(s.get("images"), "poster"),
+            backdrop=_remote_image(s.get("images"), "fanart"),
         )
 
     @staticmethod
@@ -121,28 +175,47 @@ class Library:
         return Series(
             key=f"plex:{m['ratingKey']}", source="plex", title=m.get("title", ""),
             year=m.get("year"), episode_count=m.get("leafCount", 0),
+            episode_total=m.get("leafCount", 0), season_count=m.get("childCount", 0),
+            collections=[c.get("tag", "") for c in m.get("Collection", []) if c.get("tag")],
+            genres=[g["tag"] for g in m.get("Genre", []) if g.get("tag")],
             tvdb_id=int(ids["tvdb"]) if ids.get("tvdb", "").isdigit() else None,
             tmdb_id=int(ids["tmdb"]) if ids.get("tmdb", "").isdigit() else None,
+            poster=m.get("thumb") or None, backdrop=m.get("art") or None,
         )
 
     def get_series(self, key: str) -> Series:
-        series, _ = self.list_series()
+        series, _ = self.list_series(merged=False)
         for s in series:
             if s.key == key:
                 return s
         raise NotFoundError(f"series {key} not found")
 
     # -- movies ----------------------------------------------------------------
-    def list_movies(self) -> tuple[list[Movie], dict[str, str]]:
-        """All movies plus {source: error}; sources: radarr, plex movie sections, folder."""
+    def list_movies(self, merged: bool = True) -> tuple[list[Movie], dict[str, str]]:
+        """All movies plus {source: error}; sources: radarr, plex movie sections, folder.
+
+        The same file seen by Radarr and Plex is listed once (Radarr's entry,
+        with Plex's collections added); a second edition is a second file and
+        stays. merged=False keeps every copy, for lookups by any key.
+        """
         out: list[Movie] = []
         errors: dict[str, str] = {}
         for src in self._movie_sources():
             try:
-                out.extend(self._cached(f"movies:{src}", partial(self._movies_of, src)))
+                out.extend(copy.copy(x) for x in
+                           self._cached(f"movies:{src}", partial(self._movies_of, src)))
             except ClientError as exc:
                 errors[src] = str(exc)
+        if merged:
+            out = _merge_movies(out)
         return sorted(out, key=lambda m: m.title.lower()), errors
+
+    def get_movie(self, key: str) -> Movie:
+        movies, _ = self.list_movies(merged=False)
+        for m in movies:
+            if m.key == key:
+                return m
+        raise NotFoundError(f"movie {key} not found")
 
     def _movie_sources(self) -> list[str]:
         lib = self.cfg.library
@@ -169,9 +242,14 @@ class Library:
     def _radarr_movie(self, m: dict[str, Any]) -> Movie:
         f = m.get("movieFile") or {}
         runtime = _hms(((f.get("mediaInfo") or {}).get("runTime")) or "")
+        coll = m.get("collection") or {}
         return Movie(key=f"radarr:{m['id']}", source="radarr", title=m.get("title", ""),
                      year=m.get("year") or None, tmdb_id=m.get("tmdbId") or None,
-                     file=self._map(f["path"]) if f.get("path") else None, duration=runtime)
+                     tmdb_collection=coll.get("tmdbId") or None,
+                     genres=[g for g in m.get("genres") or [] if isinstance(g, str)],
+                     file=self._map(f["path"]) if f.get("path") else None, duration=runtime,
+                     poster=_remote_image(m.get("images"), "poster"),
+                     backdrop=_remote_image(m.get("images"), "fanart"))
 
     def _plex_movie(self, m: dict[str, Any]) -> Movie:
         ids = {g["id"].split("://")[0]: g["id"].split("://")[1] for g in m.get("Guid", [])
@@ -181,11 +259,13 @@ class Library:
         ms = media.get("duration") or m.get("duration")
         tmdb = int(ids["tmdb"]) if ids.get("tmdb", "").isdigit() else None
         return Movie(key=f"plexmovie:{m['ratingKey']}", source="plex", title=m.get("title", ""),
-                     year=m.get("year"), tmdb_id=tmdb,
+                     year=m.get("year"), tmdb_id=tmdb, plex_key=str(m["ratingKey"]),
+                     genres=[g["tag"] for g in m.get("Genre", []) if g.get("tag")],
                      file=self._map(part["file"]) if part.get("file") else None,
                      duration=ms / 1000 if ms else None,
                      collections=[c.get("tag", "") for c in m.get("Collection", [])
-                                  if c.get("tag")])
+                                  if c.get("tag")],
+                     poster=m.get("thumb") or None, backdrop=m.get("art") or None)
 
     def find_movie(self, tmdb_id: int | None, title: str = "", edition: str = "") -> Movie | None:
         """Resolve a movie source: by TMDB id, then title; edition prefers a matching name."""
@@ -261,3 +341,125 @@ class Library:
                 duration=ms / 1000 if ms else None, air_date=m.get("originallyAvailableAt"),
             ))
         return out
+
+
+# -- one entry per show / file across sources -------------------------------------
+def _title_key(title: str, year: int | None) -> tuple[str, int | None]:
+    return ("".join(ch for ch in title.lower() if ch.isalnum()), year)
+
+
+def _has_specials(s: dict[str, Any]) -> int:
+    return int(any(x.get("seasonNumber") == 0 for x in s.get("seasons") or []))
+
+
+def _merge_series(items: list[Series]) -> list[Series]:
+    """Drop later sources' copies of a show already listed (same TVDB id, else title + year).
+
+    Sources come in priority order (Sonarr, Plex, folder); the kept entry
+    picks up ids it lacked from the dropped copy.
+    """
+    kept: list[Series] = []
+    by_tvdb: dict[int, Series] = {}
+    by_title: dict[tuple[str, int | None], Series] = {}
+    for s in items:
+        tk = _title_key(s.title, s.year)
+        hit = (by_tvdb.get(s.tvdb_id) if s.tvdb_id else None) or by_title.get(tk)
+        if hit is not None and (not hit.tvdb_id or not s.tvdb_id or hit.tvdb_id == s.tvdb_id):
+            hit.tvdb_id = hit.tvdb_id or s.tvdb_id
+            hit.tmdb_id = hit.tmdb_id or s.tmdb_id
+            hit.episode_count = hit.episode_count or s.episode_count
+            hit.episode_total = hit.episode_total or s.episode_total
+            hit.season_count = hit.season_count or s.season_count
+            hit.collections = list(dict.fromkeys([*hit.collections, *s.collections]))
+            hit.genres = hit.genres or s.genres
+            hit.poster = hit.poster or s.poster
+            hit.backdrop = hit.backdrop or s.backdrop
+            if hit.tvdb_id:
+                by_tvdb.setdefault(hit.tvdb_id, hit)
+            continue
+        kept.append(s)
+        if s.tvdb_id:
+            by_tvdb.setdefault(s.tvdb_id, s)
+        by_title.setdefault(tk, s)
+    return kept
+
+
+def _remote_image(images: list[dict[str, Any]] | None, cover: str) -> str | None:
+    """Radarr/Sonarr's TMDB/TVDB URL for a cover type. Their local `url` is a
+    /MediaCover path only the *arr can serve; the remote one the browser can load."""
+    for img in images or []:
+        if img.get("coverType") == cover and str(img.get("remoteUrl", "")).startswith("https://"):
+            return str(img["remoteUrl"])
+    return None
+
+
+def _file_key(path: str) -> str:
+    # Radarr and Plex may spell one file with different separators (a Windows
+    # server, a path mapping); on Linux normpath leaves backslashes alone.
+    return os.path.normcase(os.path.normpath(path.replace("\\", "/")))
+
+
+def _merge_movies(items: list[Movie]) -> list[Movie]:
+    """One entry per file: Radarr's, with Plex's collections, tmdb id and runtime added.
+
+    Two files of one film (Theatrical and Extended) stay two entries. An
+    entry with no file (Radarr still wanting it) is dropped when another
+    source has the film on disk, and replaced by that copy.
+    """
+    kept: dict[int, Movie] = {}  # id(movie) -> movie, in insertion order
+    by_file: dict[str, Movie] = {}
+    fileless: dict[object, Movie] = {}
+    # tmdb / title-year id -> kept movies with a file: lookups stay O(1) per movie
+    # (scanning every kept movie per new file took seconds on a 1,400-film library)
+    on_disk_by_id: dict[object, list[Movie]] = {}
+
+    def ids(m: Movie) -> list[object]:
+        return ([("tmdb", m.tmdb_id)] if m.tmdb_id else []) + [_title_key(m.title, m.year)]
+
+    def with_file(m: Movie) -> list[Movie]:
+        seen: dict[int, Movie] = {}
+        for i in ids(m):
+            for k in on_disk_by_id.get(i, []):
+                if id(k) in kept:
+                    seen[id(k)] = k
+        return list(seen.values())
+
+    def absorb(into: Movie, other: Movie) -> None:
+        into.tmdb_id = into.tmdb_id or other.tmdb_id
+        into.duration = into.duration or other.duration
+        into.collections = list(dict.fromkeys([*into.collections, *other.collections]))
+        into.poster = into.poster or other.poster
+        into.backdrop = into.backdrop or other.backdrop
+        into.plex_key = into.plex_key or other.plex_key
+        into.tmdb_collection = into.tmdb_collection or other.tmdb_collection
+        into.genres = into.genres or other.genres
+
+    for m in items:
+        if m.file:
+            fk = _file_key(m.file)
+            if fk in by_file:
+                absorb(by_file[fk], m)
+                continue
+            stale = next((fileless.pop(i) for i in ids(m) if i in fileless), None)
+            if stale is None:
+                # a file renamed since Radarr last looked: its path is gone, this one is real
+                stale = next((k for k in with_file(m)
+                              if not os.path.exists(k.file or "") and os.path.exists(m.file)), None)
+                if stale is not None:
+                    by_file.pop(_file_key(stale.file or ""), None)
+            if stale is not None:
+                kept.pop(id(stale), None)
+                for i in ids(stale):
+                    fileless.pop(i, None)
+                absorb(m, stale)
+            kept[id(m)] = m
+            by_file[fk] = m
+            for i in ids(m):
+                on_disk_by_id.setdefault(i, []).append(m)
+            continue
+        if with_file(m) or any(i in fileless for i in ids(m)):
+            continue
+        kept[id(m)] = m
+        for i in ids(m):
+            fileless[i] = m
+    return list(kept.values())

@@ -1,4 +1,6 @@
 # main only accepts promotion PRs from dev, so every update targets dev.
+# cooldown: a release must be a week old before it is proposed, so a broken or
+# hijacked version is usually pulled before it reaches us.
 version: 2
 updates:
   - package-ecosystem: pip
@@ -6,11 +8,18 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python-minor-and-patch:
+        update-types: [minor, patch]
   - package-ecosystem: npm
     directory: "/ui"
     target-branch: dev
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     # One PR for the routine bumps instead of one per package.
     groups:
       ui-minor-and-patch:
@@ -20,6 +29,8 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
@@ -28,3 +39,5 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7

@@ -20,6 +20,20 @@ HAVE_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is 
 needs_ffmpeg = pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg/ffprobe not installed")
 
 
+def _has_prompture_video() -> bool:
+    try:
+        from prompture.media.understand import frames  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+# Scene indexing needs Prompture's frames module (contact sheets, shot cuts),
+# which is newer than Prompture 1.19.1.
+needs_prompture_video = pytest.mark.skipif(not _has_prompture_video(),
+                                           reason="Prompture without media.understand.frames")
+
+
 @pytest.fixture
 def cfg(tmp_path: Path) -> Config:
     c = Config()
@@ -98,5 +112,49 @@ def make_video(path: Path, seconds: float = 6, size: str = "160x120", wav: Path 
 
 
 @pytest.fixture(autouse=True)
+def test_host(monkeypatch):
+    """Starlette's TestClient sends Host: testserver; let the Host guard accept it."""
+    from fanscut import security
+
+    monkeypatch.setattr(security, "ALWAYS_ALLOWED", {"testserver"})
+    security.reset_rate_limits()
+
+
+@pytest.fixture(autouse=True)
 def no_retry_sleep(monkeypatch):
     monkeypatch.setattr("fanscut.clients.base.time.sleep", lambda _s: None)
+
+
+class FakeLLM:
+    """Stands in for the Prompture driver: replies with the queued text."""
+
+    def __init__(self) -> None:
+        self.reply = ""
+        self.models: list[str] = []
+        self.messages: list[list[dict]] = []
+
+    def answering(self, reply):
+        import contextlib
+        import json as _json
+
+        self.reply = reply if isinstance(reply, str) else _json.dumps(reply)
+        return contextlib.nullcontext(self)
+
+    def generate_messages(self, messages, options):
+        self.messages.append(messages)
+        return {"text": self.reply}
+
+
+@pytest.fixture
+def fake_llm(monkeypatch) -> FakeLLM:
+    from fanscut import ai
+
+    fake = FakeLLM()
+
+    def driver_for(cfg, *, vision=False):
+        model, _ = ai.model_spec(cfg, vision=vision)
+        fake.models.append(model)
+        return fake
+
+    monkeypatch.setattr(ai, "driver_for", driver_for)
+    return fake

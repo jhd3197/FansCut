@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in FansCut does not work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please use invented names (or none) for shows and files if you would rather not share your library.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown on the Health page and in `/api/status` (version and commit).
+      placeholder: 0.1.42 (a1b2c3d4e5f6)
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How FansCut runs
+      options:
+        - Docker (ghcr.io image)
+        - Docker with the GPU override
+        - From source (pip / dev.sh)
+    validations:
+      required: true
+  - type: dropdown
+    id: library
+    attributes:
+      label: Library source
+      multiple: true
+      options:
+        - Media folder
+        - Sonarr
+        - Radarr
+        - Plex
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Library, pick a show
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: ffmpeg
+    attributes:
+      label: ffmpeg
+      description: First line of `ffmpeg -version`, and whether NVENC is on (Settings, Rendering).
+      render: shell
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The Logs page (sidebar footer) or `<data_dir>/logs/fanscut.log`, around the time it happened. Remove anything private.
+      render: shell

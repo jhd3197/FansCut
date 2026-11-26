@@ -4,18 +4,24 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from .. import browse
-from . import CoreDep
+from ..security import rate_limit
+from . import CoreDep, paginate
 
 router = APIRouter(prefix="/api", tags=["browse"])
 
 
 @router.get("/library/movies")
-def list_movies(core: CoreDep) -> dict[str, Any]:
-    return browse.movies(core)
+def list_movies(core: CoreDep, skip: int | None = None,
+                take: int | None = None) -> dict[str, Any]:
+    out = browse.movies(core)
+    if take is not None and isinstance(out.get("movies"), list):
+        out["movies"], info = paginate(out["movies"], skip, take)
+        out["page_info"] = info
+    return out
 
 
 @router.get("/library/movies/{key:path}")
@@ -56,7 +62,7 @@ def catalogue(core: CoreDep) -> dict[str, Any]:
     return core.catalogue()
 
 
-@router.post("/cuts/install")
+@router.post("/cuts/install", dependencies=[Depends(rate_limit("install", 10, 60))])
 def install_cut(core: CoreDep, body: InstallBody) -> dict[str, Any]:
     """Install (or update) a cut from its GitHub repo; records the commit SHA."""
     return core.install_cut(body.url, body.ref)
@@ -97,6 +103,23 @@ def preview_template(core: CoreDep, tid: str, body: TemplateBody) -> dict[str, A
 def create_from_template(core: CoreDep, tid: str, body: TemplateBody) -> dict[str, Any]:
     """Save the files, add the timeline, and push a private repo when asked."""
     return core.template_create(tid, body.model_dump())
+
+
+@router.get("/movies/{key:path}/plex")
+def movie_plex(core: CoreDep, key: str) -> dict[str, str]:
+    """Movie → Play: the film's page in Plex Web on the user's server."""
+    return {"url": core.movie_plex_url(key)}
+
+
+@router.get("/cuts/{tid}/plex")
+def cut_plex(core: CoreDep, tid: str) -> dict[str, str]:
+    """My cuts → Open in Plex: the built cut, once Plex has scanned it."""
+    return {"url": core.cut_plex_url(tid)}
+
+
+@router.get("/playlists/{pid}/plex")
+def playlist_plex(core: CoreDep, pid: str) -> dict[str, str]:
+    return {"url": core.playlist_plex_url(pid)}
 
 
 @router.get("/cuts")

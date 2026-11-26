@@ -1,0 +1,58 @@
+site_name: FansCut
+site_description: Self-hosted fan cuts of shows you own. Skip filler, keep canon, trim recaps and openings.
+repo_url: https://github.com/jhd3197/FansCut
+repo_name: jhd3197/FansCut
+edit_uri: edit/dev/docs/
+strict: true
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - content.action.edit
+    - navigation.sections
+    - search.highlight
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Overview: index.md
+  - Getting started:
+      - Install: install.md
+      - Docker: docker.md
+      - Configuration: configuration.md
+  - Using FansCut:
+      - Filler data: filler-data.md
+      - OP/ED and recap trimming: trimming.md
+      - Cut recipes: cut-recipes.md
+      - AI recipes: ai-recipes.md
+      - Timeline recipes: timelines.md
+      - Scene tagging and X-Ray: scene-tagging.md
+      - Discover and community cuts: discover.md
+      - Library health: library-health.md
+      - Automation: automation.md
+  - Operating:
+      - Security: security.md
+      - Troubleshooting: troubleshooting.md
+      - Limits: limits.md

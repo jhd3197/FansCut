@@ -382,7 +382,7 @@ def test_serves_built_ui_without_shadowing_the_api(app_cfg, tmp_path, monkeypatc
     with TestClient(create_app(app_cfg, tmp_path / "c.yaml", start_worker=False)) as c:
         assert "FansCut UI" in c.get("/").text
         assert c.get("/healthz").json()["status"] == "ok"
-        assert c.get("/api/jobs").json() == {"jobs": []}
+        assert c.get("/api/jobs").json()["jobs"] == []
         assert c.get("/docs").status_code == 200
 
 

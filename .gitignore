@@ -15,6 +15,7 @@ node_modules/
 .env.*
 !.env.example
 config.yaml
+config.yaml.*bak
 config/
 *.pem
 *.key
@@ -30,3 +31,9 @@ docs/plans/
 graphify-out/
 raw/
 .planning/
+
+# Playwright e2e output
+ui/playwright-report/
+ui/test-results/
+ui/.e2e-run/
+.coverage

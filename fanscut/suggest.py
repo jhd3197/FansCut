@@ -7,7 +7,9 @@ Three sources of ideas:
      offers a merge (one render) and a watch-order playlist (no render);
   c. shows with known filler episodes get a "canon cut" suggestion.
 
-Everything is a plain dict so the API and UI stay thin. Status:
+Everything is a plain dict so the API and UI stay thin. `name` is what the
+tile shows (the collection or show, without "— merged movie"); `art` lists the
+library keys whose posters the tile uses (/api/art/poster/<key>). Status:
   ready    every source resolves
   partly   some sources resolve, some are missing (named in `missing`)
   missing  nothing resolves
@@ -15,8 +17,11 @@ Everything is a plain dict so the API and UI stay thin. Status:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
+
+from .art import art_ref
 
 # resolve(src, source_entry) -> (file, duration, error_reason | None)
 Resolver = Callable[[str, dict[str, Any]], tuple[str | None, float | None, str | None]]
@@ -32,8 +37,12 @@ def _status(n_sources: int, missing: list[dict[str, str]]) -> str:
     return "partly"
 
 
-def from_recipe(name: str, doc: dict[str, Any], resolve: Resolver) -> dict[str, Any]:
-    """A community recipe against the library."""
+def from_recipe(name: str, doc: dict[str, Any], resolve: Resolver,
+                art: list[str] | None = None, keys: list[str] | None = None) -> dict[str, Any]:
+    """A community recipe against the library; `art` = art refs of its sources.
+
+    Every suggestion carries `keys`: the library keys of the movies and shows it
+    uses, so a movie or show page can list the suggestions that include it."""
     missing = []
     for src, entry in doc.get("sources", {}).items():
         _file, _dur, err = resolve(src, entry)
@@ -41,6 +50,8 @@ def from_recipe(name: str, doc: dict[str, Any], resolve: Resolver) -> dict[str, 
             missing.append({"src": src, "reason": err})
     n_seg = sum(len(p["segments"]) for p in doc.get("parts", []))
     return {"id": f"recipe:{name}", "kind": "recipe", "title": doc.get("title", name),
+            "name": doc.get("title", name), "art": list(dict.fromkeys(art or [])),
+            "keys": list(dict.fromkeys(keys or [])),
             "category": doc.get("category") or "Community cuts",
             "tagline": doc.get("tagline", ""),
             "status": _status(len(doc.get("sources", {})), missing), "missing": missing,
@@ -48,13 +59,19 @@ def from_recipe(name: str, doc: dict[str, Any], resolve: Resolver) -> dict[str, 
                        "credits": doc.get("credits", {})}}
 
 
-def from_collection(name: str, movies: list[Any], lang_missing: list[str]) -> list[dict[str, Any]]:
-    """Merge + watch-order templates for a Plex collection of 2+ owned movies."""
+def from_collection(name: str, movies: list[Any], lang_missing: list[str],
+                    gid: str = "") -> list[dict[str, Any]]:
+    """Merge + watch-order templates for a collection of 2+ owned movies.
+
+    `gid` is the collection's id ("tmdb-119" when TMDB's is known, else its name)."""
+    gid = gid or name
     years = sorted(m.year or 0 for m in movies)
     out = []
     missing = [{"src": t, "reason": "no preferred audio language"} for t in lang_missing]
     out.append({
-        "id": f"merge:{name}", "kind": "collection_merge", "category": "Merges",
+        "id": f"merge:{gid}", "kind": "collection_merge", "category": "Merges",
+        "name": name, "art": [art_ref(m) for m in movies],
+        "keys": [m.key for m in movies], "tmdb_ids": [m.tmdb_id for m in movies],
         "tagline": f"{name}, as one film",
         "title": f"{name} — merged movie",
         "status": "ready" if not missing else "partly", "missing": missing,
@@ -62,7 +79,9 @@ def from_collection(name: str, movies: list[Any], lang_missing: list[str]) -> li
                    "template": "one film from every entry, in release order"},
     })
     out.append({
-        "id": f"order:{name}", "kind": "watch_order", "category": "Watch in story order",
+        "id": f"order:{gid}", "kind": "watch_order", "category": "Watch in story order",
+        "name": name, "art": [art_ref(m) for m in movies],
+        "keys": [m.key for m in movies], "tmdb_ids": [m.tmdb_id for m in movies],
         "tagline": "in release order",
         "title": f"{name} — watch order playlist",
         "status": "ready", "missing": [],
@@ -73,7 +92,8 @@ def from_collection(name: str, movies: list[Any], lang_missing: list[str]) -> li
 
 
 def canon_cut(series_title: str, key: str, n_filler: int, n_episodes: int,
-              files_missing: list[str], lang_missing: list[str]) -> dict[str, Any] | None:
+              files_missing: list[str], lang_missing: list[str],
+              art: str | None = None) -> dict[str, Any] | None:
     """A 'canon cut' suggestion for a matched show with known filler."""
     if n_filler <= 0:
         return None
@@ -81,9 +101,51 @@ def canon_cut(series_title: str, key: str, n_filler: int, n_episodes: int,
     missing += [{"src": e, "reason": "no preferred audio language"} for e in lang_missing]
     n = max(n_episodes, 1)
     return {"id": f"canon:{key}", "kind": "canon_cut", "category": "Anime",
+            "name": series_title, "art": [art or key], "keys": [key],
             "tagline": "no filler",
             "title": f"{series_title} — canon cut",
             "status": _status(n, missing) if missing else "ready",
             "missing": missing,
             "detail": {"series_key": key, "filler_episodes": n_filler,
                        "episodes": n_episodes}}
+
+
+# -- Discover shelves: genres and seasons ---------------------------------------------------
+
+SEASONS = ("christmas", "halloween")
+_SEASON_WORDS = {
+    "christmas": re.compile(r"\b(christmas|xmas|santa|grinch|holiday|nutcracker|noel)\b", re.I),
+    "halloween": re.compile(r"\b(halloween|hocus pocus|trick r treat)\b", re.I),
+}
+
+
+def rank_genres(lists: list[list[str]], top: int = 2) -> list[str]:
+    """The genres most of the films share, main genre first on a tie."""
+    score: dict[str, tuple[int, int]] = {}
+    for genres in lists:
+        for i, g in enumerate(genres):
+            n, best = score.get(g, (0, 99))
+            score[g] = (n + 1, min(best, i))
+    return [g for g, _ in sorted(score.items(), key=lambda kv: (-kv[1][0], kv[1][1], kv[0]))][:top]
+
+
+def season_of(texts: list[str], explicit: str | None = None) -> str | None:
+    """"christmas" / "halloween" when a cut belongs to that time of year: said outright
+    (a community entry's `season`), or plain in its name or its films' titles."""
+    if explicit in SEASONS:
+        return explicit
+    blob = " ".join(t for t in texts if t)
+    return next((name for name, rx in _SEASON_WORDS.items() if rx.search(blob)), None)
+
+
+def season_for(name: str, titles: list[str], explicit: str | None = None) -> str | None:
+    """A cut's season: said outright, in its own name, or shared by at least half its
+    films (one Christmas sequel doesn't make Beauty and the Beast a Christmas cut)."""
+    own = season_of([name], explicit)
+    if own or not titles:
+        return own
+    found = [season_of([t]) for t in titles]
+    for season in SEASONS:
+        if found.count(season) * 2 >= len(titles):
+            return season
+    return None

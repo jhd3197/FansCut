@@ -5,32 +5,46 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, Query
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
+from ..art import art_ref, media_type
 from ..core import UNSET, WHOLE
+from ..errors import NotFoundError
 from ..models import Series
 from ..planner import PRESETS
-from . import CoreDep
+from ..security import rate_limit
+from . import CoreDep, paginate
 
 router = APIRouter(prefix="/api", tags=["library"])
 
 
 @router.get("/library/series")
-def list_series(core: CoreDep, q: str = "", source: str = "") -> dict[str, Any]:
+def list_series(core: CoreDep, q: str = "", source: str = "", skip: int | None = None,
+                take: int | None = None) -> dict[str, Any]:
     series, errors = core.library.list_series()
     matched = {r["series_key"] for r in core.db.query("SELECT DISTINCT series_key FROM matches")}
+    # the last library check's audio finding per show ("no Japanese or English audio…")
+    audio: dict[str, str] = {}
+    for f in (core.last_check() or {}).get("findings", []):
+        ref = f.get("ref") or {}
+        if (f.get("check") == "languages" and ref.get("kind") == "series"
+                and f.get("severity") in ("error", "warn")):
+            audio.setdefault(ref.get("key", ""), f["message"])
     needle = q.lower().strip()
     out = []
     for s in series:
         if (source and s.source != source) or (needle and needle not in s.title.lower()):
             continue
-        out.append({**asdict(s), "matched": s.key in matched})
-    return {"sources": core.library.sources(), "errors": errors, "series": out}
+        out.append({**asdict(s), "matched": s.key in matched, "art": art_ref(s),
+                    "audio_note": audio.get(s.key)})
+    page, info = paginate(out, skip, take)
+    return {"sources": core.library.sources(), "errors": errors, "series": page,
+            **({"page_info": info} if info else {})}
 
 
-@router.get("/library/check")
+@router.get("/library/check", dependencies=[Depends(rate_limit("check", 6, 60))])
 def library_check(core: CoreDep, q: str = "", deep: bool = False) -> dict[str, Any]:
     """Editions, languages, incomplete files, missing pieces, mismatches, renames."""
     return core.library_check(q=q, deep=deep)
@@ -177,10 +191,52 @@ def detect_trims(core: CoreDep, key: str, body: DetectBody) -> dict[str, Any]:
 
 
 # -- preview clips and scene search -----------------------------------------------
-@router.get("/series/{key}/episodes/{episode_id}/preview")
+@router.get("/series/{key}/episodes/{episode_id}/preview",
+            dependencies=[Depends(rate_limit("preview", 60, 60))])
 def preview(core: CoreDep, key: str, episode_id: str, t: float = Query(ge=0)) -> FileResponse:
     """10 s around t, for reviewing a cut point in the browser."""
     return FileResponse(core.preview_clip(key, episode_id, t), media_type="video/mp4")
+
+
+PREVIEW_LIMIT = [Depends(rate_limit("preview", 60, 60))]
+FRAME_LIMIT = [Depends(rate_limit("frame", 240, 60))]  # Build shows a still per cut point
+
+
+@router.get("/series/{key}/episodes/{episode_id}/frame", dependencies=FRAME_LIMIT)
+def episode_frame(core: CoreDep, key: str, episode_id: str, t: float = Query(ge=0)
+                  ) -> FileResponse:
+    """One frame at t (jpeg, 640 px wide)."""
+    return FileResponse(core.episode_frame(key, episode_id, t), media_type="image/jpeg")
+
+
+@router.get("/movies/{key:path}/preview", dependencies=PREVIEW_LIMIT)
+def movie_preview(core: CoreDep, key: str, t: float = Query(ge=0)) -> FileResponse:
+    """10 s of a film around t."""
+    return FileResponse(core.movie_preview(key, t), media_type="video/mp4")
+
+
+@router.get("/movies/{key:path}/frame", dependencies=FRAME_LIMIT)
+def movie_frame(core: CoreDep, key: str, t: float = Query(ge=0)) -> FileResponse:
+    return FileResponse(core.movie_frame(key, t), media_type="image/jpeg")
+
+
+@router.get("/timelines/{tid}/sources/{src}/preview", dependencies=PREVIEW_LIMIT)
+def timeline_source_preview(core: CoreDep, tid: str, src: str, t: float = Query(ge=0)
+                            ) -> FileResponse:
+    """10 s around t in the user's copy of one recipe source (episode or film)."""
+    return FileResponse(core.timeline_source_preview(tid, src, t), media_type="video/mp4")
+
+
+@router.get("/timelines/{tid}/sources/{src}/frame", dependencies=FRAME_LIMIT)
+def timeline_source_frame(core: CoreDep, tid: str, src: str, t: float = Query(ge=0)
+                          ) -> FileResponse:
+    return FileResponse(core.timeline_source_frame(tid, src, t), media_type="image/jpeg")
+
+
+@router.get("/library/check/frame", dependencies=FRAME_LIMIT)
+def check_frame(core: CoreDep, file: str = Query(max_length=4096)) -> FileResponse:
+    """A frame of a file the last library check flagged, with its picture area boxed."""
+    return FileResponse(core.check_frame(file), media_type="image/jpeg")
 
 
 class SimilarBody(BaseModel):
@@ -210,3 +266,20 @@ def put_segments(core: CoreDep, key: str, episode_id: str, body: SegmentsBody) -
 def delete_segments(core: CoreDep, key: str, episode_id: str) -> dict[str, bool]:
     core.set_segments(key, episode_id, None)
     return {"ok": True}
+
+@router.get("/art/{kind}/{key:path}")
+def artwork(core: CoreDep, kind: str, key: str, request: Request,
+            w: int = Query(500, ge=50, le=2000)) -> Response:
+    """A library item's poster or backdrop, from Plex, Radarr/Sonarr or files beside it.
+
+    X-Art-Cache says HIT, STALE (served while it refreshes) or MISS (fetched now).
+    The browser may keep it as long as the server cache will, and revalidates
+    with If-None-Match for a cheap 304 after that."""
+    art = core.art.lookup(key, kind, w)
+    if art is None:
+        raise NotFoundError(f"no {kind} for {key}")
+    headers = {"Cache-Control": f"public, max-age={max(60, art.max_age)}",
+               "ETag": art.etag, "X-Art-Cache": art.status}
+    if request.headers.get("if-none-match") == art.etag:
+        return Response(status_code=304, headers=headers)
+    return Response(art.data, media_type=media_type(art.data), headers=headers)

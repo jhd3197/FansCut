@@ -24,12 +24,38 @@ class PlexClient(BaseClient):
     def identity(self) -> dict[str, Any]:
         return self._get("/")["MediaContainer"]
 
+    def clean_art_path(self, rating_key: str, kind: str = "poster") -> str | None:
+        """The item's own agent art (TMDB/TVDB), skipping uploads: tools like Kometa
+        upload a copy with ratings and badges drawn on, and select it. None = no list."""
+        try:
+            which = "posters" if kind == "poster" else "arts"
+            data = self._get(f"/library/metadata/{rating_key}/{which}")
+        except ClientError:
+            return None
+        for p in (data.get("MediaContainer") or {}).get("Metadata", []):
+            key = str(p.get("key", ""))
+            if key and p.get("provider") not in ("upload", "local") and "upload" not in key:
+                return key
+        return None
+
+    def artwork(self, rating_key: str, kind: str = "poster", width: int = 500,
+                path: str | None = None) -> bytes | None:
+        """An item's poster (thumb) or backdrop (art), resized by Plex's photo transcoder.
+        `path` is the thumb/art path from the listing, when known."""
+        field = "thumb" if kind == "poster" else "art"
+        height = width * 3 // 2 if kind == "poster" else width * 9 // 16
+        return self.get_image("/photo/:/transcode", {
+            "url": path or f"/library/metadata/{rating_key}/{field}", "width": width,
+            "height": height,
+            "minSize": 1, "upscale": 1})
+
     def sections(self) -> list[dict[str, Any]]:
         data = self._get("/library/sections")["MediaContainer"].get("Directory", [])
         return [{"key": str(s["key"]), "type": s["type"], "title": s["title"]} for s in data]
 
     def shows(self, section_key: str) -> list[dict[str, Any]]:
-        return self._get(f"/library/sections/{section_key}/all", {"type": 2})["MediaContainer"].get(
+        return self._get(f"/library/sections/{section_key}/all",
+                         {"type": 2, "includeGuids": 1})["MediaContainer"].get(
             "Metadata", []
         )
 
@@ -39,7 +65,8 @@ class PlexClient(BaseClient):
         )
 
     def movies(self, section_key: str) -> list[dict[str, Any]]:
-        return self._get(f"/library/sections/{section_key}/all", {"type": 1})["MediaContainer"].get(
+        return self._get(f"/library/sections/{section_key}/all",
+                         {"type": 1, "includeGuids": 1})["MediaContainer"].get(
             "Metadata", []
         )
 
@@ -54,10 +81,12 @@ class PlexClient(BaseClient):
             raise ClientError(f"Plex returned HTTP {resp.status_code}", resp.status_code)
 
     def find_in_section(self, section_key: str, title: str) -> dict[str, Any] | None:
-        """First item in a section with this exact title."""
+        """The item in a section with exactly this title (Plex's filter also matches
+        titles that merely contain it, so the reply is checked)."""
         data = self._get(f"/library/sections/{section_key}/all", {"title": title})
         items = data["MediaContainer"].get("Metadata", [])
-        return items[0] if items else None
+        want = title.casefold()
+        return next((i for i in items if str(i.get("title", "")).casefold() == want), None)
 
     def _item_uri(self, rating_key: str) -> str:
         machine = self.identity()["machineIdentifier"]

@@ -5,6 +5,20 @@
 server:
   host: 127.0.0.1        # use 0.0.0.0 inside a container
   port: 6464
+  auth: none             # api_key = every API call (and the UI) needs the key
+  api_key: ""            # generated on first start; webhooks always need it
+  viewer_key: ""         # optional read-only key
+  allowed_hosts: []      # extra Host names to answer to (e.g. fanscut.lan); "*" = any
+  trusted_proxies: []    # reverse proxy IPs whose X-Forwarded-For is believed
+
+network:
+  timeout: 10            # seconds to wait for Sonarr/Radarr/Plex
+  proxy: ""              # outbound proxy for internet calls, e.g. http://proxy:3128
+  proxy_bypass_local: true  # LAN servers skip the proxy
+
+art:
+  cache_remote: false    # fetch TMDB/TVDB art through FansCut (browsers never contact them)
+  cache_mb: 1024         # art cache size cap; oldest images go first
 
 paths:
   data_dir: ./data       # SQLite db, filler snapshot, scratch space
@@ -36,6 +50,7 @@ library:
 catalogues:
   offline: false         # true = never call AniList/Jikan/GitHub, use caches only
   cache_days: 14
+  tmdb_api_key: ""       # cast for films outside Plex; prefer FANSCUT_TMDB_API_KEY
 
 fillers:
   dir: ""                # default <data_dir>/fillers; every *.json in it is read
@@ -69,10 +84,11 @@ automation:              # POST /api/webhooks/sonarr from a Sonarr Webhook conne
   auto_detect: true      # run OP/ED detection on the affected seasons first
   keep: true             # keep flag for webhook-triggered renders
 
-ai:                      # recipe generation from community notes (OpenAI-compatible)
-  base_url: ""           # e.g. http://localhost:11434/v1 (Ollama)
+ai:                      # recipes from notes and scene tagging, through Prompture
+  model: ""              # e.g. claude/claude-opus-5-5, ollama/qwen3:8b, or a bare name with base_url
+  vision_model: ""       # looks at frame grids when tagging; empty = model (e.g. ollama/qwen3-vl:8b)
+  base_url: ""           # OpenAI-compatible endpoint for a bare model name, e.g. http://localhost:11434/v1
   api_key: ""            # prefer the FANSCUT_AI_API_KEY env var over this file
-  model: ""              # e.g. qwen2.5:7b
   timeout: 120
 
 cut:                     # defaults for every series; each series can override
@@ -83,3 +99,17 @@ cut:                     # defaults for every series; each series can override
   merge_gap: 1.0         # pieces closer than this (same file) are joined
   min_segment: 5.0       # shorter pieces are dropped
   transition: none       # none | fade (fade re-encodes)
+
+schedule:                # cron (minute hour day month weekday, local time); "" = off
+  prune: "0 5 * * *"     # art cache, finished jobs older than 30 days, old catalogue replies
+  sweep_renders: "30 4 * * *"
+  library_refresh: "*/10 * * * *"   # re-list sources in the background
+  fillers_refresh: "0 6 * * 1"
+  cut_updates: "0 7 * * *"
+  library_check: "0 3 * * 0"
+
+notify:                  # tell something when a job is done or failed
+  targets: []
+  # - url: https://ntfy.sh/my-fanscut
+  #   format: ntfy         # json | discord | ntfy
+  #   events: [done, failed]

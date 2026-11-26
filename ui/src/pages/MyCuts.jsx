@@ -1,11 +1,11 @@
 // Every cut installed on this machine, with its build state and where it landed.
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { api } from '../lib/api.js';
-import { useAct, useLoad, usePoll } from '../lib/hooks.js';
+import { api, openInPlex } from '../lib/api.js';
+import { useAct, usePoll, useUrlState } from '../lib/hooks.js';
 import { enc, hm, Poster, Seg } from '../components/kit.jsx';
-import { TemplateDialog } from '../components/TemplateDialog.jsx';
-import { Dialog, Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import { Dialog, Empty, ErrorBox, Loading, MoreMenu, Notice } from '../components/ui.jsx';
+import { useApi } from '../lib/store.js';
 
 const ACTIVE = ['queued', 'running'];
 const GRID = { display: 'grid', gridTemplateColumns: '64px minmax(0, 1.4fr) minmax(0, 1.4fr) 110px auto', gap: 18, alignItems: 'center', padding: '14px 16px', borderTop: '1px solid var(--raised)' };
@@ -28,11 +28,11 @@ function status(cut, job) {
 }
 
 export function MyCuts() {
-  const cutsQ = useLoad(() => api('/cuts'));
-  const jobsQ = useLoad(() => api('/jobs'));
-  const [show, setShow] = useState('all');
+  const cutsQ = useApi('/cuts');
+  const jobsQ = useApi('/jobs');
+  const settingsQ = useApi('/settings', { quiet: true });
+  const [show, setShow] = useUrlState('show', 'all');
   const [doomed, setDoomed] = useState(null);
-  const [tpl, setTpl] = useState(false);
   const [updates, setUpdates] = useState(null);
   const { act, msg, busy, clear } = useAct();
   const jobs = jobsQ.data?.jobs || [];
@@ -43,6 +43,7 @@ export function MyCuts() {
   if (!cutsQ.data) return <div className="page"><Loading /></div>;
 
   const cuts = cutsQ.data.cuts || [];
+  const plex = Boolean(settingsQ.data?.library?.plex?.url);
   const renders = cutsQ.data.renders || [];
   const upd = Object.fromEntries((updates || []).map((u) => [u.id, u]));
   const nUpd = (updates || []).filter((u) => u.update).length;
@@ -59,7 +60,7 @@ export function MyCuts() {
     setUpdates((u) => (u || []).map((x) => (x.id === c.id ? { ...x, update: false, installed: r.sha } : x)));
     await cutsQ.reload();
     return r;
-  }, (r) => (r.changed ? `Updated ${c.title} to ${r.sha.slice(0, 7)}; run Build to re-match the cut points` : `${c.title} was already up to date`));
+  }, (r) => (r.changed ? `Updated ${c.title}${r.summary ? ` (${r.summary})` : ''}. Run Build to re-match the cut points.` : `${c.title} was already up to date`));
 
   const lastJob = (tid) => jobs.find((j) => j.kind === 'timeline_render' && j.payload?.timeline_id === tid);
   const rendersOf = (cut) => {
@@ -76,13 +77,12 @@ export function MyCuts() {
 
   return (
     <div className="page" style={{ maxWidth: 1100 }}>
-      <style>{'.mycuts-thumb .ttl { display: none; }'}</style>
       <div className="toolbar">
         <Seg label="Show" value={show} onChange={setShow}
           options={[['all', 'All'], ['updates', nUpd ? `Updates ${nUpd}` : 'Updates'], ['cuts', 'Cuts'], ['playlists', 'Playlists']]} />
         <span className="row wrap">
           <button type="button" className="btn" disabled={busy} onClick={checkUpdates}>Check for updates</button>
-          <button type="button" className="btn" onClick={() => setTpl(true)}>New cut from template</button>
+          <Link className="btn" to="/new" state={{ from: { label: 'My cuts', to: '/my-cuts' } }}>New cut from template</Link>
           <Link className="btn" to="/">Find more cuts</Link>
         </span>
       </div>
@@ -97,6 +97,28 @@ export function MyCuts() {
             <span /><span>Cut</span><span>In Plex</span><span>Version</span><span />
           </li>
           {rows.map((c) => {
+            if (c.kind === 'playlist') {
+              return (
+                <li key={c.id} style={GRID}>
+                  <div className="mycuts-thumb" style={{ width: 64 }} aria-hidden="true">
+                    <Poster title={c.title} kind="order" />
+                  </div>
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                    <Link to={`/discover/${enc(c.suggestion)}`} style={{ color: 'var(--text)', fontWeight: 600 }}>{c.title}</Link>
+                    <span className="tiny muted">Playlist · {c.films.length} film{c.films.length === 1 ? '' : 's'}</span>
+                    <span className="tiny c-ready">In Plex · nothing rendered</span>
+                  </span>
+                  <span className="tiny" style={{ color: 'var(--text2)' }} title={c.films.join(' → ')}>
+                    {c.films.slice(0, 3).join(' → ')}{c.films.length > 3 ? ' …' : ''}
+                  </span>
+                  <span className="mono tiny muted">—</span>
+                  <span className="row wrap" style={{ gap: 6, justifyContent: 'flex-end' }}>
+                    {plex && <button type="button" className="btn" style={{ height: 32 }} disabled={busy}
+                      onClick={() => act(() => openInPlex(`/playlists/${enc(c.playlist_id)}/plex`))}>Open in Plex</button>}
+                  </span>
+                </li>
+              );
+            }
             const job = lastJob(c.id);
             const [text, cls] = status(c, job);
             const files = rendersOf(c);
@@ -111,9 +133,11 @@ export function MyCuts() {
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
                   <Link to={`/cuts/${enc(c.id)}`} style={{ color: 'var(--text)', fontWeight: 600 }}>{c.title}</Link>
                   <span className="tiny muted">Cut · {facts}</span>
-                  <span className={`tiny ${cls}`}>{upd[c.id]?.update ? 'Update available' : text}</span>
+                  <span className={`tiny ${upd[c.id]?.update ? 'c-accent' : cls}`}>
+                    {upd[c.id]?.update ? ['Update available', upd[c.id].summary].filter(Boolean).join(' · ') : text}
+                  </span>
                 </span>
-                <span style={{ fontSize: 13, color: '#C4C7CD', overflowWrap: 'anywhere' }} title={files[0]?.path}>
+                <span style={{ fontSize: 13, color: 'var(--text2)', overflowWrap: 'anywhere' }} title={files[0]?.path}>
                   {where || <span className="dim">—</span>}
                   {files.length > 1 && <span className="tiny muted"> · {files.length} files</span>}
                 </span>
@@ -122,12 +146,22 @@ export function MyCuts() {
                   {upd[c.id]?.update && <span className="c-accent"> → {upd[c.id].latest.slice(0, 7)}</span>}
                 </span>
                 <span className="row wrap" style={{ gap: 6, justifyContent: 'flex-end' }}>
-                  {upd[c.id]?.update && <button type="button" className="btn btn-primary" style={{ height: 32 }} disabled={busy} onClick={() => update(c)}>Update</button>}
-                  {building
-                    ? <Link className="btn" style={{ height: 32 }} to="/jobs">Open in Jobs</Link>
-                    : <Link className="btn" style={{ height: 32 }} to={`/cuts/${enc(c.id)}/build`}>Build</Link>}
-                  <Link className="btn" style={{ height: 32 }} to={`/cuts/${enc(c.id)}/edit`}>Open in editor</Link>
-                  <button type="button" className="btn btn-ghost" style={{ height: 32 }} onClick={() => setDoomed(c)}>Delete</button>
+                  {/* one primary action; the rest live in More */}
+                  {upd[c.id]?.update
+                    ? <button type="button" className="btn btn-primary" style={{ height: 32 }} disabled={busy} onClick={() => update(c)}>Update</button>
+                    : building
+                      ? <Link className="btn" style={{ height: 32 }} to="/jobs">Open in Jobs</Link>
+                      : <Link className="btn" style={{ height: 32 }} to={`/cuts/${enc(c.id)}/build`}>Build</Link>}
+                  {plex && (where || job?.status === 'done') && (
+                    <button type="button" className="btn" style={{ height: 32 }} disabled={busy}
+                      onClick={() => act(() => openInPlex(`/cuts/${enc(c.id)}/plex`))}>Open in Plex</button>
+                  )}
+                  <MoreMenu LinkAs={Link} items={[
+                    upd[c.id]?.update && !building && ['Build', { to: `/cuts/${enc(c.id)}/build` }],
+                    upd[c.id]?.update && building && ['Open in Jobs', { to: '/jobs' }],
+                    ['Open in editor', { to: `/cuts/${enc(c.id)}/edit` }],
+                    ['Delete…', () => setDoomed(c), { danger: true }],
+                  ]} />
                 </span>
               </li>
             );
@@ -135,7 +169,6 @@ export function MyCuts() {
         </ul>
       )}
 
-      {tpl && <TemplateDialog onClose={() => setTpl(false)} />}
       {doomed && (
         <Dialog title={`Delete ${doomed.title}?`} onClose={() => setDoomed(null)}>
           <p className="muted" style={{ margin: 0 }}>

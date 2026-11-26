@@ -1,6 +1,6 @@
 """Community catalogue: an index of cut repos, install by repo URL, pull updates.
 
-The index (index.json in the fanscut-recipes repo) only links to repos:
+The index (index.json in the fanscut-community repo) only links to repos:
 
     {"schema": 1, "cuts": [{
         "name": "Took", "repo": "https://github.com/jhd3197/took",
@@ -21,11 +21,12 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import requests
 
 from .errors import FansCutError
+from .net import read_capped as _read_capped
 
 REPO_RE = re.compile(r"^https://github\.com/([A-Za-z0-9-]{1,39})/([A-Za-z0-9._-]{1,100}?)"
                      r"(?:\.git)?/?$")
@@ -33,6 +34,8 @@ MAX_INDEX = 2_000_000
 MAX_RECIPE = 2_000_000
 MAX_POSTER = 10_000_000
 MAX_CUTS = 2_000
+# Hosts that may see the GitHub token. Anything else (a cut's poster URL) gets no auth.
+TOKEN_HOSTS = {"api.github.com", "raw.githubusercontent.com"}
 KINDS = {"merge", "supercut", "order", "canon", "character", "chronological", "cut"}
 
 
@@ -74,6 +77,19 @@ def _https(v: Any) -> str:
     return url
 
 
+def local_index_path(url: str) -> Path | None:
+    """The file behind a local index_url ("C:\\x\\index.json", "/x/index.json" or
+    "file:///x/index.json"); None for a web address."""
+    if url.startswith("file://"):
+        from urllib.parse import unquote, urlsplit
+        from urllib.request import url2pathname
+
+        return Path(url2pathname(unquote(urlsplit(url).path)))
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", url):
+        return None
+    return Path(url).expanduser()
+
+
 def validate_index(doc: Any) -> list[dict[str, Any]]:
     """Clean index entries; a bad entry is dropped, not fatal (one typo can't hide the rest)."""
     if not isinstance(doc, dict) or doc.get("schema") != 1 or not isinstance(doc.get("cuts"), list):
@@ -113,7 +129,8 @@ def _entry(raw: Any) -> dict[str, Any]:
             "tagline": _text(raw.get("tagline", ""), 80),
             "sources": sources,
             "variants": [_text(v, 60) for v in raw.get("variants", [])[:20]],
-            "poster": _https(raw["poster"]) if raw.get("poster") else ""}
+            "poster": _https(raw["poster"]) if raw.get("poster") else "",
+            "season": raw["season"] if raw.get("season") in ("christmas", "halloween") else None}
 
 
 class GitHub:
@@ -128,19 +145,24 @@ class GitHub:
     def _get(self, url: str, accept: str = "application/vnd.github+json",
              limit: int = MAX_RECIPE) -> requests.Response:
         headers = {"Accept": accept, "User-Agent": "FansCut"}
-        if self.token:
+        # The token only ever goes to GitHub itself: poster URLs come from third-party
+        # repos and must not receive it.
+        if self.token and urlsplit(url).hostname in TOKEN_HOSTS:
             headers["Authorization"] = f"Bearer {self.token}"
         try:
-            r = self.s.get(url, headers=headers, timeout=self.timeout)
+            r = self.s.get(url, headers=headers, timeout=self.timeout, stream=True)
         except requests.RequestException as exc:
             raise CommunityError(f"GitHub unreachable: {exc.__class__.__name__}") from exc
-        if r.status_code == 404:
-            raise CommunityError("not found on GitHub (private repo? set a GitHub token "
-                                 "in Settings)")
-        if r.status_code >= 400:
-            raise CommunityError(f"GitHub returned HTTP {r.status_code}")
-        if len(r.content) > limit:
-            raise CommunityError("file too large")
+        with r:
+            if r.status_code == 404:
+                raise CommunityError("not found on GitHub (private repo? set a GitHub token "
+                                     "in Settings)")
+            if r.status_code >= 400:
+                raise CommunityError(f"GitHub returned HTTP {r.status_code}")
+            body = _read_capped(r, limit)  # stop reading at the cap, not after it
+            if body is None:
+                raise CommunityError("file too large")
+            r._content = body
         return r
 
     def head(self, repo: Repo, ref: str | None = None) -> tuple[str, str]:
@@ -225,3 +247,49 @@ def save_poster(data: bytes, ext: str, folder: Path, name: str) -> str:
     path = folder / f"{name}{ext}"
     path.write_bytes(data)
     return str(path)
+
+
+def _plural(n: int, one: str, many: str = "") -> str:
+    return f"{n} {one if n == 1 else (many or one + 's')}"
+
+
+def change_summary(old: dict[str, Any], new: dict[str, Any]) -> str:
+    """What an update changes, in a few words: "2 episodes re-timed, 1 scene added".
+
+    Segments are compared by position (part, index); a segment with the same source
+    whose times moved counts its source as re-timed."""
+    def segs(doc: dict[str, Any]) -> dict[tuple[int, int], dict[str, Any]]:
+        return {(pi, si): s for pi, p in enumerate(doc.get("parts", []))
+                for si, s in enumerate(p.get("segments", []))}
+
+    a, b = segs(old), segs(new)
+    retimed: set[str] = set()
+    for k in a.keys() & b.keys():
+        x, y = a[k], b[k]
+        if x.get("src") == y.get("src") and (
+                abs(x.get("start", 0) - y.get("start", 0)) >= 0.01
+                or abs(x.get("end", 0) - y.get("end", 0)) >= 0.01):
+            retimed.add(str(y.get("src")))
+    swapped = sum(1 for k in a.keys() & b.keys() if a[k].get("src") != b[k].get("src"))
+    added, removed = len(b.keys() - a.keys()), len(a.keys() - b.keys())
+    out = []
+    if retimed:
+        movies = all((new.get("sources", {}).get(s) or {}).get("kind") == "movie"
+                     for s in retimed)
+        out.append(f"{_plural(len(retimed), 'film' if movies else 'episode')} re-timed")
+    if added:
+        out.append(f"{_plural(added, 'scene')} added")
+    if removed:
+        out.append(f"{_plural(removed, 'scene')} removed")
+    if swapped:
+        out.append(f"{_plural(swapped, 'scene')} replaced")
+    dp = len(new.get("parts", [])) - len(old.get("parts", []))
+    if dp:
+        out.append(f"{_plural(abs(dp), 'part')} {'added' if dp > 0 else 'removed'}")
+    had = {v.get("id") for v in old.get("variants", [])}
+    nv = {v.get("id") for v in new.get("variants", [])} - had
+    if nv:
+        out.append(_plural(len(nv), "new variant"))
+    if new.get("title") != old.get("title"):
+        out.append(f"renamed to “{new.get('title')}”")
+    return ", ".join(out) or "details changed (notes, credits or anchors)"

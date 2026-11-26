@@ -142,10 +142,11 @@ render:
 
 ## Network and access
 
-FansCut has no login. The compose file publishes the port on `127.0.0.1`
+FansCut has no accounts. The compose file publishes the port on `127.0.0.1`
 only. To use it from other machines, either:
 
-- change the port line to `"6464:6464"` and keep it on a trusted network, or
+- change the port line to `"6464:6464"`, set `server.auth: api_key` (the UI
+  then asks for the key once), and keep it on a trusted network, or
 - put it behind a reverse proxy that adds authentication. For example, with
   Caddy:
 

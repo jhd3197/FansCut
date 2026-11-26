@@ -71,6 +71,16 @@ def test_collection_templates_appear(client, took_library):
     assert order["status"] == "ready" and order["missing"] == []
 
 
+def test_suggestions_name_the_library_items_they_use(client, took_library):
+    """Movie and Show pages filter /suggestions by these keys."""
+    movie_keys = {m["key"] for m in client.get("/api/library/movies").json()["movies"]}
+    sugg = client.get("/api/suggestions").json()["suggestions"]
+    took = next(s for s in sugg if s["id"] == "recipe:took.json")
+    merge = next(s for s in sugg if s["kind"] == "collection_merge")
+    assert len(took["keys"]) == 3 and set(took["keys"]) <= movie_keys
+    assert set(merge["keys"]) == set(took["keys"])
+
+
 def test_missing_edition_is_named(client, took_library, tmp_path):
     doc = json.loads(json.dumps(TOOK_RECIPE))  # deep copy: the fixture is shared
     doc["sources"] = {"M49051": {"kind": "movie", "tmdb": 49051, "edition": "extended",
@@ -103,6 +113,7 @@ def test_canon_cut_suggestion(matched):  # noqa: F811  (matched = series matched
     canon = next((s for s in sugg if s["kind"] == "canon_cut"), None)
     assert canon is not None and canon["detail"]["series_key"] == SERIES
     assert canon["detail"]["filler_episodes"] >= 1
+    assert canon["keys"] == [SERIES]
 
 
 def test_install_canon_queues_render(matched):  # noqa: F811
@@ -142,3 +153,76 @@ def test_install_watch_order_makes_playlist_no_render(client, took_library):
     from urllib.parse import unquote
     assert "library/metadata/100" in unquote(posts[0].request.url)
     assert client.get("/api/jobs").json()["jobs"] == []  # nothing rendered
+
+    # My cuts lists it (the Playlists filter), with a link into Plex
+    cuts = client.get("/api/cuts").json()["cuts"]
+    pl = next(c for c in cuts if c["kind"] == "playlist")
+    assert pl["playlist_id"] == "777" and len(pl["films"]) == 3
+    url = client.get("/api/playlists/777/plex").json()["url"]
+    assert url == f"{PLEX}/web/index.html#!/server/abc/playlist?key=%2Fplaylists%2F777"
+    assert client.get("/api/playlists/999/plex").status_code == 404
+
+
+def test_movie_play_links_into_plex(client, took_library):
+    key = client.get("/api/library/movies").json()["movies"][0]["key"]
+    url = client.get(f"/api/movies/{key}/plex").json()["url"]
+    assert url.startswith(f"{PLEX}/web/index.html#!/server/abc/details?key=")
+    assert url.endswith("%2Flibrary%2Fmetadata%2F100")
+
+
+def test_cut_opens_in_plex_once_scanned(client, took_library):
+    tid = client.post("/api/series/movie:49051/timelines", json=TOOK_RECIPE).json()["id"]
+    # Plex's title filter also returns near misses (the Hobbit films): not the cut
+    assert client.get(f"/api/cuts/{tid}/plex").status_code == 404  # not scanned yet
+    core = client.app_ref.state.core
+    from fanscut.timeline import render as tl_render
+
+    doc = TOOK_RECIPE
+    show = tl_render.show_name(core._timeline_series_title("movie:49051", doc), doc["title"])
+    took_library.replace(responses.GET, f"{PLEX}/library/sections/2/all", json={
+        "MediaContainer": {"Metadata": [{"ratingKey": "4242", "title": show}]}})
+    url = client.get(f"/api/cuts/{tid}/plex").json()["url"]
+    assert url.endswith("%2Flibrary%2Fmetadata%2F4242")
+    assert core.db.one("SELECT rating_key FROM plex_items WHERE ref = ?", (tid,))[0] == "4242"
+
+
+def test_genre_and_season_helpers():
+    from fanscut import suggest
+
+    assert suggest.rank_genres([["Adventure", "Fantasy"], ["Fantasy", "Action"], ["Fantasy"]]) \
+        == ["Fantasy", "Adventure"]
+    assert suggest.rank_genres([]) == []
+    assert suggest.season_of(["Home Alone", "The Santa Clause 2"]) == "christmas"
+    assert suggest.season_of(["Hocus Pocus"]) == "halloween"
+    assert suggest.season_of(["The Hobbit"]) is None
+    assert suggest.season_of(["The Hobbit"], "halloween") == "halloween"
+    assert suggest.season_of(["Santana"]) is None  # whole words only
+    beauty = ["Beauty and the Beast", "Beauty and the Beast: The Enchanted Christmas",
+              "Belle's Magical World"]
+    assert suggest.season_for("Beauty and the Beast", beauty) is None  # one sequel is not enough
+    assert suggest.season_for("The Santa Clause", ["The Santa Clause", "The Santa Clause 2"])         == "christmas"
+    assert suggest.season_for("Alien", ["Alien"], "halloween") == "halloween"
+
+
+def test_suggestions_carry_genres_from_the_library(client, took_library):
+    films = [plex_movie(i, t, y, tmdb, "The Hobbit Collection") for i, (t, y, tmdb) in enumerate(HOBBIT)]
+    for f in films:
+        f["Genre"] = [{"tag": "Adventure"}, {"tag": "Fantasy"}]
+    films[0]["Genre"] = [{"tag": "Fantasy"}, {"tag": "Adventure"}]
+    took_library.replace(responses.GET, f"{PLEX}/library/sections/2/all",
+                         json={"MediaContainer": {"Metadata": films}})
+    client.app_ref.state.core.library.refresh()
+    sugg = client.get("/api/suggestions").json()["suggestions"]
+    merge = next(s for s in sugg if s["kind"] == "collection_merge")
+    assert merge["genres"] == ["Adventure", "Fantasy"] and merge["season"] is None
+
+
+def test_library_reads_genres_from_every_source():
+    from fanscut.library.service import Library
+
+    lib = Library.__new__(Library)
+    lib._map = lambda p: p
+    assert lib._radarr_movie({"id": 1, "title": "x", "genres": ["Fantasy", 3]}).genres == ["Fantasy"]
+    assert lib._plex_movie({"ratingKey": "1", "title": "x", "Genre": [{"tag": "Comedy"}]}).genres == ["Comedy"]
+    assert Library._sonarr_series({"id": 1, "title": "x", "genres": ["Anime"]}).genres == ["Anime"]
+    assert Library._plex_series({"ratingKey": "2", "title": "x", "Genre": [{"tag": "Drama"}]}).genres == ["Drama"]

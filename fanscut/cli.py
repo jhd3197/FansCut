@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
+import os
 import sys
+from pathlib import Path
 
-from . import __version__, config, doctor
+from . import __version__, config, doctor, logs
 from .core import Core
 from .db import Database
 from .errors import FansCutError
@@ -22,10 +23,26 @@ from .errors import FansCutError
 def _serve(args: argparse.Namespace, cfg: config.Config) -> int:
     import uvicorn
 
-    from .server import create_app
+    from .server import create_app, ensure_api_key
 
-    uvicorn.run(create_app(cfg, args.config), host=args.host or cfg.server.host,
-                port=args.port or cfg.server.port, log_level="info")
+    # first start: make the API key and save it, so webhooks keep working across restarts
+    ensure_api_key(cfg, Path(args.config) if args.config else config.default_path())
+
+    host, port = args.host or cfg.server.host, args.port or cfg.server.port
+    # X-Forwarded-For/-Proto are believed only from these (a reverse proxy in front)
+    proxies = ",".join(cfg.server.trusted_proxies) or "127.0.0.1"
+    if args.reload:
+        # Restart on every code change under fanscut/. The reloaded process
+        # builds its own app from FANSCUT_CONFIG and inherits this environment
+        # (secrets included), so nothing has to be passed by hand.
+        os.environ["FANSCUT_CONFIG"] = str(Path(args.config or config.default_path()).resolve())
+        uvicorn.run("fanscut.server:create_app", factory=True, reload=True,
+                    reload_dirs=[str(Path(__file__).parent)], host=host, port=port,
+                    log_level="info", timeout_graceful_shutdown=5,
+                    proxy_headers=True, forwarded_allow_ips=proxies)
+        return 0
+    uvicorn.run(create_app(cfg, args.config), host=host, port=port, log_level="info",
+                timeout_graceful_shutdown=5, proxy_headers=True, forwarded_allow_ips=proxies)
     return 0
 
 
@@ -104,6 +121,17 @@ def _recipe_dispatch(args: argparse.Namespace, cfg: config.Config) -> int:
     return _recipe_ai(args, cfg)
 
 
+def _mcp(args: argparse.Namespace, cfg: config.Config) -> int:
+    import os
+
+    from . import mcp_server
+
+    host = "127.0.0.1" if cfg.server.host in ("0.0.0.0", "::") else cfg.server.host  # noqa: S104
+    url = args.url or os.environ.get("FANSCUT_URL") or f"http://{host}:{cfg.server.port}"
+    mcp_server.serve(url)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="fanscut", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -113,6 +141,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("serve", help="run the web app")
     s.add_argument("--host")
     s.add_argument("--port", type=int)
+    s.add_argument("--reload", action="store_true",
+                   help="restart when the code changes (local development)")
     s.set_defaults(fn=_serve)
     sub.add_parser("doctor", help="check ffmpeg and directories").set_defaults(fn=_doctor)
     f = sub.add_parser("fillers", help="filler data")
@@ -126,13 +156,17 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--apply", action="store_true", help="import the result, not just print it")
     r.add_argument("--file", help="recipe JSON to check (for validate)")
     r.set_defaults(fn=_recipe_dispatch)
+    m = sub.add_parser("mcp", help="MCP server (stdio) so an AI client can tag scenes")
+    m.add_argument("--url",
+                   help="FansCut to talk to (default: FANSCUT_URL or this config's server)")
+    m.set_defaults(fn=_mcp)
     args = ap.parse_args(argv)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    logs.setup(None)
     try:
-        return int(args.fn(args, config.load(args.config)))
+        cfg = config.load(args.config)
+        if args.fn is _serve:  # the server also writes the rotating log file
+            logs.setup(cfg.data_dir)
+        return int(args.fn(args, cfg))
     except FansCutError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

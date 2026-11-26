@@ -18,6 +18,7 @@ from typing import Any, Literal
 from ..config import FFmpegCfg
 from ..models import Segment
 from ..planner import CutPlan
+from .effects import TONEMAP
 
 FADE = 0.5
 Mode = Literal["auto", "copy", "encode"]
@@ -114,6 +115,30 @@ def compatible(infos: list[dict[str, Any]]) -> str | None:
     return None
 
 
+Quality = Literal["best", "fast"]
+FAST_MAX = (1920, 1080)
+HDR_TRANSFERS = ("smpte2084", "arib-std-b67")
+
+
+def fast_size(width: int, height: int) -> tuple[int, int]:
+    """The 1080p "fast" frame: fits 1920x1080, keeps the aspect, never upscales, even."""
+    f = min(1.0, FAST_MAX[0] / max(width, 1), FAST_MAX[1] / max(height, 1))
+    return max(2, int(width * f) // 2 * 2), max(2, int(height * f) // 2 * 2)
+
+
+def is_hdr(info: dict[str, Any]) -> bool:
+    return (info.get("video") or {}).get("color_transfer") in HDR_TRANSFERS
+
+
+def fast_differs(infos: list[dict[str, Any]]) -> bool:
+    """Whether "fast" makes something other than "best": a source above 1080p, or HDR."""
+    for i in infos:
+        v = i.get("video") or {}
+        if (v.get("width") or 0) > FAST_MAX[0] or (v.get("height") or 0) > FAST_MAX[1] or is_hdr(i):
+            return True
+    return False
+
+
 def output_format(ff: FFmpegCfg, infos: list[dict[str, Any]]) -> tuple[str, str]:
     """(codec, transfer): hevc when asked or when a source is HDR; transfer '' = SDR."""
     hdr = [(i.get("video") or {}).get("color_transfer") for i in infos
@@ -153,7 +178,8 @@ def _encoder_args(ff: FFmpegCfg, codec: str = "h264", transfer: str = "",
 
 def _filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str, Any],
                    audio: bool, fade: bool, audio_map: dict[str, int] | None = None,
-                   infos: dict[str, Any] | None = None, pix_fmt: str = "yuv420p") -> str:
+                   infos: dict[str, Any] | None = None, pix_fmt: str = "yuv420p",
+                   tonemap: frozenset[str] = frozenset()) -> str:
     w, h = first.get("width") or 1920, first.get("height") or 1080
     fps = round(first.get("fps") or 24, 3) or 24
     lines, vlabels, alabels = [], [], []
@@ -168,7 +194,8 @@ def _filter_script(segs: list[Segment], inputs: dict[str, int], first: dict[str,
     for k, s in enumerate(segs):
         n = inputs[s.file]
         a_idx = (audio_map or {}).get(s.file, 0)
-        vf = (f"[{n}:v:0]trim=start={s.start:.3f}:end={s.end:.3f},setpts=PTS-STARTPTS,"
+        tm = f"{TONEMAP}," if s.file in tonemap else ""
+        vf = (f"[{n}:v:0]trim=start={s.start:.3f}:end={s.end:.3f},setpts=PTS-STARTPTS,{tm}"
               f"fps={fps},scale={w}:{h}:force_original_aspect_ratio=decrease,"
               f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format={pix_fmt}")
         af = (f"[{n}:a:{a_idx}]atrim=start={s.start:.3f}:end={s.end + ext[k]:.3f},"
@@ -218,6 +245,7 @@ def build_plan(
     mode: Mode = "auto",
     audio_map: dict[str, int] | None = None,
     hdr_params: Callable[[str], str] | None = None,
+    quality: Quality = "best",
 ) -> RenderPlan:
     segs = _join_adjacent(cut.segments)
     if not segs:
@@ -236,6 +264,12 @@ def build_plan(
     xfade = any(s.xfade_ms > 0 for s in segs)  # audio crossfades need the filter graph
 
     why = compatible(list(infos.values()))
+    fast = quality == "fast" and fast_differs(list(infos.values()))
+    if fast:  # 1080p SDR H.264: always a re-encode
+        why = why or "fast quality: 1080p"
+        if mode == "copy":
+            raise ValueError("cannot stream copy: fast quality re-encodes to 1080p")
+        mode = "encode"
     if mode == "copy" and (why or fade or track_pick or xfade or edited):
         blockers = [why, "fade needs re-encoding" if fade else None,
                     "audio track selection needs re-encoding" if track_pick else None,
@@ -248,7 +282,7 @@ def build_plan(
         why = why or ("audio crossfades need re-encoding" if xfade else None)
         why = why or ("edit operations need re-encoding" if edited else None)
         mode = "encode" if why else "copy"
-    elif mode == "encode":
+    elif mode == "encode" and not fast:
         why = "re-encode requested"
     reason = "stream copy (files match)" if mode == "copy" else (why or "")
     chapters = chapters_for(segs, titles or {})
@@ -271,17 +305,26 @@ def build_plan(
     else:
         inputs = {f: n for n, f in enumerate(infos)}
         codec, transfer = output_format(ff, list(infos.values()))
+        tonemap: frozenset[str] = frozenset()
+        if fast:
+            w, h = fast_size(first.get("width") or 1920, first.get("height") or 1080)
+            first = {**first, "width": w, "height": h}
+            codec, transfer = "h264", ""
+            tonemap = frozenset(f for f, i in infos.items() if is_hdr(i))
         pix = "yuv420p10le" if codec == "hevc" else "yuv420p"
         if edited:
             from .effects import Out, filter_script
 
             script, extra = filter_script(segs, inputs, first, infos, audio, workdir,
-                                          Out(pix, bool(transfer)), audio_map)
+                                          Out(pix, bool(transfer), tonemap), audio_map)
             files["filter.txt"] = script
             files.update(extra)
         else:
             files["filter.txt"] = _filter_script(segs, inputs, first, audio, fade, audio_map,
-                                                 infos, pix)
+                                                 infos, pix, tonemap)
+        if fast:
+            warnings.append(f"fast quality: {first['width']}x{first['height']} H.264"
+                            + (", HDR tone-mapped to SDR" if tonemap else ""))
         hdrp = ""
         if transfer == "smpte2084" and hdr_params:
             src = next((f for f, i in infos.items()

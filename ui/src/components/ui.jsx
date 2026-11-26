@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { labelTitle } from '../lib/labels.js';
 
 export function LabelBadge({ label, source }) {
@@ -45,21 +46,81 @@ export function PageHeader({ title, sub, children }) {
   );
 }
 
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// A modal in a portal on <body>: Esc and the backdrop close it, the page behind
+// does not scroll, focus moves in, stays in (Tab wraps), and returns on close.
 export function Dialog({ title, onClose, children, wide }) {
+  const ref = useRef(null);
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; });
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose();
+    const before = document.activeElement;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const box = ref.current;
+    const first = box?.querySelector('[autofocus]') || box?.querySelector(FOCUSABLE);
+    (first || box)?.focus();
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); closeRef.current(); return; }
+      if (e.key !== 'Tab' || !box) return;
+      const items = [...box.querySelectorAll(FOCUSABLE)];
+      if (!items.length) return;
+      const [a, z] = [items[0], items[items.length - 1]];
+      if (e.shiftKey && document.activeElement === a) { e.preventDefault(); z.focus(); }
+      else if (!e.shiftKey && document.activeElement === z) { e.preventDefault(); a.focus(); }
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  return (
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = overflow;
+      if (before && typeof before.focus === 'function') before.focus();
+    };
+  }, []);
+  return createPortal(
     <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`dialog${wide ? ' dialog-wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={ref} tabIndex={-1} className={`dialog${wide ? ' dialog-wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="dialog-head">
           <h2>{title}</h2>
           <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close">✕</button>
         </div>
         {children}
       </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Click once to arm ("Sure?"), again to act. Clicking elsewhere or waiting
+// 4 s disarms it. For deletes that don't need a whole dialog.
+export function ConfirmButton({ onConfirm, children, confirmText = 'Sure?', className = 'btn btn-sm', disabled }) {
+  const [armed, setArmed] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!armed) return undefined;
+    const t = setTimeout(() => setArmed(false), 4000);
+    const off = (e) => { if (!ref.current?.contains(e.target)) setArmed(false); };
+    document.addEventListener('mousedown', off);
+    return () => { clearTimeout(t); document.removeEventListener('mousedown', off); };
+  }, [armed]);
+  return (
+    <button ref={ref} type="button" disabled={disabled} className={`${className}${armed ? ' confirm-armed' : ''}`}
+      onClick={() => { if (armed) { setArmed(false); onConfirm(); } else setArmed(true); }}>
+      {armed ? confirmText : children}
+    </button>
+  );
+}
+
+// Poster-shaped placeholders while a grid or shelf loads.
+export function SkeletonTiles({ n = 8, shelf = false }) {
+  return (
+    <div className={shelf ? 'shelf' : 'grid'} aria-busy="true" aria-label="Loading">
+      {Array.from({ length: n }, (_, i) => (
+        <div key={i} className="tile" aria-hidden="true">
+          <div className="skel skel-tile" />
+          <div className="skel skel-line" />
+        </div>
+      ))}
     </div>
   );
 }
@@ -75,4 +136,46 @@ export function Progress({ value }) {
 
 export function StatusTag({ status }) {
   return <span className={`tag tag-${status}`}>{status}</span>;
+}
+
+// A "More" button with a short list of secondary actions. Items: [label, onSelect | {to}, {danger}].
+// Closes on Escape, a click outside, or picking an item; arrow keys move between items.
+export function MoreMenu({ label = 'More', items, LinkAs, className = 'btn', align = 'right' }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => { if (!box.current?.contains(e.target)) setOpen(false); };
+    const key = (e) => {
+      if (e.key === 'Escape') { setOpen(false); box.current?.querySelector('button')?.focus(); }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        const all = [...box.current.querySelectorAll('[role="menuitem"]')];
+        const i = all.indexOf(document.activeElement);
+        all[(i + (e.key === 'ArrowDown' ? 1 : all.length - 1)) % all.length]?.focus();
+        e.preventDefault();
+      }
+    };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key);
+    box.current?.querySelector('[role="menuitem"]')?.focus();
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', key); };
+  }, [open]);
+  return (
+    <span className="menu" ref={box}>
+      <button type="button" className={className} style={className === 'btn' ? { height: 32 } : undefined} aria-haspopup="menu" aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}>{label}</button>
+      {open && (
+        <span className="menu-list" role="menu" style={align === 'left' ? { left: 0, right: 'auto' } : undefined}>
+          {items.filter(Boolean).map(([text, act, opts = {}]) => (act?.to && LinkAs
+            ? <LinkAs key={text} to={act.to} role="menuitem" className="menu-item" onClick={() => setOpen(false)}>{text}</LinkAs>
+            : (
+              <button key={text} type="button" role="menuitem" className={`menu-item${opts.danger ? ' c-danger' : ''}`}
+                disabled={opts.disabled} onClick={() => { setOpen(false); act(); }}>
+                {text}{opts.keys && <kbd className="menu-keys">{opts.keys}</kbd>}
+              </button>
+            )))}
+        </span>
+      )}
+    </span>
+  );
 }

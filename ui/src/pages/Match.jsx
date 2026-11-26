@@ -1,10 +1,26 @@
+// Pick the MAL / AniList entry a show belongs to (or type the ids in by hand), as a page:
+// /series/<key>/match. Saving goes back to the show.
 import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router';
 import { api, seriesPath } from '../lib/api.js';
-import { useAct } from '../lib/hooks.js';
-import { Dialog, Notice } from './ui.jsx';
+import { useAct, usePageTitle } from '../lib/hooks.js';
+import { Crumbs, enc } from '../components/kit.jsx';
+import { ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import { useApi } from '../lib/store.js';
 
-// Pick the MAL / AniList entry a series belongs to (or type the ids in by hand).
-export function MatchDialog({ series, matches, onClose, onChanged }) {
+export function MatchPage() {
+  const { key } = useParams();
+  const view = useApi(`${seriesPath(key)}/episodes`);
+  usePageTitle(view.data ? `Match ${view.data.series.title}` : 'Match');
+  if (view.error && !view.data) return <div className="page"><ErrorBox error={view.error} onRetry={view.reload} /></div>;
+  if (!view.data) return <div className="page"><Loading /></div>;
+  return <Matcher series={view.data.series} matches={view.data.matches} onChanged={view.reload} />;
+}
+
+function Matcher({ series, matches, onChanged }) {
+  const nav = useNavigate();
+  const showTo = `/series/${enc(series.key)}`;
+  const onClose = () => nav(showTo);
   const [q, setQ] = useState(series.title);
   const [cands, setCands] = useState(null);
   const [ids, setIds] = useState({ mal: '', anilist: '' });
@@ -27,8 +43,11 @@ export function MatchDialog({ series, matches, onClose, onChanged }) {
   const num = (s) => (s.trim() && /^\d+$/.test(s.trim()) ? Number(s) : null);
 
   return (
-    <Dialog title={`Match “${series.title}”`} onClose={onClose} wide>
-      <p className="muted">
+    <div className="page" style={{ maxWidth: 860 }}>
+      <Crumbs items={[['Library', '/library'], [series.title, showTo], ['Match']]} />
+      <div className="page-head"><div><h1>Match “{series.title}”</h1></div>
+        <Link className="btn btn-ghost" to={showTo}>Back to the show</Link></div>
+      <p className="muted" style={{ margin: 0 }}>
         Filler data is looked up by MAL / AniList id. {current && <>Currently MAL {current.mal_id ?? '–'} · AniList {current.anilist_id ?? '–'} ({current.source}).</>}
       </p>
       <form className="row" onSubmit={(e) => { e.preventDefault(); search(q); }}>
@@ -61,6 +80,6 @@ export function MatchDialog({ series, matches, onClose, onChanged }) {
         {current && <button className="btn btn-danger" disabled={busy}
           onClick={() => act(async () => { await api(`${base}/match`, { method: 'DELETE' }); onChanged(); onClose(); })}>Clear match</button>}
       </div>
-    </Dialog>
+    </div>
   );
 }

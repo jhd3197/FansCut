@@ -1,3 +1,4 @@
+// @ts-check
 // Timeline math, kept free of React so it can be tested.
 
 export const TRIM_KINDS = ['recap', 'intro', 'outro', 'preview'];
@@ -128,4 +129,79 @@ export function recipeIssues(doc) {
     });
   });
   return out;
+}
+
+// -- segment effects (fanscut/timeline/effects.py validates the same fields) ---------------
+
+// A value that means "no effect": the field is dropped instead of saved.
+const NEUTRAL = {
+  speed: 1, hold: 0, j_cut: 0, l_cut: 0,
+  'video.fade_in': 0, 'video.fade_out': 0, 'video.mirror': false,
+  'video.grade.exposure': 0, 'video.grade.saturation': 1, 'video.grade.temperature': 0, 'video.grade.contrast': 1,
+  'audio.fade_in': 0, 'audio.fade_out': 0, 'audio.volume': 1,
+};
+
+export const GRADE = [
+  // [field, label, min, max, step, neutral]
+  ['exposure', 'Exposure', -2, 2, 0.05, 0],
+  ['saturation', 'Saturation', 0, 2, 0.05, 1],
+  ['temperature', 'Temperature', -50, 50, 1, 0],
+  ['contrast', 'Contrast', 0.5, 2, 0.05, 1],
+];
+
+export const TRANSITIONS = [['cut', 'Cut'], ['dissolve', 'Dissolve'], ['dip', 'Dip to black'], ['fade', 'Fade']];
+
+// Set seg[path] (dotted, e.g. "video.grade.exposure") in place. Neutral or empty values
+// delete the field, and objects left empty go too, so the recipe only holds real edits.
+// A J-cut and an L-cut exclude each other; "cut" removes the transition.
+export function setFx(seg, path, value) {
+  const keys = path.split('.');
+  const neutral = value == null || value === '' || Number.isNaN(value) || NEUTRAL[path] === value
+    || (path === 'transition.type' && value === 'cut');
+  if (path === 'transition.type' && neutral) { delete seg.transition; return seg; }
+  if (path === 'j_cut' && !neutral) delete seg.l_cut;
+  if (path === 'l_cut' && !neutral) delete seg.j_cut;
+  const chain = [seg];
+  for (const k of keys.slice(0, -1)) {
+    const parent = chain[chain.length - 1];
+    if (neutral && !parent[k]) return seg;
+    parent[k] = parent[k] && typeof parent[k] === 'object' ? parent[k] : {};
+    chain.push(parent[k]);
+  }
+  const last = keys[keys.length - 1];
+  if (neutral) delete chain[chain.length - 1][last];
+  else chain[chain.length - 1][last] = value;
+  if (path === 'transition.type' && seg.transition && seg.transition.duration == null) seg.transition.duration = 0.5;
+  if (path === 'title.text' && seg.title && seg.title.duration == null) seg.title.duration = 3;
+  for (let i = chain.length - 1; i > 0; i -= 1) { // prune objects that ended up empty
+    if (Object.keys(chain[i]).length === 0) delete chain[i - 1][keys[i - 1]];
+  }
+  return seg;
+}
+
+// The effect names on a segment, for the fx column and clip badges.
+export function fxList(seg) {
+  const out = [];
+  if (seg.speed) out.push(`${seg.speed}×`);
+  if (seg.hold) out.push('hold');
+  if (seg.transition) out.push(seg.transition.type);
+  if (seg.j_cut) out.push('J-cut');
+  if (seg.l_cut) out.push('L-cut');
+  if (seg.video?.grade) out.push('grade');
+  if (seg.video?.crop) out.push('crop');
+  if (seg.video?.fade_in || seg.video?.fade_out) out.push('fade');
+  if (seg.video?.mirror) out.push('mirror');
+  if (seg.title) out.push('title');
+  if (seg.audio?.src) out.push('music');
+  else if (seg.audio) out.push('audio');
+  return out;
+}
+
+// A CSS filter that previews a grade on a still (an approximation: the render uses ffmpeg's
+// eq / colortemperature, or EffectCraft).
+export function gradeFilter(g = {}) {
+  const ex = g.exposure ?? 0;
+  const t = g.temperature ?? 0;
+  return [`brightness(${(2 ** ex).toFixed(3)})`, `saturate(${g.saturation ?? 1})`, `contrast(${g.contrast ?? 1})`,
+    t ? `sepia(${Math.min(Math.abs(t) / 100, 0.5).toFixed(2)}) hue-rotate(${t > 0 ? -10 : 170}deg)` : ''].filter(Boolean).join(' ');
 }

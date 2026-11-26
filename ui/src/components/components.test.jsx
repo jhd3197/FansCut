@@ -1,13 +1,44 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { LabelBadge, Progress } from './ui.jsx';
+import { LabelBadge, MoreMenu, Progress } from './ui.jsx';
 import { TrimFields } from './TrimFields.jsx';
 import { SegmentsFields } from './SegmentsFields.jsx';
 import { EpisodeTrack } from './Timeline.jsx';
 import { setPath } from '../pages/Settings.jsx';
+import { posterFace } from './kit.jsx';
+import { sourceSummary } from '../lib/labels.js';
+import { movieMeta, movieNote, movieTag } from '../pages/LibraryPage.jsx';
 
 afterEach(cleanup);
+
+describe('posterFace', () => {
+  it('sets action, sci-fi and anime in the condensed face', () => {
+    expect(posterFace({ genres: ['Action', 'Drama'] })).toBe('condensed');
+    expect(posterFace({ tag: 'ANIME · CANON' })).toBe('condensed');
+    expect(posterFace({ genres: ['Science Fiction'] })).toBe('condensed');
+  });
+
+  it('keeps everything else in the serif', () => {
+    expect(posterFace({ genres: ['Fantasy'], tag: 'MERGE' })).toBe('serif');
+    expect(posterFace()).toBe('serif');
+  });
+});
+
+describe('sourceSummary', () => {
+  it('names the sources that are on and the library root', () => {
+    const cfg = { library: { plex: { url: 'http://plex.lan:32400' }, sonarr: { url: '' },
+      radarr: { url: '' }, folder: { path: '/media' }, movies: { path: '' } } };
+    expect(sourceSummary(cfg)).toEqual({ label: 'Plex · Folder', root: '/media' });
+  });
+
+  it('falls back to the Plex host, and says when nothing is set up', () => {
+    expect(sourceSummary({ library: { plex: { url: 'http://plex.lan:32400' } } }))
+      .toEqual({ label: 'Plex', root: 'plex.lan:32400' });
+    expect(sourceSummary({ library: {} })).toEqual({ label: 'No source set up', root: '' });
+    expect(sourceSummary(null)).toBeNull();
+  });
+});
 
 describe('LabelBadge', () => {
   it('shows the label with its source in the tooltip', () => {
@@ -101,5 +132,40 @@ describe('settings helper', () => {
     const b = setPath(a, 'x.y', 9);
     expect(b).toEqual({ x: { y: 9, z: 2 } });
     expect(a.x.y).toBe(1);
+  });
+});
+
+describe('MoreMenu', () => {
+  it('opens, runs an item and closes; Escape closes it too', () => {
+    const del = vi.fn();
+    render(<MoreMenu items={[['Delete…', del, { danger: true }], false]} />);
+    const more = screen.getByRole('button', { name: 'More' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(more);
+    expect(more.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    expect(del).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(more);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+});
+
+describe('film captions', () => {
+  const film = { on_disk: true, minutes: 182, edition: 'Extended', video: { res: '4K', hdr: 'HDR10', codec: 'HEVC' } };
+  it('reads resolution, HDR and codec from the cached probe', () => {
+    expect(movieMeta(film)).toBe('182 min · 4K HDR10 · HEVC');
+    expect(movieTag(film)).toBe('EXTENDED · 4K HDR10');
+  });
+  it('says Not analysed for a copy never probed, nothing when the listing had no probe data', () => {
+    expect(movieMeta({ ...film, video: null })).toBe('182 min · Not analysed');
+    const { video, ...bare } = film; // eslint-disable-line no-unused-vars
+    expect(movieMeta(bare)).toBe('182 min');
+  });
+  it('puts a problem first, then the cut it feeds, then its versions', () => {
+    expect(movieNote({ problem: 'no audio', problem_severity: 'error' })).toEqual(['no audio', 'c-danger']);
+    expect(movieNote({ source_for: ['Took'] })[0]).toBe('Source for Took');
+    expect(movieNote({ versions: [{ edition: 'Extended' }, { edition: null }] })[0]).toBe('2 versions: Extended, unnamed');
   });
 });

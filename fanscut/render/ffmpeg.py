@@ -150,6 +150,23 @@ class Prober:
         self.cfg = cfg
         self.db = db
 
+    def cached(self, paths: list[str]) -> dict[str, dict[str, Any]]:
+        """What earlier probes found for these paths, without touching the files.
+
+        For listings: no stat and no ffprobe, so a slow share stays fast. A file
+        changed since its probe shows its old facts until a detail page re-probes."""
+        out: dict[str, dict[str, Any]] = {}
+        wanted = list(dict.fromkeys(p for p in paths if p))
+        for i in range(0, len(wanted), 500):  # SQLite's parameter limit
+            chunk = wanted[i:i + 500]
+            marks = ",".join("?" * len(chunk))
+            for row in self.db.query(
+                    f"SELECT path, info FROM probe_cache WHERE path IN ({marks})", tuple(chunk)):
+                info = json.loads(row["info"])
+                if info.get("v", 1) >= PROBE_VERSION:
+                    out[row["path"]] = info
+        return out
+
     def __call__(self, path: str) -> dict[str, Any]:
         st = os.stat(path)
         row = self.db.one("SELECT mtime, size, info FROM probe_cache WHERE path = ?", (path,))
@@ -223,17 +240,24 @@ def run_with_progress(
     err_lines: list[str] = []
     drain = threading.Thread(target=lambda: err_lines.extend(proc.stderr or []), daemon=True)
     drain.start()
-    for line in proc.stdout:
-        if cancel is not None and cancel.is_set():
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            raise JobCancelled("render cancelled")
-        key, _, val = line.strip().partition("=")
-        if key in ("out_time_us", "out_time_ms") and val.lstrip("-").isdigit() and total_seconds:
-            on_progress(min(max(int(val) / 1_000_000 / total_seconds, 0.0), 1.0))
+    def stop() -> None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    try:
+        for line in proc.stdout:
+            if cancel is not None and cancel.is_set():
+                raise JobCancelled("render cancelled")
+            key, _, val = line.strip().partition("=")
+            numeric = val.lstrip("-").isdigit()
+            if key in ("out_time_us", "out_time_ms") and numeric and total_seconds:
+                on_progress(min(max(int(val) / 1_000_000 / total_seconds, 0.0), 1.0))
+    except BaseException:  # cancelled, or on_progress raised: never leave ffmpeg running
+        stop()
+        raise
     proc.wait()
     drain.join(timeout=2)
     if cancel is not None and cancel.is_set():

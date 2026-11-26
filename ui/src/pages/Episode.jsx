@@ -10,6 +10,7 @@ import { ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import { CutBar, cutPieces } from '../components/Timeline.jsx';
 import { TRIM_TITLES, TrimFields } from '../components/TrimFields.jsx';
 import { SegmentsFields } from '../components/SegmentsFields.jsx';
+import { useApi } from '../lib/store.js';
 
 // -- probe text, shared with the show page -------------------------------------------
 const LANGS = {
@@ -91,10 +92,10 @@ function Preview({ base, eid, what, onClose }) {
 export function EpisodePage() {
   const { key, eid } = useParams();
   const base = seriesPath(key);
-  const view = useLoad(() => api(`${base}/episodes`), [key]);
-  const info = useLoad(() => api(`${base}/episodes/${enc(eid)}/info`), [key, eid]);
+  const view = useApi(`${base}/episodes`);
+  const info = useApi(`${base}/episodes/${enc(eid)}/info`);
   const season = Number((/^S(\d+)/.exec(eid) || [])[1] ?? 1);
-  const plan = useLoad(() => api(`${base}/cut`, { method: 'POST', body: { seasons: [season] } }).catch(() => null), [key, season]);
+  const plan = useLoad(() => api(`${base}/cut`, { method: 'POST', read: true, body: { seasons: [season] } }).catch(() => null), [key, season]);
   const { act, msg, busy, clear } = useAct();
   const [preview, setPreview] = useState(null);
 
@@ -212,7 +213,12 @@ export function EpisodePage() {
           preview={ep.has_file ? (kind, range) => setPreview({ kind, range }) : undefined} />
         {preview && <Preview base={base} eid={eid} what={preview} onClose={() => setPreview(null)} />}
         <div className="row wrap">
-          <Link className="btn" to={`${showTo}/season/${ep.season}`}>Back to {seasonName(ep.season).toLowerCase()}</Link>
+          {i.cuts.length > 0 ? (
+            <Link className="btn" to={`/cuts/${enc(i.cuts[0].id)}/edit`}
+              title={`Edit this episode's place in “${i.cuts[0].title}”`}>Open in editor</Link>
+          ) : (
+            <Link className="btn" to={`${showTo}/season/${ep.season}`}>Back to {seasonName(ep.season).toLowerCase()}</Link>
+          )}
           <button type="button" className="btn" disabled={busy || !userTrims.length} onClick={resetAll}
             title="Forget your edits to the trims of this episode">Reset to detected</button>
         </div>

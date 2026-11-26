@@ -1,13 +1,13 @@
-import { useState } from 'react';
 import { Link, useParams } from 'react-router';
-import { api } from '../lib/api.js';
-import { useLoad } from '../lib/hooks.js';
 import { ErrorBox, Loading } from '../components/ui.jsx';
-import { Crumbs, KV, Section, hm } from '../components/kit.jsx';
-import { TimelineTile } from './Discover.jsx';
-import { FilmTile } from './Collection.jsx';
+import { ArtPoster, Crumbs, KV, PlainPoster, Section, enc, hm } from '../components/kit.jsx';
+import { SuggestionTile, TimelineTile } from './Discover.jsx';
+import { FilmTile, ShowTile } from './Collection.jsx';
 import { movieTag } from './LibraryPage.jsx';
-import { TemplateDialog } from '../components/TemplateDialog.jsx';
+import { newCutTo } from './NewCut.jsx';
+import { useApi } from '../lib/store.js';
+import { useAct, useFrom, usePageTitle } from '../lib/hooks.js';
+import { openInPlex } from '../lib/api.js';
 
 const CODECS = {
   hevc: 'HEVC', h264: 'H.264', av1: 'AV1', vp9: 'VP9', mpeg2video: 'MPEG-2', mpeg4: 'MPEG-4',
@@ -45,6 +45,25 @@ function subsLine(tracks) {
   return tracks.map((t) => `${lang(t.language)}${t.forced ? ' (forced)' : ''}`).join(' · ');
 }
 
+function Cast({ fkey }) {
+  const { data, error } = useApi(`/scenes/cast?key=${encodeURIComponent(fkey)}`, { quiet: true });
+  const cast = data?.cast || [];
+  if (error || !cast.length) return null;
+  return (
+    <Section id="m-cast" title="Cast" count={cast.length}>
+      <div className="cast-shelf">
+        {cast.slice(0, 40).map((c) => (
+          <div key={`${c.name}-${c.character}`} className="cast-card">
+            {c.photo ? <img src={c.photo} alt="" loading="lazy" /> : <span className="cast-noface">{c.name.slice(0, 1)}</span>}
+            <span className="cast-name">{c.name}</span>
+            {c.character && <span className="cast-role">{c.character}</span>}
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function Health({ findings }) {
   const seen = new Set();
   const bad = findings.filter((f) => (f.severity === 'error' || f.severity === 'warn')
@@ -64,10 +83,15 @@ function Health({ findings }) {
 
 export function MoviePage() {
   const { key } = useParams();
-  const [tpl, setTpl] = useState(false);
-  const { data: m, error, loading, reload } = useLoad(() => api(`/library/movies/${encodeURIComponent(key)}`), [key]);
+  const from = useFrom();
+  const { act, busy } = useAct();
+  const settings = useApi('/settings', { quiet: true });
+  const plex = Boolean(settings.data?.library?.plex?.url);
+  const { data: m, error, loading, reload } = useApi(`/library/movies/${encodeURIComponent(key)}`);
+  const sugg = useApi('/suggestions', { quiet: true });
+  usePageTitle(m?.title);
 
-  if (error && !m) return <div className="page"><Crumbs items={[['Library', '/library'], ['Movies', '/library'], [key]]} /><ErrorBox error={error} onRetry={reload} /></div>;
+  if (error && !m) return <div className="page"><Crumbs items={[['Library', '/library'], ['Movies', '/library#movies-h'], [key]]} /><ErrorBox error={error} onRetry={reload} /></div>;
   if (loading || !m) return <div className="page"><Loading what="Reading the file" /></div>;
 
   const p = m.probe;
@@ -78,6 +102,14 @@ export function MoviePage() {
     p && ['Video', videoLine(p.video)],
     p && ['Audio', audioLine(p.audio_tracks)],
     p && subs.length > 0 && ['Subtitles', subsLine(subs)],
+    m.source_for?.length > 0 && ['Used by', <span key="u">This copy is the source for {m.source_for.join(', ')}</span>],
+    m.other_versions?.length > 0 && ['Other versions', (
+      <span key="v" className="row wrap" style={{ gap: 10 }}>
+        {m.other_versions.map((v) => (
+          <Link key={v.key} to={`/movies/${enc(v.key)}`}>{v.edition || 'Another copy'}{v.on_disk ? '' : ' (not on disk)'}</Link>
+        ))}
+      </span>
+    )],
     ['File', m.file
       ? <span className="mono" style={{ fontSize: 12, overflowWrap: 'anywhere' }}>{m.file}</span>
       : <span className="c-warn">No file on disk</span>],
@@ -86,14 +118,19 @@ export function MoviePage() {
       : <Health findings={m.findings} />],
   ];
 
+  // suggestions that use this film and are not installed yet
+  const installed = new Set(m.cuts.map((c) => c.title));
+  const ideas = (sugg.data?.suggestions || []).filter((s) => s.keys?.includes(m.key) && !installed.has(s.title));
+  const shelf = m.cuts.length + ideas.length;
+
   return (
     <div className="page" style={{ gap: 30 }}>
-      <Crumbs items={[['Library', '/library'], ['Movies', '/library'], [m.title]]} />
+      <Crumbs items={[['Library', '/library'], ['Movies', '/library#movies-h'], [m.title]]} />
 
       <div className="hero" style={{ gap: 28 }}>
-        <div className="pst pst-plain" style={{ width: 200, flex: 'none' }}>
-          <span className="ptag">{movieTag(m)}</span>
-          <span className="ttl-main" style={{ fontSize: 22 }}>{m.title}</span>
+        <div style={{ width: 200, flex: 'none' }} title={movieTag(m)}>
+          {/* the film's own poster; no text drawn on the art */}
+          <ArtPoster keys={m.art ? [m.art] : []} fallback={<PlainPoster title={m.title} bare />} />
         </div>
         <div className="hero-body">
           <div className="stack" style={{ gap: 6 }}>
@@ -102,23 +139,40 @@ export function MoviePage() {
           </div>
           <KV rows={rows} />
           <div className="row wrap">
-            <button type="button" className="btn" onClick={() => setTpl(true)}>New cut with this film</button>
+            {plex && m.on_disk && (
+              <button type="button" className="btn btn-primary" disabled={busy}
+                onClick={() => act(() => openInPlex(`/movies/${enc(m.key)}/plex`))}>Play in Plex</button>
+            )}
+            <Link className="btn" to={newCutTo({ movies: [m.key], template: 'watch-order' })} state={from}>New cut with this film</Link>
+            <Link className="btn" to={`/movies/${enc(m.key)}/scenes`}>Scenes and tags</Link>
           </div>
-          {tpl && <TemplateDialog movies={[m.key]} template="watch-order" onClose={() => setTpl(false)} />}
         </div>
       </div>
 
-      {m.cuts.length > 0 && (
-        <Section id="m-cuts" title="Cuts and playlists with this film" count={m.cuts.length}>
+      <Cast fkey={m.key} />
+
+      {shelf > 0 && (
+        <Section id="m-cuts" title="Cuts and playlists with this film" count={shelf}>
           <div className="shelf">
             {m.cuts.map((c) => <TimelineTile key={c.id} c={c} />)}
+            {ideas.map((s) => <SuggestionTile key={s.id} s={s} />)}
           </div>
         </Section>
       )}
 
+
+      {(() => {
+        const shows = [...new Map(m.collection_films.flatMap((c) => c.shows || []).map((s) => [s.key, s])).values()];
+        return shows.length > 0 && (
+          <Section id="m-also" title="Also in your library" count={shows.length}>
+            <div className="shelf">{shows.map((s) => <ShowTile key={s.key} s={s} />)}</div>
+          </Section>
+        );
+      })()}
+
       {m.collection_films.map((c, i) => (
         <Section key={c.name} id={`m-coll-${i}`} title={`In the collection: ${c.name}`} count={c.films.length}
-          end={<Link to={`/collections/${encodeURIComponent(c.name)}`} className="tiny">Open collection</Link>}>
+          end={<Link to={`/collections/${encodeURIComponent(c.id || c.name)}`} className="tiny">Open collection</Link>}>
           <div className="shelf">
             {c.films.map((f, j) => <FilmTile key={f.key} m={f} tag={`${c.name} · ${j + 1}`} />)}
           </div>

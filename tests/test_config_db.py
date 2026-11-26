@@ -150,3 +150,95 @@ def test_settings_api_env_round_trip(tmp_path, clean_env):
     text = p.read_text()
     assert "from-env" not in text and "plex-env" not in text and "from-file" in text
     assert "7001" in text
+
+
+def test_save_is_atomic_and_keeps_a_backup(tmp_path):
+    from fanscut.config import Config, load, save
+
+    p = tmp_path / "config.yaml"
+    c = Config()
+    save(c, p)
+    c.server.port = 7000
+    save(c, p)
+    assert (tmp_path / "config.yaml.bak").is_file()
+    assert "port: 6464" in (tmp_path / "config.yaml.bak").read_text()
+    assert load(p).server.port == 7000
+    assert not list(tmp_path.glob(".config.yaml.*.tmp"))
+
+
+def test_config_migrations_run_and_back_up(tmp_path, monkeypatch):
+    from fanscut import config
+
+    def rename_port(raw):
+        if "listen" in raw.get("server", {}):
+            raw["server"]["port"] = raw["server"].pop("listen")
+        return raw
+
+    monkeypatch.setattr(config, "CONFIG_MIGRATIONS", [config._m1, rename_port])
+    monkeypatch.setattr(config, "CONFIG_VERSION", 2)
+    p = tmp_path / "config.yaml"
+    p.write_text("config_version: 1\nserver:\n  listen: 7100\n", encoding="utf-8")
+    assert config.load(p).server.port == 7100
+    assert (tmp_path / "config.yaml.pre-migrate.bak").read_text().count("listen") == 1
+    assert "config_version: 2" in p.read_text()
+    p.write_text("config_version: 9\n", encoding="utf-8")
+    import pytest
+
+    with pytest.raises(config.ConfigError, match="newer"):
+        config.load(p)
+
+
+def test_a_plain_old_config_is_not_rewritten(tmp_path):
+    from fanscut import config
+
+    p = tmp_path / "config.yaml"
+    p.write_text("# mine\nserver:\n  port: 7001\n", encoding="utf-8")
+    assert config.load(p).server.port == 7001
+    assert p.read_text().startswith("# mine")
+
+
+def test_failed_migration_leaves_the_database_untouched(tmp_path, monkeypatch):
+    import sqlite3
+
+    import pytest
+
+    from fanscut import db as db_mod
+
+    path = tmp_path / "f.db"
+    db_mod.Database(path).close()
+    monkeypatch.setattr(db_mod, "MIGRATIONS",
+                        [*db_mod.MIGRATIONS, lambda: "CREATE TABLE half (x);\nNOT SQL;"])
+    with pytest.raises(sqlite3.Error):
+        db_mod.Database(path)
+    con = sqlite3.connect(path)
+    assert con.execute("PRAGMA user_version").fetchone()[0] == len(db_mod.MIGRATIONS) - 1
+    assert not con.execute("SELECT name FROM sqlite_master WHERE name='half'").fetchall()
+
+
+def test_transaction_rolls_back(db):
+    import pytest
+
+    def insert_then_fail():
+        with db.transaction():
+            db.execute("INSERT INTO series_settings (series_key, settings) VALUES ('a', '{}')")
+            raise RuntimeError
+
+    with pytest.raises(RuntimeError):
+        insert_then_fail()
+    assert db.one("SELECT * FROM series_settings") is None
+
+
+def test_deleting_a_timeline_cascades(db):
+    db.execute("INSERT INTO timelines (id, series_key, title, doc, created_at, updated_at)"
+               " VALUES ('t1','sonarr:7','T','{}','x','x')")
+    db.execute("INSERT INTO timeline_syncs VALUES ('t1','{}','x')")
+    db.execute("INSERT INTO installs VALUES ('t1','kaito/cut','main','s','', 'x','x')")
+    db.execute("DELETE FROM timelines WHERE id='t1'")
+    assert db.one("SELECT * FROM timeline_syncs") is None and db.one("SELECT * FROM installs") is None
+
+
+def test_prune_drops_old_finished_jobs(db):
+    db.execute("INSERT INTO jobs (id, kind, status, created_at, updated_at) VALUES"
+               " ('old','k','done','2000-01-01','2000-01-01'), ('q','k','queued','2000-01-01','2000-01-01')")
+    assert db.prune()["jobs"] == 1
+    assert [r["id"] for r in db.query("SELECT id FROM jobs")] == ["q"]

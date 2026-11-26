@@ -2,12 +2,12 @@
 # FansCut local dev helper (Linux / macOS / Git Bash)
 #
 #   ./dev.sh setup          install Python deps (and UI deps if ui/ exists)
-#   ./dev.sh serve          run the app (http://127.0.0.1:6464)
+#   ./dev.sh serve          run the app (http://127.0.0.1:6464); restarts when the code changes
 #   ./dev.sh test           pytest, in parallel
 #   ./dev.sh lint           ruff + mypy
 #   ./dev.sh ui             UI dev server with live reload (http://127.0.0.1:5464,
 #                           proxies /api to a running `./dev.sh serve`)
-#   ./dev.sh validate       everything CI runs: ruff, mypy, pytest, UI lint,
+#   ./dev.sh validate       everything CI runs: ruff, mypy, pytest, UI lint, typecheck,
 #                           UI tests and the UI build
 #   ./dev.sh check          same as validate
 #   ./dev.sh test-web       UI lint and UI tests (Vitest)
@@ -51,7 +51,7 @@ case "$cmd" in
         ui npm ci
         ;;
     serve)
-        exec "$PYTHON" -m fanscut serve "$@"
+        exec "$PYTHON" -m fanscut serve --reload "$@"
         ;;
     test)
         exec "$PYTHON" -m pytest -q -n auto "$@"
@@ -70,6 +70,7 @@ case "$cmd" in
         step "pytest" "$PYTHON" -m pytest -q -n auto
         [ -d ui/node_modules ] || step "npm ci" ui npm ci
         step "ui lint" ui npm run lint
+        step "ui typecheck" ui npm run typecheck
         step "ui test" ui npm test
         step "ui build" ui npm run build
         printf '\nall good\n'

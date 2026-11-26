@@ -49,6 +49,7 @@ def test_validates_and_keeps_toggles_and_variants():
     (lambda d: d["toggles"][0].update(default="yes"), "default"),
     (lambda d: d["variants"][0]["toggles"].update(other=True), "unknown toggle"),
     (lambda d: d["variants"].append(dict(d["variants"][0])), "unique id"),
+    (lambda d: d["variants"][0].update(description="x" * 161), "over 160"),
 ])
 def test_bad_toggles_rejected(mut, msg):
     d = copy.deepcopy(TOOK)
@@ -70,6 +71,14 @@ def test_runtime_per_variant():
     rt = {r["id"]: r["runtime"] for r in v["variants"]}
     assert rt == {"": 1400.0, "book": 1060.0, "saga": 1400.0}
     assert all(r["complete"] for r in v["variants"])
+
+
+def test_variant_description_is_optional_and_shown():
+    d = copy.deepcopy(TOOK)
+    d["variants"][1]["description"] = "Opens and closes with The Lord of the Rings"
+    v = toggles.variants_view(recipe.validate(d), available={"M49051", "M120"})
+    desc = {r["id"]: r["description"] for r in v["variants"]}
+    assert desc == {"": "", "book": "", "saga": "Opens and closes with The Lord of the Rings"}
 
 
 def test_variant_blocked_when_film_missing():

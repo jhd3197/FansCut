@@ -1,15 +1,34 @@
-// "New cut from template": pick a template, the films or show, preview the repo files, create.
+// "New cut from template" as a page (/new): pick a template, the films or show, preview
+// the repo files, create. Links can preselect: ?template=watch-order&movie=<key>&series=<key>.
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad } from '../lib/hooks.js';
-import { Dialog, ErrorBox, Loading, Notice } from './ui.jsx';
+import { useAct, useCrumbRoot, usePageTitle } from '../lib/hooks.js';
+import { Crumbs } from '../components/kit.jsx';
+import { ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import { useApi } from '../lib/store.js';
 
-export function TemplateDialog({ onClose, movies: preMovies = [], seriesKey = '', template = '' }) {
+// The address of this page with things preselected.
+export function newCutTo({ movies = [], series = '', template = '' } = {}) {
+  const q = new URLSearchParams();
+  if (template) q.set('template', template);
+  if (series) q.set('series', series);
+  for (const m of movies) q.append('movie', m);
+  const s = q.toString();
+  return s ? `/new?${s}` : '/new';
+}
+
+export function NewCutPage() {
+  const [params] = useSearchParams();
+  const preMovies = params.getAll('movie');
+  const seriesKey = params.get('series') || '';
+  const template = params.get('template') || '';
+  const crumb = useCrumbRoot();
+  usePageTitle('New cut');
   const nav = useNavigate();
-  const tq = useLoad(() => api('/templates'));
-  const mq = useLoad(() => api('/library/movies'));
-  const sq = useLoad(() => api('/library/series'));
+  const tq = useApi('/templates');
+  const mq = useApi('/library/movies');
+  const sq = useApi('/library/series');
   const [tid, setTid] = useState(template || (seriesKey ? 'chronological' : 'trilogy-merge'));
   const [title, setTitle] = useState('');
   const [picked, setPicked] = useState(preMovies);
@@ -19,8 +38,15 @@ export function TemplateDialog({ onClose, movies: preMovies = [], seriesKey = ''
   const [files, setFiles] = useState(null);
   const { act, msg, busy, clear } = useAct();
 
-  if (tq.error) return <Dialog title="New cut from template" onClose={onClose}><ErrorBox error={tq.error} /></Dialog>;
-  if (!tq.data) return <Dialog title="New cut from template" onClose={onClose}><Loading /></Dialog>;
+  const head = (
+    <>
+      <Crumbs items={[crumb.root, ['New cut from template']]} />
+      <div className="page-head"><div><h1>New cut from template</h1>
+        <p className="muted">Start a recipe from a template, then shape it in the editor.</p></div></div>
+    </>
+  );
+  if (tq.error) return <div className="page">{head}<ErrorBox error={tq.error} onRetry={tq.reload} /></div>;
+  if (!tq.data) return <div className="page">{head}<Loading /></div>;
   const t = tq.data.templates.find((x) => x.id === tid);
   const body = {
     title, movies: picked, series_key: series,
@@ -30,7 +56,8 @@ export function TemplateDialog({ onClose, movies: preMovies = [], seriesKey = ''
   const onDisk = (mq.data?.movies || []).filter((m) => m.on_disk);
 
   return (
-    <Dialog title="New cut from template" onClose={onClose} wide>
+    <div className="page" style={{ maxWidth: 860 }}>
+      {head}
       <Notice msg={msg} onClose={clear} />
       <fieldset>
         <legend>Template</legend>
@@ -54,7 +81,7 @@ export function TemplateDialog({ onClose, movies: preMovies = [], seriesKey = ''
               {picked.map((k) => <li key={k}>{onDisk.find((m) => m.key === k)?.title || k}</li>)}
             </ol>
           )}
-          <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 8 }}>
+          <div style={{ maxHeight: 420, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 8 }}>
             {onDisk.map((m) => (
               <label key={m.key} className="check tiny" style={{ padding: '3px 0' }}>
                 <input type="checkbox" checked={picked.includes(m.key)} onChange={() => toggle(m.key)} />
@@ -91,17 +118,17 @@ export function TemplateDialog({ onClose, movies: preMovies = [], seriesKey = ''
       )}
       <div className="row wrap">
         <button className="btn" disabled={busy} onClick={() => act(
-          () => api(`/templates/${tid}/preview`, { method: 'POST', body }),
+          () => api(`/templates/${tid}/preview`, { method: 'POST', read: true, body }),
         ).then((r) => r && setFiles(r.files))}>Preview files</button>
         <button className="btn btn-primary" disabled={busy || (t?.needs === 'movies' ? picked.length === 0 : !series)}
           onClick={() => act(() => api(`/templates/${tid}/create`, { method: 'POST', body }))
             .then((r) => r && nav(`/cuts/${encodeURIComponent(r.id)}`))}>Create cut</button>
-        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <Link className="btn btn-ghost" to={crumb.root[1]}>Cancel</Link>
       </div>
       <p className="dim tiny" style={{ margin: 0 }}>
         Creates README.md, fanscut.json and outline.md in your data folder and opens the new cut.
         The recipe holds timestamps only, never video.
       </p>
-    </Dialog>
+    </div>
   );
 }

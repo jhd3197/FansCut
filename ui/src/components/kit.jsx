@@ -1,5 +1,8 @@
 // Shared building blocks of the FansCut design: posters, tiles, sections, crumbs.
+import { Children, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
+import { artFallback, artSrcSet, artUrl } from '../lib/api.js';
+import { useFrom } from '../lib/hooks.js';
 
 // Poster palettes: [background, shade, accent, title colour]. Picked by a hash of the title,
 // so a cut always gets the same art. No images: the recipe never ships artwork.
@@ -14,6 +17,9 @@ const PALETTES = [
   ['#2A1A10', '#3A2416', '#E8A15A', '#F4E4D2'],
   ['#14182A', '#1E2440', '#7FA8F0', '#E6ECFA'],
 ];
+
+// One colour per source film or show in a cut, in order of first use.
+export const SRC_COLOURS = ['#7FA8F0', '#B9A3F2', '#6CC5CC', '#F2A93B', '#E98CC0', '#3FA37A'];
 
 export function hash(text) {
   let h = 2166136261;
@@ -69,8 +75,17 @@ function Motif({ kind, c }) {
   }
 }
 
-export function Poster({ title, sub, tag, kind = 'supercut', src, wide }) {
+// Poster title face: condensed Oswald for action, sci-fi and anime; Fraunces
+// (the default serif) for fantasy, period and everything else.
+const CONDENSED = /\b(action|adventure|sci-?fi|science fiction|anime|animation|thriller|war|western)\b/i;
+export function posterFace({ genres = [], tag = '' } = {}) {
+  return [...(genres || []), tag].some((g) => CONDENSED.test(g || '')) ? 'condensed' : 'serif';
+}
+
+// bare: art only, no tag or title on it (tiles put the name underneath).
+export function Poster({ title, sub, tag, kind = 'supercut', src, wide, face, genres, bare }) {
   const c = palette(title);
+  const f = face || posterFace({ genres, tag });
   return (
     <div className={`pst${wide ? ' pst-wide' : ''}`} style={{ background: c[0] }}>
       {src ? <img src={src} alt="" /> : (
@@ -79,17 +94,23 @@ export function Poster({ title, sub, tag, kind = 'supercut', src, wide }) {
           {!wide && <Motif kind={kind} c={c} />}
         </svg>
       )}
-      {tag && <span className="ptag" style={{ color: `${c[2]}cc` }}>{tag}</span>}
-      <div className="ttl">
-        <span className="ttl-main" style={{ color: c[3], fontSize: wide ? 20 : undefined }}>{title}</span>
-        {sub && <span className="ttl-sub" style={{ color: c[3] }}>{sub}</span>}
-      </div>
+      {!bare && tag && <span className="ptag" style={{ color: `${c[2]}cc` }}>{tag}</span>}
+      {!bare && (
+        <div className="ttl">
+          <span className={`ttl-main${f === 'condensed' ? ' ttl-condensed' : ''}`} style={{ color: c[3], fontSize: wide ? 20 : undefined }}>{title}</span>
+          {sub && <span className="ttl-sub" style={{ color: c[3] }}>{sub}</span>}
+        </div>
+      )}
     </div>
   );
 }
 
-// A plain poster for media the user owns: no art, just the facts.
-export function PlainPoster({ tag, title }) {
+// A plain poster for media the user owns: no art, just the facts. bare: an
+// empty frame with the initial, for tiles that name the item underneath.
+export function PlainPoster({ tag, title, bare }) {
+  if (bare) {
+    return <div className="pst pst-plain pst-blank" aria-hidden="true"><span>{(title || '?').trim()[0]}</span></div>;
+  }
   return (
     <div className="pst pst-plain">
       <span className="ptag">{tag}</span>
@@ -108,26 +129,31 @@ export function statusText(status) {
   return (STATUS[status] || ['muted', status])[1];
 }
 
-export function CutTile({ to, title, sub, tag, kind, meta, status, note, onClick }) {
+export function CutTile({ to, title, sub, tag, kind, face, genres, meta, status, note, onClick, art, layout, badge }) {
+  const from = useFrom();
   const [cls, label] = STATUS[status] || ['muted', status || ''];
+  const drawn = <Poster title={title} sub={sub} tag={tag} kind={kind} face={face} genres={genres} bare />;
+  // Under the art: the name, then one line with a status dot. A note only when
+  // something needs a look; the full tag and status are in the tooltip.
   const inner = (
     <>
-      <Poster title={title} sub={sub} tag={tag} kind={kind} />
-      <div className="cap">
-        <b>{title}</b>
-        {meta && <span className="meta">{meta}</span>}
-        {(note || label) && <span className={`note ${cls}`}>{note || label}</span>}
+      {art?.length ? <ArtPoster keys={art} layout={layout} fallback={drawn} /> : drawn}
+      <div className="cap" title={[tag, note || label].filter(Boolean).join(' · ')}>
+        <b className="cap-title">{title}</b>
+        {meta && <span className="meta"><i className={`dot ${cls}`} aria-label={label} />{meta}</span>}
+        {status && status !== 'ready' && note && <span className={`note ${cls}`}>{note}</span>}
       </div>
     </>
   );
-  if (to) return <Link className="tile" to={to}>{inner}</Link>;
+  if (to) return <Link className="tile" to={to} state={from}>{inner}</Link>;
   return <button type="button" className="tile tile-btn" onClick={onClick}>{inner}</button>;
 }
 
-export function MediaTile({ to, tag, short, title, year, meta, note, noteClass = 'muted' }) {
+export function MediaTile({ to, tag, short, title, year, meta, note, noteClass = 'muted', art }) {
+  const plain = <PlainPoster tag={tag} title={short || title} bare />;
   return (
-    <Link className="tile" to={to}>
-      <PlainPoster tag={tag} title={short || title} />
+    <Link className="tile" to={to} title={tag}>
+      {art ? <ArtPoster keys={[art]} fallback={plain} /> : plain}
       <div className="cap">
         <span><b>{title}</b>{year ? <span className="muted"> {year}</span> : null}</span>
         {meta && <span className="meta">{meta}</span>}
@@ -153,10 +179,10 @@ export function Section({ title, count, end, children, id }) {
 export function Crumbs({ items }) {
   return (
     <nav className="crumbs" aria-label="Breadcrumb">
-      {items.map(([label, to], i) => (
+      {items.map(([label, to, state], i) => (
         <span key={i} className="row" style={{ gap: 8 }}>
           {i > 0 && <span aria-hidden="true">/</span>}
-          {to ? <Link to={to}>{label}</Link> : <span className="here">{label}</span>}
+          {to ? <Link to={to} state={state}>{label}</Link> : <span className="here">{label}</span>}
         </span>
       ))}
     </nav>
@@ -177,8 +203,8 @@ export function Search({ value, onChange, label = 'Search' }) {
   return (
     <label className="search">
       <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-        <circle cx="7" cy="7" r="5" fill="none" stroke="#9A9EA6" strokeWidth="1.5" />
-        <path d="M11 11l3.5 3.5" stroke="#9A9EA6" strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
       <input aria-label={label} placeholder="Search" value={value} onChange={(e) => onChange(e.target.value)} />
     </label>
@@ -203,3 +229,168 @@ export function hm(minutes) {
 }
 
 export const enc = encodeURIComponent;
+
+// -- real artwork ------------------------------------------------------------------------------
+
+// Poster widths the server resizes to; the browser picks by the tile's width
+// and the screen's pixel density, so 4K screens get sharp art.
+const POSTER_SRCSET = (ref) => artSrcSet(ref, 'poster');
+// Mirrors --tile (clamp(150px, 9vw, 300px)); sizes can't read CSS variables.
+const POSTER_SIZES = '(min-width: 3334px) 300px, (min-width: 1667px) 9vw, 150px';
+
+function useFailed() {
+  const [failed, setFailed] = useState(() => new Set());
+  const fail = useCallback((k) => setFailed((s) => (s.has(k) ? s : new Set(s).add(k))), []);
+  return [failed, fail];
+}
+
+// A CDN image that fails gets one more try from FansCut's own copy (Plex,
+// files), then the drawn fallback. Fades in once loaded.
+function useArtSrc(k, kind, w, onFail) {
+  const [useLocal, setUseLocal] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const fallback = artFallback(k, kind, w);
+  const src = useLocal ? fallback : artUrl(k, kind, w);
+  const onError = () => {
+    if (!useLocal && fallback) setUseLocal(true);
+    else onFail(k);
+  };
+  return { src, local: useLocal, loaded, onLoad: () => setLoaded(true), onError };
+}
+
+function ArtImg({ k, onFail, style, className }) {
+  const a = useArtSrc(k, 'poster', 500, onFail);
+  return (
+    <img className={`${className || ''} art-fade${a.loaded ? ' is-loaded' : ''}`} src={a.src}
+      srcSet={a.local ? undefined : POSTER_SRCSET(k)} sizes={POSTER_SIZES}
+      alt="" loading="lazy" decoding="async" onLoad={a.onLoad} onError={a.onError} style={style} />
+  );
+}
+
+// A poster from the library's own art. One key: that poster. Several: a merge
+// shows them as slices side by side, a watch order as a fanned, numbered stack.
+// Falls back to the drawn Poster when no art loads.
+export function ArtPoster({ keys = [], layout = 'single', fallback }) {
+  const [failed, fail] = useFailed();
+  const ok = keys.filter((k) => !failed.has(k)).slice(0, layout === 'stack' ? 3 : 4);
+  if (!ok.length) return fallback;
+  let body;
+  if (layout === 'split' && ok.length > 1) {
+    // whole posters in a 2-column collage (2:3 cells fit a 2:3 tile), over a blur of the first
+    body = (
+      <div className="art-grid" data-n={ok.length}>
+        <img className="art-blur" src={artUrl(ok[0], 'poster', 300)} alt="" aria-hidden="true" loading="lazy" decoding="async" />
+        {ok.map((k) => <div key={k} className="art-cell"><ArtImg k={k} onFail={fail} /></div>)}
+      </div>
+    );
+  } else if (layout === 'stack' && ok.length > 1) {
+    body = (
+      <div className="art-stack" style={{ '--n': ok.length }}>
+        {ok.map((k, i) => (
+          <div key={k} className="art-card" style={{ '--i': i }}>
+            <ArtImg k={k} onFail={fail} />
+          </div>
+        ))}
+      </div>
+    );
+  } else {
+    body = <ArtImg className="art-one" k={ok[0]} onFail={fail} />;
+  }
+  return (
+    <div className={`pst pst-art pst-art-${layout}`}>
+      {body}
+    </div>
+  );
+}
+
+// A backdrop with the name over it, for collections (Jellyseerr's genre cards).
+export function Backdrop({ k, name, children }) {
+  const [failed, setFailed] = useState(false);
+  const [bg] = palette(name);
+  const a = useArtSrc(k, 'backdrop', 800, () => setFailed(true));
+  return (
+    <div className="bdrop" style={{ background: bg }}>
+      {k && !failed && (
+        <img className={`art-fade${a.loaded ? ' is-loaded' : ''}`} src={a.src}
+          srcSet={a.local ? undefined : artSrcSet(k, 'backdrop')}
+          sizes="(min-width: 3334px) 570px, (min-width: 1667px) 17vw, 285px" alt="" loading="lazy" decoding="async"
+          onLoad={a.onLoad} onError={a.onError} />
+      )}
+      <span className="bdrop-shade" style={{ '--tint': bg }} />
+      <span className="bdrop-name">{name}</span>
+      {children}
+    </div>
+  );
+}
+
+// A row of tiles that pages left and right with buttons (no scrollbar), or
+// opens into a full grid with "See all".
+// Tiles render a batch at a time: a library of 1,400 films must not mount 1,400
+// posters at once. More render as the end of the row (or grid) comes into view.
+const BATCH = 40;
+
+function useWindowed(children, rootRef, horizontal) {
+  const items = Children.toArray(children);
+  const [limit, setLimit] = useState(BATCH);
+  const sentinel = useRef(null);
+  const more = items.length > limit;
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!more || !el || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver((es) => {
+      if (es.some((e) => e.isIntersecting)) setLimit((n) => n + BATCH);
+    }, { root: horizontal ? rootRef.current : null, rootMargin: '600px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [more, horizontal, rootRef, limit]);
+  const shown = items.slice(0, limit);
+  if (more) shown.push(<span key="__more" ref={sentinel} className="shelf-sentinel" aria-hidden="true" />);
+  return shown;
+}
+
+export function Shelf({ title, count, id, children, wide, actions }) {
+  const ref = useRef(null);
+  const [edges, setEdges] = useState({ start: true, end: true });
+  const [all, setAll] = useState(false);
+  const tiles = useWindowed(children, ref, !all);
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    setEdges({ start: el.scrollLeft <= 2, end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 2 });
+  }, []);
+  useEffect(() => {
+    measure();
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measure, all, children]);
+  const page = (dir) => ref.current?.scrollBy({ left: dir * ref.current.clientWidth * 0.9, behavior: 'smooth' });
+  const scrolls = !(edges.start && edges.end);
+  return (
+    <section className="section" aria-labelledby={id}>
+      <div className="section-head">
+        <h2 id={id}>{title}</h2>
+        {count != null && <span className="n">{count}</span>}
+        <span className="end row" style={{ gap: 6 }}>
+          {actions}
+          {(scrolls || all) && (
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setAll((a) => !a)}>
+              {all ? 'Show less' : 'See all'}
+            </button>
+          )}
+          {!all && scrolls && (
+            <>
+              <button type="button" className="shelf-arrow" aria-label={`Back in ${title}`} disabled={edges.start} onClick={() => page(-1)}>‹</button>
+              <button type="button" className="shelf-arrow" aria-label={`More in ${title}`} disabled={edges.end} onClick={() => page(1)}>›</button>
+            </>
+          )}
+        </span>
+      </div>
+      <div ref={ref} className={`${all ? 'grid' : 'shelf'}${wide ? ' shelf-wide' : ''}`} onScroll={all ? undefined : measure}>
+        {tiles}
+      </div>
+    </section>
+  );
+}

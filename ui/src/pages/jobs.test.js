@@ -28,3 +28,26 @@ describe('fmtLeft', () => {
     expect(fmtLeft(70 * 60)).toBe('about 1 h 10 m left');
   });
 });
+
+describe('build phases', () => {
+  it('shows the five phases with the running one detailed', async () => {
+    const { stages } = await import('./Jobs.jsx');
+    const job = { kind: 'timeline_render', status: 'running', phase: { i: 3, n: 5, name: 'Cut and join', detail: 'part 2 of 3 · re-encoded' } };
+    const s = stages(job);
+    expect(s.map((x) => x[1])).toEqual(['Done', 'Done', 'Running', 'Waiting', 'Waiting']);
+    expect(s[2][2]).toBe('part 2 of 3 · re-encoded');
+    expect(stages({ ...job, status: 'done' }).every((x) => x[1] === 'Done')).toBe(true);
+  });
+
+  it('words an estimate', async () => {
+    const { about } = await import('./CutDetail.jsx');
+    expect(about(40)).toBe('about a minute');
+    expect(about(35 * 60)).toBe('about 35 min');
+    expect(about(2 * 3600 + 9 * 60)).toBe('about 2 h 10 min');
+    expect(about(2 * 3600)).toBe('about 2 h');
+    const { gb } = await import('./CutDetail.jsx');
+    expect(gb(30.4e9)).toBe('about 30 GB');
+    expect(gb(812e6)).toBe('about 800 MB');
+    expect(gb(0)).toBe('');
+  });
+});

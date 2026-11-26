@@ -366,6 +366,8 @@ class LibraryChecker:
                     "with {edition-…}"))
             for p in paths:
                 found, edition, info = self.check_file(p, m.title, m.year, m.tmdb_id, deep)
+                for f in found:  # Health links "Inspect tracks" to the movie page
+                    f.setdefault("ref", {"kind": "movie", "key": m.key})
                 findings += found
                 k = known.movie(m.tmdb_id, m.title, m.year)
                 if info is not None:
@@ -419,7 +421,9 @@ class LibraryChecker:
         for s in series:
             if needle and needle not in known.norm(s.title):
                 continue
-            findings += self.check_series(s)
+            for f in self.check_series(s):
+                f.setdefault("ref", {"kind": "series", "key": s.key})
+                findings.append(f)
 
         order = {"error": 0, "warn": 1, "info": 2}
         findings.sort(key=lambda f: (order[f["severity"]], f["title"], f["check"]))
@@ -488,6 +492,7 @@ class LibraryChecker:
                         out.append(finding("missing", "warn", None, s.title,
                                            f"{extra['name']} missing ({', '.join(gone)})",
                                            "add those episodes in Sonarr/Plex"))
+                        out[-1]["items"] = gone
                 elif "season" in extra and not any(e.season == extra["season"] and e.file
                                                    for e in eps):
                     out.append(finding("missing", "info", None, s.title,
@@ -505,6 +510,7 @@ class LibraryChecker:
                                    + (f"; missing {', '.join(gone[:10])}"
                                       + ("…" if len(gone) > 10 else "") if gone else ""),
                                    "add the missing episodes in Sonarr/Plex"))
+                out[-1]["items"] = gone  # the whole list; the message stops at 10
             out += self._series_languages(s.title, eps, k["lang"])
         elif sonarr:
             gone = [e.id for e in eps if not e.file and e.season > 0]
@@ -513,6 +519,7 @@ class LibraryChecker:
                                    f"{len(gone)} episode(s) without a file: "
                                    + ", ".join(gone[:10]) + ("…" if len(gone) > 10 else ""),
                                    "search for them in Sonarr"))
+                out[-1]["items"] = gone
         return out
 
 
