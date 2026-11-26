@@ -83,6 +83,16 @@ export function dedupeRows(rows) {
 // A person as the scene lists them: the character, else the actor.
 export const personId = (p) => (typeof p === 'string' ? p : p?.character || p?.name || '').trim();
 
+// A ?person= from another page may name the actor ("Robbie Coltrane"): the id the
+// scenes use for them (their character), or the value as it is.
+export function resolvePerson(rows, person) {
+  if (!person) return '';
+  for (const r of rows) for (const p of r.people || []) {
+    if (typeof p === 'object' && p && (p.name === person || p.character === person)) return personId(p);
+  }
+  return person;
+}
+
 // The most frequent people across rows: [{ id, n }].
 export function topPeople(rows, max = 8) {
   const n = new Map();

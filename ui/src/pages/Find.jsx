@@ -9,7 +9,7 @@ import { useApi } from '../lib/store.js';
 import { toast } from '../lib/toast.js';
 import { fmtTime } from '../lib/time.js';
 import {
-  addPicks, analysed, cutLength, dedupeRows, filmsForCut, inCut, isSure, matchRows, personId, removePicks,
+  addPicks, analysed, cutLength, dedupeRows, filmsForCut, inCut, isSure, matchRows, personId, removePicks, resolvePerson,
   segList, shortTitle, sourceKey, tagCounts, topPeople,
 } from '../lib/picks.js';
 import { enc } from '../components/kit.jsx';
@@ -98,7 +98,7 @@ function FindScenes({ id, cut }) {
   const { doc, change } = cut;
   const [params, setParams] = useSearchParams();
   const tags = params.getAll('tag');
-  const person = params.get('person') || '';
+  const askedPerson = params.get('person') || '';
   const off = useMemo(() => new Set(params.getAll('off')), [params]);
   const sel = params.get('scene') || '';
   const setQ = (fn) => setParams((p) => { const n = new URLSearchParams(p); fn(n); return n; }, { replace: true });
@@ -143,6 +143,7 @@ function FindScenes({ id, cut }) {
   const [analysing, setAnalysing] = useState(false);
 
   const rows = useMemo(() => dedupeRows((rowsQ.data || []).filter((r) => byKey[r.film_key] && shownTags(r).length)), [rowsQ.data, byKey]);
+  const person = resolvePerson(rows, askedPerson);
   const order = useMemo(() => Object.fromEntries(films.map((f, i) => [f.key, i])), [films]);
   const sortRows = (list) => [...list].sort((a, b) => order[a.film_key] - order[b.film_key] || a.start - b.start);
   const found = sortRows(matchRows(rows, { off, tags, person }));
