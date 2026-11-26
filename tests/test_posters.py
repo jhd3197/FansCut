@@ -98,6 +98,9 @@ def test_take_keep_discard_and_build(pc, tmp_path):
     assert take["cost"] == 0.05 and take["tags"] == ["christmas", "snow"]
     assert pc.get(f"/api/timelines/t1/poster/ai/{take['name']}").content[:4] == b"\x89PNG"
 
+    # with nothing chosen yet, the first take is the cut's poster straight away
+    assert st["chosen"] == take["name"]
+    assert pc.get("/api/timelines/t1/poster").content[1:4] == b"PNG"
     st = pc.post(f"/api/timelines/t1/poster/ai/{take['name']}/keep").json()
     assert st["chosen"] == take["name"]
     assert pc.get("/api/timelines/t1/poster").status_code == 200
@@ -152,3 +155,12 @@ def test_a_refusal_draws_from_words(pc):
     assert st["task"]["status"] == "done", st
     images, prompt, _ = FakeDriver.calls[0]
     assert images == [] and "reference images" not in prompt
+
+
+def test_a_later_take_waits_to_be_kept(pc):
+    pc.post("/api/timelines/t1/poster/ai", json={"stills": [{"src": "M671", "t": 20}]})
+    first = _wait(pc)["chosen"]
+    time.sleep(0.01)
+    pc.post("/api/timelines/t1/poster/ai", json={"stills": [{"src": "M671", "t": 20}]})
+    st = _wait(pc)
+    assert len(st["takes"]) == 2 and st["chosen"] == first  # the new one is only offered

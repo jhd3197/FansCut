@@ -323,6 +323,8 @@ class Posters:
                     (folder / old).unlink(missing_ok=True)
                     meta.pop(old, None)
             self._save_meta(tid, meta)
+            if self.chosen(tid) is None:  # the first take is the poster until one is kept
+                self.keep(tid, name)
             self._set(tid, status="done", message="Done", take=name, cost=round(cost, 4))
         except Exception as exc:  # noqa: BLE001 - reported to the page, not raised
             log.exception("AI poster for %s failed", tid)

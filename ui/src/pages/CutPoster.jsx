@@ -92,7 +92,9 @@ export function CutPoster() {
   const crumb = useCrumbRoot();
   const reel = useReel(id, doc);
   const ai = useAiPoster(id);
-  const [view, setView] = useState('');
+  const [picked, setView] = useState('');
+  // with nothing kept yet, the newest take is what the page shows
+  const view = picked || (!ai.data?.chosen && ai.data?.takes?.[0]?.name) || '';
 
   if (tl.error && !tl.data) return <div className="page"><ErrorBox error={tl.error} onRetry={tl.reload} /></div>;
   if (!doc) return <div className="page"><Loading /></div>;
