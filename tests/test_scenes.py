@@ -134,9 +134,9 @@ def test_tag_cleaning():
         st.clean_range(10, 500, duration=100)
 
 
-def test_smart_tags_keep_their_prefix():
-    assert st.norm_tag("fc:No Face") == "fc:no-face"
-    assert st.clean_tags(["fc:close-up", "Snow"]) == ["fc:close-up", "snow"]
+def test_cut_tags_keep_their_prefix():
+    assert st.norm_tag("fc:Filler") == "fc:filler"
+    assert st.clean_tags(["fc:recap", "Snow"]) == ["fc:recap", "snow"]
     with pytest.raises(Exception, match="bad tag"):
         st.norm_tag("fc:")
 
@@ -149,7 +149,10 @@ def test_vocab_ships_with_the_package():
     assert len(vocab.families()) == 9
     assert {t["family"] for t in vocab.content_tags(["mood", "content"])} ==         set(vocab.families()) - {"mood", "content"}
     assert all(vocab.is_smart(t["id"]) for t in vocab.cut_tags())
-    assert vocab.name("fc:no-face") == "No face" and vocab.name("fc:made-up") == "Made up"
+    assert vocab.name("fc:filler") == "Filler" and vocab.name("fc:made-up") == "Made up"
+    signals = {t["id"] for t in vocab.public()["signals"]}
+    assert {"no-face", "dialogue", "long-take"} <= signals  # measured: not tags
+    assert not any(t["id"].removeprefix("fc:") in signals for t in vocab.cut_tags())
     assert vocab.name("great-hall") == "Great hall"
     assert {t["id"] for t in vocab.cut_tags("person")} == {"fc:filler", "fc:spoiler"}
     # every id is a valid stored tag
@@ -294,7 +297,7 @@ def sc(cfg, tmp_path, film_dir, monkeypatch):
 @needs_prompture_video
 def test_scene_api_end_to_end(sc, monkeypatch):
     key = sc.key
-    sc.core.cfg.scenes.smart_tags = False  # measured tags have their own test
+    sc.core.cfg.scenes.signals = False  # signals have their own test
     assert sc.get("/api/scenes/film", params={"key": key}).json()["index"] is None
     assert sc.post("/api/scenes/ai", json={"key": key, "tag": "christmas"}).status_code == 400  # no index
 
@@ -373,15 +376,15 @@ def test_scene_api_end_to_end(sc, monkeypatch):
     assert gone.status_code == 204
 
 
-def test_vocab_api_and_smart_tag_counts(cfg, tmp_path):
+def test_vocab_api_and_cut_tag_counts(cfg, tmp_path):
     with TestClient(create_app(cfg, tmp_path / "config.yaml", start_worker=False)) as c:
         v = c.get("/api/scenes/vocab").json()
         assert v["version"] == 1 and len(v["families"]) == 9
         assert {t["detect"] for t in v["cut_tags"]} == {"auto", "ai", "person"}
         store = c.app.state.core.scenes.store
-        store.add_tag("radarr:1", 671, 10, 40, ["christmas", "fc:no-face"], [], source="auto")
+        store.add_tag("radarr:1", 671, 10, 40, ["christmas", "fc:filler"], [], source="user")
         counts = {t["tag"]: t for t in c.get("/api/scenes/tag-counts").json()["tags"]}
-        assert counts["fc:no-face"]["smart"] and counts["fc:no-face"]["name"] == "No face"
+        assert counts["fc:filler"]["smart"] and counts["fc:filler"]["name"] == "Filler"
         assert not counts["christmas"]["smart"] and counts["christmas"]["family"] == "occasion"
 
 
@@ -444,11 +447,11 @@ def test_face_models_download_once(tmp_path):
     assert len(calls) == 2
 
 
-# -- smart tags (measured) --------------------------------------------------------
-def test_smart_labels_from_numbers():
+# -- signals (measured, never tags) --------------------------------------------------------
+def test_signals_from_numbers():
     import numpy as np
 
-    from fanscut.scenes import smart
+    from fanscut.scenes import signals as smart
 
     shots = [[0, 10], [10, 11], [11, 12], [12, 13], [13, 14], [14, 15], [15, 16], [16, 40]]
     lines = [{"start": 16.0, "end": 19.0, "text": "Happy Christmas."},
@@ -468,40 +471,40 @@ def test_smart_labels_from_numbers():
     loud[0:10] = -70  # silent first 5 s
     loud[50] = -5  # one bang at 25 s
     got = smart.label(doc, samples, loud)
-    assert got["fc:no-face"] == [(0.0, 10.0)]
-    assert got["fc:dark"] == [(0.0, 10.0)] and got["fc:still"] == [(0.0, 10.0)]
-    assert got["fc:group"] == [(10.0, 16.0)]
-    assert got["fc:close-up"] == [(16.0, 40.0)]
-    assert got["fc:long-take"] == [(16.0, 40.0)]
-    assert got["fc:fast-cutting"] and got["fc:fast-cutting"][0][0] <= 11
-    assert got["fc:dialogue"] == [(16.0, 24.0)]  # the cat isn't dialogue
-    assert got["fc:silence"] == [(0.0, 5.0)]
-    assert got["fc:loud"] == [(23.5, 27.0)]
+    assert got["no-face"] == [(0.0, 10.0)]
+    assert got["dark"] == [(0.0, 10.0)] and got["still"] == [(0.0, 10.0)]
+    assert got["group"] == [(10.0, 16.0)]
+    assert got["close-up"] == [(16.0, 40.0)]
+    assert got["long-take"] == [(16.0, 40.0)]
+    assert got["fast-cutting"] and got["fast-cutting"][0][0] <= 11
+    assert got["dialogue"] == [(16.0, 24.0)]  # the cat isn't dialogue
+    assert got["silence"] == [(0.0, 5.0)]
+    assert got["loud"] == [(23.5, 27.0)]
     assert smart.speech("- Me?") and not smart.speech("♪ Hedwig's theme ♪")
 
 
 @needs_ffmpeg
 @needs_prompture_video
-def test_smart_and_label_jobs(sc, monkeypatch):
+def test_signals_and_label_jobs(sc, monkeypatch):
     from fanscut.scenes import faces, label
 
     key = sc.key
     monkeypatch.setattr(faces, "available", lambda: False)  # no face models in tests
     sc.post("/api/scenes/index", json={"key": key})
-    sc.core.worker.run_pending()  # indexing queues the smart pass (smart_tags on)
+    sc.core.worker.run_pending()  # indexing queues the signals pass (signals on)
     sc.core.worker.run_pending()
-    smart_rows = [t for t in sc.get("/api/scenes/tags", params={"key": key}).json()["tags"]
-                  if t["source"] == "auto"]
-    assert smart_rows and all(t["tags"][0].startswith("fc:") for t in smart_rows)
+    sig = sc.get("/api/scenes/signals", params={"key": key}).json()
     # three flat colour shots of 10 s: each barely moves
-    assert {t["tags"][0] for t in smart_rows} == {"fc:still"}
-    # a re-run replaces the last one
-    job = sc.post("/api/scenes/smart", json={"key": key}).json()
+    assert sig["signals"]["still"] and sig["version"] == 1 and sig["measured_at"]
+    # signals are never tags, and an old measured tag row is cleared on the next run
+    assert all(t["source"] != "auto" for t in
+               sc.get("/api/scenes/tags", params={"key": key}).json()["tags"])
+    sc.core.scenes.store.add_tag(key, 671, 1, 5, ["fc:filler"], [], source="auto")
+    job = sc.post("/api/scenes/signals", json={"key": key}).json()
     sc.core.worker.run_pending()
-    assert sc.get(f"/api/jobs/{job['id']}").json()["status"] == "done"
-    again = [t for t in sc.get("/api/scenes/tags", params={"key": key}).json()["tags"]
-             if t["source"] == "auto"]
-    assert len(again) == len(smart_rows)
+    res = sc.get(f"/api/jobs/{job['id']}").json()
+    assert res["status"] == "done" and res["result"]["old_tags_removed"] == 1
+    assert "signals" not in sc.get("/api/scenes/film", params={"key": key}).json()["index"]
 
     assert sc.post("/api/scenes/label", json={"key": key}).status_code == 400  # no model
     sc.core.cfg.ai.model = "ollama/test"

@@ -43,10 +43,16 @@ class KeyBody(BaseModel):
     key: str
 
 
-@router.post("/smart", status_code=202)
-def smart_tags(core: CoreDep, body: KeyBody) -> dict[str, Any]:
-    """Measure FansCut's smart tags (no face, close-up, dialogue, dark...): no AI."""
-    return core.scenes.submit_smart(body.key)
+@router.post("/signals", status_code=202)
+def measure_signals(core: CoreDep, body: KeyBody) -> dict[str, Any]:
+    """Measure the film's signals (faces, shots, brightness, sound): no AI."""
+    return core.scenes.submit_signals(body.key)
+
+
+@router.get("/signals")
+def get_signals(core: CoreDep, key: str) -> dict[str, Any]:
+    """Measured ranges per signal: internal (posters, extending cuts), never tags."""
+    return core.scenes.signals(key)
 
 
 @router.get("/transcript")
@@ -151,7 +157,7 @@ def list_tags(
 
 @router.get("/vocab")
 def vocab_list() -> dict[str, Any]:
-    """The shared tag list: content tags by family and FansCut's smart tags."""
+    """The shared tag list: content tags by family, FansCut's cut tags and the signals."""
     from ..scenes import vocab
 
     return vocab.public()

@@ -96,6 +96,21 @@ class SceneStore:
     def indexed(self) -> set[str]:
         return {r["film_key"] for r in self.db.query("SELECT film_key FROM scene_index")}
 
+    def save_signals(self, film_key: str, doc: dict[str, Any]) -> None:
+        """Signals live in the film's index document (re-indexing measures them again)."""
+        doc = {**doc, "measured_at": _now()}
+        self.db.execute(
+            "UPDATE scene_index SET doc = json_set(doc, '$.signals', json(?)) WHERE film_key = ?",
+            (dumps(doc), film_key),
+        )
+
+    def signals(self, film_key: str) -> dict[str, Any] | None:
+        row = self.db.one(
+            "SELECT json_extract(doc, '$.signals') AS s FROM scene_index WHERE film_key = ?",
+            (film_key,),
+        )
+        return json.loads(row["s"]) if row and row["s"] else None
+
     def scene_counts(self) -> dict[str, int]:
         """Automatic scenes per indexed film, without loading the documents."""
         rows = self.db.query(
@@ -184,43 +199,17 @@ class SceneStore:
         self.tag(tid)
         self.db.execute("DELETE FROM scene_tags WHERE id = ?", (tid,))
 
-    def replace_source(
-        self,
-        film_key: str,
-        tmdb_id: int | None,
-        source: str,
-        rows: list[dict[str, Any]],
-        status: str = "proposed",
-    ) -> int:
-        """Swap every tag range of one film made by *source* for *rows* ([{start, end,
-        tags}]), in one transaction: a re-run replaces the last run."""
-        now = _now()
+    def delete_source(self, film_key: str, source: str) -> int:
+        """Drop every tag range of one film made by *source*."""
         with self.db.transaction():
+            n = self.db.one(
+                "SELECT COUNT(*) AS n FROM scene_tags WHERE film_key = ? AND source = ?",
+                (film_key, source),
+            )
             self.db.execute(
                 "DELETE FROM scene_tags WHERE film_key = ? AND source = ?", (film_key, source)
             )
-            for r in rows:
-                self.db.execute(
-                    "INSERT INTO scene_tags (id, film_key, tmdb_id, start, end, tags, people,"
-                    " summary, source, status, confidence, created_at, updated_at)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        uuid.uuid4().hex[:12],
-                        film_key,
-                        tmdb_id,
-                        r["start"],
-                        r["end"],
-                        dumps(r["tags"]),
-                        dumps([]),
-                        "",
-                        source[:80],
-                        status,
-                        r.get("confidence"),
-                        now,
-                        now,
-                    ),
-                )
-        return len(rows)
+        return int(n["n"]) if n else 0
 
     def tags(
         self, film_keys: list[str] | None = None, tag: str | None = None, status: str | None = None

@@ -246,7 +246,7 @@ def test_prune_drops_old_finished_jobs(db):
 
 def test_scene_marker_poster_defaults():
     cfg = config.Config()
-    assert cfg.scenes.families_off == [] and cfg.scenes.smart_tags is True
+    assert cfg.scenes.families_off == [] and cfg.scenes.signals is True
     assert cfg.scenes.extend == "ambient" and cfg.scenes.custom_tags == []
     assert cfg.markers.check and not cfg.markers.auto_install and not cfg.markers.share
     assert cfg.markers.reviewed_only and not cfg.markers.share_people

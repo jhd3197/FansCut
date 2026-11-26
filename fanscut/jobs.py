@@ -27,7 +27,7 @@ from .errors import JobCancelled, NotFoundError
 log = logging.getLogger("fanscut.jobs")
 
 ACTIVE = ("queued", "running")
-HEAVY = frozenset({"render", "timeline_render", "scene_index", "scene_smart"})
+HEAVY = frozenset({"render", "timeline_render", "scene_index", "scene_signals"})
 LANES = ("heavy", "light")
 
 

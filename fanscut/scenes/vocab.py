@@ -1,7 +1,9 @@
 """The shared tag list (``tags_v1.json``, see docs/markers.md).
 
-Content tags have plain ids (``christmas``); FansCut's own smart tags carry
-``fc:`` (``fc:no-face``). The app shows names only, never the prefix.
+Content tags have plain ids (``christmas``); FansCut's own cut tags carry
+``fc:`` (``fc:filler``). The app shows names only, never the prefix.
+``signals`` are what FansCut measures (faces, shots, brightness, sound): they
+are not tags and are never shown as tags.
 """
 
 from __future__ import annotations
@@ -64,4 +66,5 @@ def public() -> dict[str, Any]:
         "families": data["families"],
         "tags": data["tags"],
         "cut_tags": data["cut_tags"],
+        "signals": data.get("signals", []),
     }

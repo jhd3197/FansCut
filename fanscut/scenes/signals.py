@@ -1,24 +1,28 @@
-"""Measured smart tags (docs/markers.md section 3): no AI, numbers only.
+"""Measured signals (docs/markers.md section 3): no AI, numbers only.
+
+Signals are not tags: nobody reviews them and the app never shows them as
+chips. They sit with the film's index and help pick posters, extend cuts and
+find stretches (a quiet wide shot, the end of a line).
 
 One pass over the picture (one frame a second, small) gives brightness,
 movement and faces; one pass over the sound gives loudness; the index gives
 shots and subtitle lines. From those:
 
 =================  ==================================================
-fc:no-face         no face in any sampled frame of a shot
-fc:close-up        one large face in most frames of a shot
-fc:group           three or more faces in most frames of a shot
-fc:dialogue        subtitle speech (sound descriptions left out)
-fc:fast-cutting    30 or more camera cuts a minute
-fc:long-take       one shot of 20 s or more
-fc:dark            a very dark shot
-fc:still           a shot that barely moves
-fc:fade            black frames at a shot edge
-fc:silence         near silence for 3 s or more
-fc:loud            the loudest peaks of the film
+no-face         no face in any sampled frame of a shot
+close-up        one large face in most frames of a shot
+group           three or more faces in most frames of a shot
+dialogue        subtitle speech (sound descriptions left out)
+fast-cutting    30 or more camera cuts a minute
+long-take       one shot of 20 s or more
+dark            a very dark shot
+still           a shot that barely moves
+fade            black frames at a shot edge
+silence         near silence for 3 s or more
+loud            the loudest peaks of the film
 =================  ==================================================
 
-Neighbouring shots with the same tag join into one range. Ranges are at
+Neighbouring shots with the same signal join into one range. Ranges are at
 least ``MIN_RANGE`` and at most ``MAX_RANGE`` seconds (the marker file's
 limits).
 """
@@ -35,6 +39,7 @@ import numpy as np
 
 from . import index as idx
 
+VERSION = 1
 FPS = 1.0  # frames sampled a second
 WIDTH = 640  # sampled frame width
 RATE = 8000  # audio sample rate for loudness
@@ -58,8 +63,8 @@ DIALOGUE_GAP = 2.5
 DIALOGUE_MIN = 6.0
 
 MEASURED = (
-    "fc:no-face", "fc:close-up", "fc:group", "fc:dialogue", "fc:fast-cutting", "fc:long-take",
-    "fc:dark", "fc:still", "fc:fade", "fc:silence", "fc:loud",
+    "no-face", "close-up", "group", "dialogue", "fast-cutting", "long-take",
+    "dark", "still", "fade", "silence", "loud",
 )  # fmt: skip
 
 _NOT_SPEECH = re.compile(r"^[\s\-]*([\[(].*[\])]|[♪♫#*].*)[\s\-]*$")
@@ -207,7 +212,7 @@ def speech(text: str) -> bool:
 def label(
     doc: dict[str, Any], samples: list[Sample], loud: Any | None = None
 ) -> dict[str, list[tuple[float, float]]]:
-    """Every measured tag's ranges for one film."""
+    """Every signal's ranges for one film."""
     duration = doc.get("duration")
     shots = [(float(a), float(b)) for a, b in doc.get("shots") or []]
     out: dict[str, list[tuple[float, float]]] = {}
@@ -226,15 +231,15 @@ def label(
 
     faced = [s for s in samples if s.faces is not None]
     if faced:
-        out["fc:no-face"] = _runs(shots, mark(lambda ss: all(s.faces == 0 for s in ss)))
-        out["fc:close-up"] = _runs(
+        out["no-face"] = _runs(shots, mark(lambda ss: all(s.faces == 0 for s in ss)))
+        out["close-up"] = _runs(
             shots,
             mark(lambda ss: sum(s.faces == 1 and s.face_h >= CLOSE for s in ss) * 2 > len(ss)),
         )
-        out["fc:group"] = _runs(
+        out["group"] = _runs(
             shots, mark(lambda ss: sum((s.faces or 0) >= 3 for s in ss) * 2 > len(ss))
         )
-    out["fc:dark"] = _runs(shots, mark(lambda ss: float(np.mean([s.luma for s in ss])) < DARK))
+    out["dark"] = _runs(shots, mark(lambda ss: float(np.mean([s.luma for s in ss])) < DARK))
 
     def still(ss: list[Sample]) -> bool | None:
         if len(ss) < 3:
@@ -242,7 +247,7 @@ def label(
         diffs = [float(np.abs(a.thumb - b.thumb).mean()) for a, b in zip(ss, ss[1:], strict=False)]
         return float(np.mean(diffs)) < STILL and all(s.luma >= BLACK for s in ss)
 
-    out["fc:still"] = _runs(shots, [still(ss) if ss else None for ss in per])
+    out["still"] = _runs(shots, [still(ss) if ss else None for ss in per])
 
     fades = []
     edges = sorted({e for shot in shots for e in shot})
@@ -251,9 +256,9 @@ def label(
             near = min(edges, key=lambda e: abs(e - s.t))
             if abs(near - s.t) <= 1.5:
                 fades.append((s.t - 1.5, s.t + 1.5))
-    out["fc:fade"] = _join(fades, 0.5)
+    out["fade"] = _join(fades, 0.5)
 
-    out["fc:long-take"] = [(a, b) for a, b in shots if b - a >= LONG]
+    out["long-take"] = [(a, b) for a, b in shots if b - a >= LONG]
 
     fast = []
     for a, b in shots:
@@ -261,17 +266,17 @@ def label(
         lo, hi = mid - FAST_SPAN / 2, mid + FAST_SPAN / 2
         cuts = sum(1 for e in edges if lo < e < hi)
         fast.append(cuts * 60 / FAST_SPAN >= FAST)
-    out["fc:fast-cutting"] = [r for r in _runs(shots, list(fast)) if r[1] - r[0] >= DIALOGUE_MIN]
+    out["fast-cutting"] = [r for r in _runs(shots, list(fast)) if r[1] - r[0] >= DIALOGUE_MIN]
 
     talk = [(ln.start, ln.end) for ln in idx.lines_of(doc) if speech(ln.text)]
-    out["fc:dialogue"] = [r for r in _join(talk, DIALOGUE_GAP) if r[1] - r[0] >= DIALOGUE_MIN]
+    out["dialogue"] = [r for r in _join(talk, DIALOGUE_GAP) if r[1] - r[0] >= DIALOGUE_MIN]
 
     if loud is not None and len(loud):
-        out["fc:silence"] = _spans(loud < SILENT_DB, STEP, MIN_RANGE)
+        out["silence"] = _spans(loud < SILENT_DB, STEP, MIN_RANGE)
         peak = max(LOUD_DB, float(np.percentile(loud, LOUD_PCT)))
         hits = [
             (i * STEP - 1.5, (i + 1) * STEP + 1.5) for i in np.flatnonzero(loud >= peak).tolist()
         ]
-        out["fc:loud"] = _join(hits, 1.0)
+        out["loud"] = _join(hits, 1.0)
 
     return {tag: _fit(rs, duration) for tag, rs in out.items()}

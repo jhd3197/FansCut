@@ -14,8 +14,9 @@ from . import cast as cast_mod
 from . import faces as faces_mod
 from . import index as idx
 from . import label as label_mod
-from . import smart, tagger
+from . import signals as sig
 from . import store as st
+from . import tagger
 
 if TYPE_CHECKING:
     from ..core import Core
@@ -88,8 +89,9 @@ class SceneService:
     def overview(self, key: str, with_lines: bool = True) -> dict[str, Any]:
         m = self.film(key)
         doc = self.store.index(key)
-        if doc and not with_lines:
-            doc = {k: v for k, v in doc.items() if k != "lines"}
+        if doc:
+            drop = {"signals"} if with_lines else {"signals", "lines"}
+            doc = {k: v for k, v in doc.items() if k not in drop}
         from ..browse import NOT_A_FRANCHISE, _collections_of, collection_ids
 
         ids = collection_ids(self._movies())
@@ -142,9 +144,9 @@ class SceneService:
         self.store.save_index(key, doc)
         with contextlib.suppress(FansCutError):
             self.get_cast(key)
-        if self.core.cfg.scenes.smart_tags:
+        if self.core.cfg.scenes.signals:
             with contextlib.suppress(FansCutError):
-                self.submit_smart(key)
+                self.submit_signals(key)
         return {
             "key": key,
             "shots": len(doc["shots"]),
@@ -153,17 +155,23 @@ class SceneService:
             "subtitles": doc["subtitles"]["kind"],
         }
 
-    # -- smart tags (measured) ----------------------------------------------------
-    def submit_smart(self, key: str) -> dict[str, Any]:
+    # -- signals (measured, never tags) ---------------------------------------------
+    def submit_signals(self, key: str) -> dict[str, Any]:
         m, _ = self._file(key)
         self._index_or_fail(key)
         return self.core.worker.submit(
-            "scene_smart", f"Measure smart tags of {m.title}", {"key": key}
+            "scene_signals", f"Measure signals of {m.title}", {"key": key}
         )
 
-    def job_smart(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+    def signals(self, key: str) -> dict[str, Any]:
+        found = self.store.signals(key)
+        if found is None:
+            raise NotFoundError("this film's signals haven't been measured yet")
+        return {"key": key, **found}
+
+    def job_signals(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
         """Brightness, movement and faces from one frame a second, loudness from the
-        sound, shots and lines from the index -> fc: tags (replacing the last run)."""
+        sound, shots and lines from the index -> signals saved with the index."""
         key = payload["key"]
         m, path = self._file(key)
         doc = self._index_or_fail(key)
@@ -172,13 +180,13 @@ class SceneService:
         with contextlib.suppress(FansCutError):
             engine = self.face_engine()
         w, h = doc.get("width") or 1920, doc.get("height") or 1080
-        width = smart.WIDTH
+        width = sig.WIDTH
         height = max(2, round(width * h / w / 2) * 2)
         total = float(doc.get("duration") or m.duration or 0)
         samples = []
-        for t, img in smart.frames(path, width, height, ffmpeg=ff.binary, cancel=ctx.cancel):
-            luma, thumb, nf, fh = smart.measure(img, engine)
-            samples.append(smart.Sample(t, luma, thumb, nf, fh))
+        for t, img in sig.frames(path, width, height, ffmpeg=ff.binary, cancel=ctx.cancel):
+            luma, thumb, nf, fh = sig.measure(img, engine)
+            samples.append(sig.Sample(t, luma, thumb, nf, fh))
             if total and len(samples) % 30 == 0:
                 ctx.progress(
                     0.85 * min(t / total, 1.0), f"Looking at the picture ({int(t // 60)} min)"
@@ -186,16 +194,24 @@ class SceneService:
         if ctx.cancel.is_set():
             return {"key": key, "cancelled": True}
         ctx.progress(0.87, "Listening")
-        loud = smart.levels(path, ffmpeg=ff.binary)
-        ranges = smart.label(doc, samples, loud)
-        rows = [{"start": a, "end": b, "tags": [tag]} for tag, rs in ranges.items() for a, b in rs]
-        rows.sort(key=lambda r: (r["start"], r["tags"][0]))
-        self.store.replace_source(key, m.tmdb_id, "auto", rows)
+        loud = sig.levels(path, ffmpeg=ff.binary)
+        ranges = sig.label(doc, samples, loud)
+        self.store.save_signals(
+            key,
+            {
+                "version": sig.VERSION,
+                "faces": engine is not None,
+                "signals": {k: [[a, b] for a, b in rs] for k, rs in ranges.items()},
+            },
+        )
+        # measured ranges used to be stored as tags (source "auto"): they go
+        dropped = self.store.delete_source(key, "auto")
         return {
             "key": key,
             "frames": len(samples),
             "faces": engine is not None,
-            "tags": {tag: len(rs) for tag, rs in ranges.items()},
+            "signals": {k: len(rs) for k, rs in ranges.items()},
+            "old_tags_removed": dropped,
         }
 
     # -- looking at the film ------------------------------------------------------

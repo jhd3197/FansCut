@@ -116,7 +116,7 @@ class Core:
         handlers.update({
             "scene_index": self.scenes.job_index,
             "scene_tag": self.scenes.job_ai,
-            "scene_smart": self.scenes.job_smart,
+            "scene_signals": self.scenes.job_signals,
             "scene_label": self.scenes.job_label,
         })
         self.worker = Worker(self.jobs, {k: self._pin(fn) for k, fn in handlers.items()},

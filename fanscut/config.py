@@ -230,7 +230,7 @@ FAMILIES = ("occasion", "weather", "place", "action", "beat", "people", "mood", 
 
 class ScenesCfg(BaseModel):
     families_off: list[str] = Field(default_factory=list)  # tag families left out of analysis
-    smart_tags: bool = True  # measure the fc: tags after a film is indexed
+    signals: bool = True  # measure faces, shots, brightness and sound after indexing
     extend: Literal["none", "ambient", "filler"] = "ambient"  # what may lengthen a cut
     custom_tags: list[str] = Field(default_factory=list)  # local only, never shared
 
