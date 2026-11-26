@@ -30,7 +30,7 @@ def norm_tag(tag: Any) -> str:
         raise FansCutError("tags must be strings")
     raw = tag.strip().lower()
     prefix = SMART if raw.startswith(SMART) else ""
-    t = re.sub(r"[^a-z0-9]+", "-", raw[len(prefix):]).strip("-")
+    t = re.sub(r"[^a-z0-9]+", "-", raw[len(prefix) :]).strip("-")
     if not TAG_RE.match(t):
         raise FansCutError(f"bad tag {tag!r} (letters, digits and dashes, up to 40)")
     return prefix + t
@@ -183,6 +183,44 @@ class SceneStore:
     def delete_tag(self, tid: str) -> None:
         self.tag(tid)
         self.db.execute("DELETE FROM scene_tags WHERE id = ?", (tid,))
+
+    def replace_source(
+        self,
+        film_key: str,
+        tmdb_id: int | None,
+        source: str,
+        rows: list[dict[str, Any]],
+        status: str = "proposed",
+    ) -> int:
+        """Swap every tag range of one film made by *source* for *rows* ([{start, end,
+        tags}]), in one transaction: a re-run replaces the last run."""
+        now = _now()
+        with self.db.transaction():
+            self.db.execute(
+                "DELETE FROM scene_tags WHERE film_key = ? AND source = ?", (film_key, source)
+            )
+            for r in rows:
+                self.db.execute(
+                    "INSERT INTO scene_tags (id, film_key, tmdb_id, start, end, tags, people,"
+                    " summary, source, status, confidence, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        uuid.uuid4().hex[:12],
+                        film_key,
+                        tmdb_id,
+                        r["start"],
+                        r["end"],
+                        dumps(r["tags"]),
+                        dumps([]),
+                        "",
+                        source[:80],
+                        status,
+                        r.get("confidence"),
+                        now,
+                        now,
+                    ),
+                )
+        return len(rows)
 
     def tags(
         self, film_keys: list[str] | None = None, tag: str | None = None, status: str | None = None

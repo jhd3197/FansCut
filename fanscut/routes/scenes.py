@@ -39,6 +39,16 @@ def index_film(core: CoreDep, body: IndexBody) -> dict[str, Any]:
     return core.scenes.submit_index(body.key, body.transcribe)
 
 
+class KeyBody(BaseModel):
+    key: str
+
+
+@router.post("/smart", status_code=202)
+def smart_tags(core: CoreDep, body: KeyBody) -> dict[str, Any]:
+    """Measure FansCut's smart tags (no face, close-up, dialogue, dark...): no AI."""
+    return core.scenes.submit_smart(body.key)
+
+
 @router.get("/transcript")
 def transcript(
     core: CoreDep, key: str, start: float = Query(0, ge=0), end: float | None = Query(None, gt=0)
@@ -174,6 +184,18 @@ class AIBody(BaseModel):
 @router.post("/ai", status_code=202)
 def ai_tag(core: CoreDep, body: AIBody) -> dict[str, Any]:
     return core.scenes.submit_ai(body.key, body.tag, body.description, body.verify, body.sweep)
+
+
+class LabelBody(BaseModel):
+    key: str
+    families: list[str] | None = None  # default: every family not switched off in Settings
+    sweep: bool = False  # also look at stretches with no dialogue
+
+
+@router.post("/label", status_code=202)
+def label(core: CoreDep, body: LabelBody) -> dict[str, Any]:
+    """Tag a film with the whole tag list in one pass (proposals)."""
+    return core.scenes.submit_label(body.key, body.families, body.sweep)
 
 
 @router.get("/collection")

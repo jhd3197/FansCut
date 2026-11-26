@@ -113,7 +113,12 @@ class Core:
         from .scenes.service import SceneService
 
         self.scenes = SceneService(self)
-        handlers.update({"scene_index": self.scenes.job_index, "scene_tag": self.scenes.job_ai})
+        handlers.update({
+            "scene_index": self.scenes.job_index,
+            "scene_tag": self.scenes.job_ai,
+            "scene_smart": self.scenes.job_smart,
+            "scene_label": self.scenes.job_label,
+        })
         self.worker = Worker(self.jobs, {k: self._pin(fn) for k, fn in handlers.items()},
                              on_finish=self._job_finished)
         self._apply_lock = threading.Lock()

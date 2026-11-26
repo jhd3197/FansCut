@@ -13,8 +13,9 @@ from ..errors import FansCutError, NotFoundError
 from . import cast as cast_mod
 from . import faces as faces_mod
 from . import index as idx
+from . import label as label_mod
+from . import smart, tagger
 from . import store as st
-from . import tagger
 
 if TYPE_CHECKING:
     from ..core import Core
@@ -139,12 +140,60 @@ class SceneService:
         self.store.save_index(key, doc)
         with contextlib.suppress(FansCutError):
             self.get_cast(key)
+        if self.core.cfg.scenes.smart_tags:
+            with contextlib.suppress(FansCutError):
+                self.submit_smart(key)
         return {
             "key": key,
             "shots": len(doc["shots"]),
             "scenes": len(doc["scenes"]),
             "lines": len(doc["lines"]),
             "subtitles": doc["subtitles"]["kind"],
+        }
+
+    # -- smart tags (measured) ----------------------------------------------------
+    def submit_smart(self, key: str) -> dict[str, Any]:
+        m, _ = self._file(key)
+        self._index_or_fail(key)
+        return self.core.worker.submit(
+            "scene_smart", f"Measure smart tags of {m.title}", {"key": key}
+        )
+
+    def job_smart(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+        """Brightness, movement and faces from one frame a second, loudness from the
+        sound, shots and lines from the index -> fc: tags (replacing the last run)."""
+        key = payload["key"]
+        m, path = self._file(key)
+        doc = self._index_or_fail(key)
+        ff = self.core.cfg.ffmpeg
+        engine = None
+        with contextlib.suppress(FansCutError):
+            engine = self.face_engine()
+        w, h = doc.get("width") or 1920, doc.get("height") or 1080
+        width = smart.WIDTH
+        height = max(2, round(width * h / w / 2) * 2)
+        total = float(doc.get("duration") or m.duration or 0)
+        samples = []
+        for t, img in smart.frames(path, width, height, ffmpeg=ff.binary, cancel=ctx.cancel):
+            luma, thumb, nf, fh = smart.measure(img, engine)
+            samples.append(smart.Sample(t, luma, thumb, nf, fh))
+            if total and len(samples) % 30 == 0:
+                ctx.progress(
+                    0.85 * min(t / total, 1.0), f"Looking at the picture ({int(t // 60)} min)"
+                )
+        if ctx.cancel.is_set():
+            return {"key": key, "cancelled": True}
+        ctx.progress(0.87, "Listening")
+        loud = smart.levels(path, ffmpeg=ff.binary)
+        ranges = smart.label(doc, samples, loud)
+        rows = [{"start": a, "end": b, "tags": [tag]} for tag, rs in ranges.items() for a, b in rs]
+        rows.sort(key=lambda r: (r["start"], r["tags"][0]))
+        self.store.replace_source(key, m.tmdb_id, "auto", rows)
+        return {
+            "key": key,
+            "frames": len(samples),
+            "faces": engine is not None,
+            "tags": {tag: len(rs) for tag, rs in ranges.items()},
         }
 
     # -- looking at the film ------------------------------------------------------
@@ -508,6 +557,98 @@ class SceneService:
             "candidates": len(cands),
             "proposed": len(made),
             "rejected_by_look": dropped,
+        }
+
+    # -- one-pass labelling ---------------------------------------------------------
+    def submit_label(
+        self, key: str, families: list[str] | None = None, sweep: bool = False
+    ) -> dict[str, Any]:
+        from . import vocab
+
+        m, _ = self._file(key)
+        self._index_or_fail(key)
+        if not self.core.cfg.ai.model:
+            raise FansCutError("set an AI model in Settings first")
+        known = vocab.families()
+        if families is None:
+            off = set(self.core.cfg.scenes.families_off)
+            families = [f for f in known if f not in off]
+        bad = [f for f in families if f not in known]
+        if bad:
+            raise FansCutError(f"unknown tag family: {', '.join(bad)}")
+        if not families:
+            raise FansCutError("pick at least one tag family")
+        return self.core.worker.submit(
+            "scene_label",
+            f"Tag {m.title}",
+            {"key": key, "families": list(dict.fromkeys(families)), "sweep": bool(sweep)},
+        )
+
+    def job_label(self, payload: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+        """Read the dialogue once for every tag, check each stretch on a contact sheet."""
+        from prompture.media.understand import contact_sheet, sample_times
+
+        key = payload["key"]
+        m, path = self._file(key)
+        doc = self._index_or_fail(key)
+        cfg = self.core.cfg.ai
+        cast = self._cast_or_empty(key)
+        title = f"{m.title} ({m.year})" if m.year else m.title
+        tags = label_mod.tag_list(payload["families"])
+
+        def text_progress(p: float, msg: str) -> None:
+            ctx.progress(0.4 * p, msg)
+
+        cands = label_mod.read(cfg, doc, title, tags, cast, ctx.cancel, text_progress)
+        if payload.get("sweep"):
+            cands += [{**c, "tags": [], "why": ""} for c in tagger.sweep_candidates(doc)]
+        cands = label_mod.merge(cands)
+        model = cfg.vision_model or cfg.model
+        made, dropped, counts = [], 0, {}
+        for i, c in enumerate(cands):
+            if ctx.cancel.is_set():
+                break
+            ctx.progress(0.4 + 0.6 * i / max(1, len(cands)), f"Looking {i + 1}/{len(cands)}")
+            cols, rows, tile_h = tagger.sheet_shape(c["end"] - c["start"])
+            times = sample_times(c["start"], c["end"], cols * rows)
+            sheet = contact_sheet(path, times=times, cols=cols, rows=rows, tile_height=tile_h)
+            check = label_mod.look(cfg, sheet, title, c, tags, cast)
+            keep = list(dict.fromkeys(check.tags))[: label_mod.MAX_TAGS]
+            if not keep:
+                dropped += 1
+                continue
+            a, b = tagger.refine(c, check, times)
+            a, b = idx.quiet_start(doc, a), idx.quiet_end(doc, b)
+            if b - a < label_mod.MIN_LEN:
+                dropped += 1
+                continue
+            new = [t for t in keep if not self.store.overlapping(key, a, b, t)]
+            if not new:
+                continue
+            made.append(
+                self.add_tag(
+                    key,
+                    {
+                        "start": a,
+                        "end": b,
+                        "tags": new,
+                        "people": list(dict.fromkeys([*check.people, *c["people"]])),
+                        "summary": check.summary or c["why"],
+                        "confidence": round((c["confidence"] + check.confidence) / 2, 2),
+                        "snap": False,
+                        "status": "proposed",
+                    },
+                    source=f"ai:{model}",
+                )["id"]
+            )
+            for t in new:
+                counts[t] = counts.get(t, 0) + 1
+        return {
+            "key": key,
+            "candidates": len(cands),
+            "proposed": len(made),
+            "rejected_by_look": dropped,
+            "tags": counts,
         }
 
     # -- collections ----------------------------------------------------------------

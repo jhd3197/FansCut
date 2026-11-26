@@ -292,6 +292,7 @@ def sc(cfg, tmp_path, film_dir, monkeypatch):
 @needs_prompture_video
 def test_scene_api_end_to_end(sc, monkeypatch):
     key = sc.key
+    sc.core.cfg.scenes.smart_tags = False  # measured tags have their own test
     assert sc.get("/api/scenes/film", params={"key": key}).json()["index"] is None
     assert sc.post("/api/scenes/ai", json={"key": key, "tag": "christmas"}).status_code == 400  # no index
 
@@ -431,3 +432,95 @@ def test_face_models_download_once(tmp_path):
     assert d.name == "face_detection_yunet_2023mar.onnx" and r.read_bytes() == b"onnx"
     faces.ensure_models(tmp_path, Session())
     assert len(calls) == 2
+
+
+# -- smart tags (measured) --------------------------------------------------------
+def test_smart_labels_from_numbers():
+    import numpy as np
+
+    from fanscut.scenes import smart
+
+    shots = [[0, 10], [10, 11], [11, 12], [12, 13], [13, 14], [14, 15], [15, 16], [16, 40]]
+    lines = [{"start": 16.0, "end": 19.0, "text": "Happy Christmas."},
+             {"start": 20.0, "end": 24.0, "text": "Me?"},
+             {"start": 30.0, "end": 31.0, "text": "[CAT MEOWS]"}]
+    doc = {"duration": 40.0, "shots": shots, "lines": lines}
+    flat = np.zeros((36, 64), np.float32)
+    samples = []
+    for t in range(40):
+        if t < 10:  # a dark, still, empty opening
+            samples.append(smart.Sample(t, 13.0, flat, 0, 0.0))
+        elif t < 16:  # quick shots with a crowd
+            samples.append(smart.Sample(t, 120.0, flat + t * 10, 4, 0.2))
+        else:  # a long close-up
+            samples.append(smart.Sample(t, 120.0, flat + (t % 2) * 40, 1, 0.5))
+    loud = np.full(80, -30.0, np.float32)
+    loud[0:10] = -70  # silent first 5 s
+    loud[50] = -5  # one bang at 25 s
+    got = smart.label(doc, samples, loud)
+    assert got["fc:no-face"] == [(0.0, 10.0)]
+    assert got["fc:dark"] == [(0.0, 10.0)] and got["fc:still"] == [(0.0, 10.0)]
+    assert got["fc:group"] == [(10.0, 16.0)]
+    assert got["fc:close-up"] == [(16.0, 40.0)]
+    assert got["fc:long-take"] == [(16.0, 40.0)]
+    assert got["fc:fast-cutting"] and got["fc:fast-cutting"][0][0] <= 11
+    assert got["fc:dialogue"] == [(16.0, 24.0)]  # the cat isn't dialogue
+    assert got["fc:silence"] == [(0.0, 5.0)]
+    assert got["fc:loud"] == [(23.5, 27.0)]
+    assert smart.speech("- Me?") and not smart.speech("♪ Hedwig's theme ♪")
+
+
+@needs_ffmpeg
+@needs_prompture_video
+def test_smart_and_label_jobs(sc, monkeypatch):
+    from fanscut.scenes import faces, label
+
+    key = sc.key
+    monkeypatch.setattr(faces, "available", lambda: False)  # no face models in tests
+    sc.post("/api/scenes/index", json={"key": key})
+    sc.core.worker.run_pending()  # indexing queues the smart pass (smart_tags on)
+    sc.core.worker.run_pending()
+    smart_rows = [t for t in sc.get("/api/scenes/tags", params={"key": key}).json()["tags"]
+                  if t["source"] == "auto"]
+    assert smart_rows and all(t["tags"][0].startswith("fc:") for t in smart_rows)
+    # three flat colour shots of 10 s: each barely moves
+    assert {t["tags"][0] for t in smart_rows} == {"fc:still"}
+    # a re-run replaces the last one
+    job = sc.post("/api/scenes/smart", json={"key": key}).json()
+    sc.core.worker.run_pending()
+    assert sc.get(f"/api/jobs/{job['id']}").json()["status"] == "done"
+    again = [t for t in sc.get("/api/scenes/tags", params={"key": key}).json()["tags"]
+             if t["source"] == "auto"]
+    assert len(again) == len(smart_rows)
+
+    assert sc.post("/api/scenes/label", json={"key": key}).status_code == 400  # no model
+    sc.core.cfg.ai.model = "ollama/test"
+    assert sc.post("/api/scenes/label", json={"key": key, "families": ["nope"]}).status_code == 400
+
+    def fake(cfg_, schema, system, prompt, images=None, **kw):
+        if schema.__name__ == "Moments":
+            assert "christmas:" in prompt and "gore:" not in prompt  # content family off
+            return schema(moments=[{"window": 0, "start": "0:01", "end": "0:09",
+                                    "tags": ["christmas", "happy"], "people": ["Harry"],
+                                    "why": "presents", "confidence": 0.8}])
+        assert images and "christmas" in prompt
+        return schema(tags=["christmas", "snow"], first_tile=1, last_tile=6, summary="presents",
+                      people=["Harry"], confidence=0.6)
+
+    monkeypatch.setattr(ai, "ask_json", fake)
+    fams = [f for f in label.vocab.families() if f != "content"]
+    job = sc.post("/api/scenes/label", json={"key": key, "families": fams}).json()
+    sc.core.worker.run_pending()
+    res = sc.get(f"/api/jobs/{job['id']}").json()
+    assert res["status"] == "done", res
+    assert res["result"]["proposed"] == 1 and res["result"]["tags"] == {"christmas": 1, "snow": 1}
+    row = next(t for t in sc.get("/api/scenes/tags", params={"key": key}).json()["tags"]
+               if t["source"] == "ai:ollama/test")
+    assert row["tags"] == ["christmas", "snow"] and row["status"] == "proposed"
+    # the schema refuses ids outside the list
+    moments, _ = label.schemas(["christmas"])
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        moments.model_validate({"moments": [{"window": 0, "start": "0", "end": "1",
+                                             "tags": ["quidditch"]}]})
