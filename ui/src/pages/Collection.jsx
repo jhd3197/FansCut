@@ -15,11 +15,15 @@ function FilmsTable({ data }) {
   const rows = useApi('/scenes/tags', { quiet: true });
   const names = useTagNames();
   const info = new Map((scenes.data?.films || []).map((f) => [f.key, f]));
+  // content tags only: measured smart tags (fc:) would swamp both columns
   const tagsOf = new Map();
+  const taggedOf = new Map();
   for (const r of rows.data?.tags || []) {
-    if (r.status === 'rejected') continue;
+    const content = (r.tags || []).filter((t) => !t.startsWith('fc:'));
+    if (r.status === 'rejected' || !content.length) continue;
     if (!tagsOf.has(r.film_key)) tagsOf.set(r.film_key, new Set());
-    for (const t of r.tags || []) tagsOf.get(r.film_key).add(t);
+    for (const t of content) tagsOf.get(r.film_key).add(t);
+    taggedOf.set(r.film_key, (taggedOf.get(r.film_key) || 0) + 1);
   }
   const cuts = (data.cuts || []).filter((c) => c.kind !== 'playlist');
   const dash = <span className="muted">—</span>;
@@ -30,7 +34,7 @@ function FilmsTable({ data }) {
         <tbody>
           {data.films.map((m) => {
             const f = info.get(m.key);
-            const tagged = f?.tags ? f.tags.accepted + f.tags.proposed : null;
+            const tagged = rows.data ? taggedOf.get(m.key) || 0 : null;
             const tags = [...(tagsOf.get(m.key) || [])].map((t) => tagName(t, names)).sort();
             const inCuts = m.tmdb_id ? cuts.filter((c) => (c.tmdb_ids || []).includes(m.tmdb_id)).length : 0;
             const secs = f?.duration ?? (m.minutes != null ? m.minutes * 60 : null);
