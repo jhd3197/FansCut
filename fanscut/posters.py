@@ -317,8 +317,12 @@ class Posters:
             res = None
             if images:
                 try:
+                    # OpenAI's driver takes several images; Prompture's base class
+                    # still types `image` as one. Drop the ignore once it's widened.
                     res = drv.edit_image(
-                        images, prompt_for(title, franchise, tags, with_title), opts
+                        images,  # type: ignore[arg-type, unused-ignore]
+                        prompt_for(title, franchise, tags, with_title),
+                        opts,
                     )
                 except Exception as exc:  # noqa: BLE001 - a refusal falls back to words only
                     if "moderation" not in str(exc) and "safety" not in str(exc):
