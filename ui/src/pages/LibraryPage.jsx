@@ -82,6 +82,7 @@ export function LibraryPage() {
       <div className="toolbar toolbar-end">
         <div className="row wrap">
           <Search value={q} onChange={setQ} label="Search library" />
+          <Link className="btn" to="/library/tags">Tags</Link>
           <button className="btn" type="button" onClick={rescan} disabled={busy}>{busy ? 'Rescanning…' : 'Rescan'}</button>
         </div>
       </div>

@@ -5,10 +5,11 @@ import { SuggestionTile, TimelineTile } from './Discover.jsx';
 import { FilmTile, ShowTile } from './Collection.jsx';
 import { movieTag } from './LibraryPage.jsx';
 import { newCutTo } from './NewCut.jsx';
+import { castTo } from './CutDetail.jsx';
 import { useApi } from '../lib/store.js';
 import { useAct, useFrom, usePageTitle } from '../lib/hooks.js';
 import { openInPlex } from '../lib/api.js';
-import { tagName, useTagNames } from './Sets.jsx';
+import { TagChip, isCutTag, tagName, useTagNames } from '../components/TagChip.jsx';
 
 const CODECS = {
   hevc: 'HEVC', h264: 'H.264', av1: 'AV1', vp9: 'VP9', mpeg2video: 'MPEG-2', mpeg4: 'MPEG-4',
@@ -55,25 +56,26 @@ function Cast({ fkey }) {
       end={<Link to={`/movies/${enc(fkey)}/cast`} className="tiny">All {cast.length}</Link>}>
       <div className="cast-shelf">
         {cast.slice(0, 8).map((c) => (
-          <div key={`${c.name}-${c.character}`} className="cast-card">
+          <Link key={`${c.name}-${c.character}`} className="cast-card" to={castTo(fkey, c.name)} style={{ color: 'var(--text)', textDecoration: 'none' }}>
             {c.photo ? <img src={c.photo} alt="" loading="lazy" /> : <span className="cast-noface">{c.name.slice(0, 1)}</span>}
             <span className="cast-name">{c.name}</span>
             {c.character && <span className="cast-role">{c.character}</span>}
-          </div>
+          </Link>
         ))}
       </div>
     </Section>
   );
 }
 
-// The film's tags (non-rejected ranges), by name, each opening its set.
+// The film's content tags (non-rejected ranges), by name, each opening its library tag page.
+// Cut tags and measured fc: ones are left out.
 function Tags({ fkey }) {
   const { data } = useApi(`/scenes/tags?${new URLSearchParams({ key: fkey })}`, { quiet: true });
   const names = useTagNames();
   const counts = new Map();
   for (const r of data?.tags || []) {
     if (r.status === 'rejected') continue;
-    for (const t of r.tags || []) counts.set(t, (counts.get(t) || 0) + 1);
+    for (const t of r.tags || []) if (!String(t).startsWith('fc:') && !isCutTag(t)) counts.set(t, (counts.get(t) || 0) + 1);
   }
   if (!counts.size) return null;
   const list = [...counts].map(([tag, n]) => ({ tag, n, name: tagName(tag, names) }))
@@ -81,9 +83,7 @@ function Tags({ fkey }) {
   return (
     <Section id="m-tags" title="Tags" count={list.length}>
       <div className="tag-links">
-        {list.map((x) => (
-          <Link key={x.tag} to={`/sets/${enc(x.tag)}`}>{x.name}<span className="n">{x.n}</span></Link>
-        ))}
+        {list.map((x) => <TagChip key={x.tag} tag={x.tag} names={names} count={x.n} />)}
       </div>
     </Section>
   );

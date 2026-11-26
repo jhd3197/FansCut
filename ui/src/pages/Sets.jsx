@@ -7,27 +7,14 @@ import { useApi } from '../lib/store.js';
 import { fmtTime } from '../lib/time.js';
 import { Empty, ErrorBox, Loading } from '../components/ui.jsx';
 import { Crumbs, Section, enc } from '../components/kit.jsx';
+import { TagChips, isShownTag, tagName, tagTo, useTagNames } from '../components/TagChip.jsx';
 import { frameUrl } from './Scenes.jsx';
 import './Sets.css';
 
 // -- shared with Movie, MovieCast, Collection and Discover -------------------------------------
 
-// A tag's display name: the vocab name, else the id without "fc:" and with spaces for dashes.
-export function tagName(id, names) {
-  return names?.get(id) || String(id || '').replace(/^fc:/, '').replace(/-/g, ' ');
-}
-
-const isSmart = (id, smart) => Boolean(smart) || String(id).startsWith('fc:');
-
-// id -> name, from the vocab (content and cut tags) and tag-counts.
-export function useTagNames() {
-  const vocab = useApi('/scenes/vocab', { quiet: true });
-  const counts = useApi('/scenes/tag-counts', { quiet: true });
-  const names = new Map();
-  for (const x of [...(vocab.data?.tags || []), ...(vocab.data?.cut_tags || [])]) if (x?.id && x.name) names.set(x.id, x.name);
-  for (const x of counts.data?.tags || []) if (x?.tag && x.name && !names.has(x.tag)) names.set(x.tag, x.name);
-  return names;
-}
+// tag names live with the chip now; kept here so older imports keep working
+export { tagName, useTagNames };
 
 // "2:05" from seconds: hours and minutes.
 export function hmm(sec) {
@@ -49,22 +36,22 @@ function pickStills(moments, n = 4) {
   return out;
 }
 
-// One set per tag with at least one moment that isn't rejected.
+// One set per shown tag (never a measured fc: one) with at least one moment that isn't rejected.
 export function buildSets(counts, rows, names) {
   const byTag = new Map();
   for (const r of rows || []) {
     if (r.status === 'rejected') continue;
-    for (const t of r.tags || []) {
+    for (const t of (r.tags || []).filter(isShownTag)) {
       if (!byTag.has(t)) byTag.set(t, []);
       byTag.get(t).push(r);
     }
   }
-  const list = (counts || []).map((c) => ({ tag: c.tag, smart: isSmart(c.tag, c.smart), live: (c.proposed || 0) + (c.accepted || 0) }));
-  for (const t of byTag.keys()) if (!list.some((x) => x.tag === t)) list.push({ tag: t, smart: isSmart(t), live: byTag.get(t).length });
+  const list = (counts || []).filter((c) => isShownTag(c.tag)).map((c) => ({ tag: c.tag, live: (c.proposed || 0) + (c.accepted || 0) }));
+  for (const t of byTag.keys()) if (!list.some((x) => x.tag === t)) list.push({ tag: t, live: byTag.get(t).length });
   return list.filter((x) => x.live > 0).map((x) => {
     const moments = byTag.get(x.tag) || [];
     return {
-      tag: x.tag, smart: x.smart, name: tagName(x.tag, names), moments,
+      tag: x.tag, smart: false, name: tagName(x.tag, names), moments,
       count: moments.length || x.live,
       films: new Set(moments.map((r) => r.film_key)).size,
       stills: pickStills(moments),
@@ -110,8 +97,7 @@ export function SetCard({ s }) {
 export function Sets() {
   usePageTitle('Sets');
   const { sets, error, reload } = useSets();
-  const content = (sets || []).filter((s) => !s.smart);
-  const smart = (sets || []).filter((s) => s.smart);
+  const content = sets || [];
   return (
     <div className="page page-wide" style={{ gap: 30 }}>
       <div className="toolbar">
@@ -124,11 +110,6 @@ export function Sets() {
         <Empty>No tagged moments yet. Tag scenes on a film's <Link to="/library">Scenes and tags</Link> page.</Empty>
       )}
       {content.length > 0 && <div className="set-grid">{content.map((s) => <SetCard key={s.tag} s={s} />)}</div>}
-      {smart.length > 0 && (
-        <Section id="sets-smart" title="Smart" count={smart.length}>
-          <div className="set-grid">{smart.map((s) => <SetCard key={s.tag} s={s} />)}</div>
-        </Section>
-      )}
     </div>
   );
 }
@@ -195,7 +176,10 @@ export function SetDetail() {
             <li><b>{accepted.length}</b>accepted</li>
             <li><b>{moments.length - accepted.length}</b>proposed</li>
           </ul>
-          <div className="row wrap"><span className="rule-chip"><span>tag is</span><b>{name}</b></span></div>
+          <div className="row wrap">
+            <span className="rule-chip"><span>tag is</span><b>{name}</b></span>
+            <Link className="tiny" to={tagTo(tag)}>All moments with this tag</Link>
+          </div>
         </div>
 
         <Section id="set-export" title="Export">
@@ -232,17 +216,16 @@ export function SetDetail() {
 
         <Section id="set-moments" title="Moments" count={moments.length}>
           <div className="moments">
-            {moments.map((r) => {
-              const others = (r.tags || []).filter((x) => x !== tag).map((x) => tagName(x, names));
-              return (
-                <Link key={r.id} className="moment" to={momentTo(r)}>
+            {moments.map((r) => (
+              <div key={r.id} className="moment">
+                <Link className="moment-link" to={momentTo(r)}>
                   <img src={frameUrl(r.film_key, mid(r), 240)} alt="" loading="lazy" decoding="async" />
                   <b className="tiny">{titleOf(r.film_key)}</b>
                   <span className="mono tiny">{fmtTime(r.start)}–{fmtTime(r.end)}{r.status === 'proposed' ? <span className="muted"> · proposed</span> : null}</span>
-                  {others.length > 0 && <span className="tiny muted" title={others.join(', ')}>{others.join(', ')}</span>}
                 </Link>
-              );
-            })}
+                <TagChips tags={(r.tags || []).filter((x) => x !== tag)} names={names} className="tag-links-sm" />
+              </div>
+            ))}
           </div>
         </Section>
       </>)}

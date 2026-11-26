@@ -7,7 +7,8 @@ import { movieTag, quality } from './LibraryPage.jsx';
 import { SuggestionTile, TimelineTile } from './Discover.jsx';
 import { newCutTo } from './NewCut.jsx';
 import { useApi } from '../lib/store.js';
-import { hmm, tagName, useTagNames } from './Sets.jsx';
+import { hmm } from './Sets.jsx';
+import { TagChip, isShownTag, tagName, useTagNames } from '../components/TagChip.jsx';
 
 // Per film: runtime, automatic scenes, tagged ranges, tag names and how many of your cuts use it.
 function FilmsTable({ data }) {
@@ -15,11 +16,11 @@ function FilmsTable({ data }) {
   const rows = useApi('/scenes/tags', { quiet: true });
   const names = useTagNames();
   const info = new Map((scenes.data?.films || []).map((f) => [f.key, f]));
-  // content tags only: measured smart tags (fc:) would swamp both columns
+  // shown tags only: measured fc: ones are not tags
   const tagsOf = new Map();
   const taggedOf = new Map();
   for (const r of rows.data?.tags || []) {
-    const content = (r.tags || []).filter((t) => !t.startsWith('fc:'));
+    const content = (r.tags || []).filter(isShownTag);
     if (r.status === 'rejected' || !content.length) continue;
     if (!tagsOf.has(r.film_key)) tagsOf.set(r.film_key, new Set());
     for (const t of content) tagsOf.get(r.film_key).add(t);
@@ -35,7 +36,7 @@ function FilmsTable({ data }) {
           {data.films.map((m) => {
             const f = info.get(m.key);
             const tagged = rows.data ? taggedOf.get(m.key) || 0 : null;
-            const tags = [...(tagsOf.get(m.key) || [])].map((t) => tagName(t, names)).sort();
+            const tags = [...(tagsOf.get(m.key) || [])].sort((a, b) => tagName(a, names).localeCompare(tagName(b, names)));
             const inCuts = m.tmdb_id ? cuts.filter((c) => (c.tmdb_ids || []).includes(m.tmdb_id)).length : 0;
             const secs = f?.duration ?? (m.minutes != null ? m.minutes * 60 : null);
             return (
@@ -44,7 +45,12 @@ function FilmsTable({ data }) {
                 <td className="num mono">{secs != null ? hmm(secs) : dash}</td>
                 <td className="num">{f?.scenes ?? dash}</td>
                 <td className="num">{tagged ?? dash}</td>
-                <td>{tags.length ? <span title={tags.join(', ')}>{tags.slice(0, 3).join(', ')}{tags.length > 3 ? <span className="muted"> +{tags.length - 3}</span> : null}</span> : dash}</td>
+                <td>{tags.length ? (
+                  <span className="tag-links-sm" title={tags.map((t) => tagName(t, names)).join(', ')}>
+                    {tags.slice(0, 3).map((t) => <TagChip key={t} tag={t} names={names} />)}
+                    {tags.length > 3 ? <Link className="muted tiny" to={`/movies/${enc(m.key)}#m-tags`}>+{tags.length - 3}</Link> : null}
+                  </span>
+                ) : dash}</td>
                 <td className="num">{inCuts || <span className="muted">0</span>}</td>
               </tr>
             );
