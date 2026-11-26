@@ -11,6 +11,7 @@
   "people",
   "mood",
   "creature",
+  "element",
   "content"
  ],
  "tags": [
@@ -773,6 +774,18 @@
    "name": "Magic",
    "family": "creature",
    "hint": "spells, potions or visible magic (not a duel)"
+  },
+  {
+   "id": "fire",
+   "name": "Fire",
+   "family": "element",
+   "hint": "fire or flames on screen: a fireplace, candles, torches, something burning"
+  },
+  {
+   "id": "water",
+   "name": "Water",
+   "family": "element",
+   "hint": "water matters in the scene: a lake, river, pool, waterfall or flood (not just rain or the open sea)"
   },
   {
    "id": "gore",

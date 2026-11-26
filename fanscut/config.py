@@ -225,7 +225,7 @@ class AICfg(BaseModel):
 
 
 FAMILIES = ("occasion", "weather", "place", "action", "beat", "people", "mood", "creature",
-            "content")
+            "element", "content")
 
 
 class ScenesCfg(BaseModel):

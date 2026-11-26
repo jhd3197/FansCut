@@ -17,7 +17,7 @@ library nobody has analysed, and the AI can build and stretch cuts from them.
 ## Words
 
 - **Content tags**: what is in a stretch (`christmas`, `snow`, `kiss`). A
-  fixed list of 128 in version 1.
+  fixed list of 130 in version 1.
 - **Cut tags**: FansCut's own, about how a stretch can be used in a cut
   (`fc:filler`, `fc:establishing`). Filled by a second pass.
 - **Signals**: what FansCut measures in every film (faces, shots, brightness,
@@ -56,6 +56,7 @@ the closest today), content tags can map to it without renumbering anything.
 | people | 10 | family, friendship, romance, rivalry, mentor, siblings, parent-child, children, crowd, alone |
 | mood | 16 | happy, funny, heartwarming, romantic, sad, tense, scary, creepy, epic, triumphant, peaceful, nostalgic, angry, awkward, mysterious, bittersweet |
 | creature | 8 | animal, dog, cat, horse, monster, ghost, robot, magic |
+| element | 2 | fire, water |
 | content | 4 | gore, nudity, drugs, strong-language |
 
 - `mood` tags are `subjective`: they need more agreement before they enter

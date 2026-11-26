@@ -145,8 +145,12 @@ def test_vocab_ships_with_the_package():
     from fanscut.scenes import vocab
 
     data = vocab.load()
-    assert data["version"] == 1 and len(data["tags"]) == 128
-    assert len(vocab.families()) == 9
+    assert data["version"] == 1 and len(data["tags"]) == 130
+    assert len(vocab.families()) == 10
+    assert {t["id"] for t in vocab.content_tags() if t["family"] == "element"} == {"fire", "water"}
+    from fanscut.config import FAMILIES
+
+    assert list(FAMILIES) == vocab.families()  # Settings validates against the same list
     assert {t["family"] for t in vocab.content_tags(["mood", "content"])} ==         set(vocab.families()) - {"mood", "content"}
     assert all(vocab.is_smart(t["id"]) for t in vocab.cut_tags())
     assert vocab.name("fc:filler") == "Filler" and vocab.name("fc:made-up") == "Made up"
@@ -379,7 +383,7 @@ def test_scene_api_end_to_end(sc, monkeypatch):
 def test_vocab_api_and_cut_tag_counts(cfg, tmp_path):
     with TestClient(create_app(cfg, tmp_path / "config.yaml", start_worker=False)) as c:
         v = c.get("/api/scenes/vocab").json()
-        assert v["version"] == 1 and len(v["families"]) == 9
+        assert v["version"] == 1 and len(v["families"]) == 10
         assert {t["detect"] for t in v["cut_tags"]} == {"auto", "ai", "person"}
         store = c.app.state.core.scenes.store
         store.add_tag("radarr:1", 671, 10, 40, ["christmas", "fc:filler"], [], source="user")
