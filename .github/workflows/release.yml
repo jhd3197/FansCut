@@ -245,6 +245,26 @@ jobs:
           args: --unreleased --tag ${{ steps.version.outputs.tag }} --strip header
         env:
           OUTPUT: ${{ runner.temp }}/NOTES.md
+      # Put download and install help above the notes, and attach a compose
+      # file pinned to this version next to the example config.
+      - name: Add download help and install files
+        if: github.ref_name != 'dev'
+        env:
+          IMAGE: ${{ steps.version.outputs.image }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/assets"
+          mkdir -p "$out"
+          sed -e "s|{IMAGE}|$IMAGE|g" -e "s|{VERSION}|$VERSION|g" \
+              -e "s|{TAG}|$TAG|g" -e "s|{REPO}|$GITHUB_REPOSITORY|g" \
+              .github/release-install.md > "$RUNNER_TEMP/BODY.md"
+          cat "$RUNNER_TEMP/NOTES.md" >> "$RUNNER_TEMP/BODY.md"
+          sed "s|image: ghcr.io/jhd3197/fanscut:latest|image: $IMAGE:$VERSION|" docker-compose.yml > "$out/docker-compose.yml"
+          grep -q "image: $IMAGE:$VERSION" "$out/docker-compose.yml"
+          cp docker-compose.gpu.yml config.docker.example.yaml "$out/"
+          cp "$RUNNER_TEMP/sbom.cdx.json" "$out/"
       # Tag and release only after the image is out. GITHUB_TOKEN tag pushes
       # do not start another workflow.
       - name: Create stable tag and GitHub release
@@ -253,8 +273,8 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          body_path: ${{ runner.temp }}/NOTES.md
-          files: ${{ runner.temp }}/sbom.cdx.json
+          body_path: ${{ runner.temp }}/BODY.md
+          files: ${{ runner.temp }}/assets/*
           make_latest: true
       - name: Verify anonymous access to the published image
         env:
