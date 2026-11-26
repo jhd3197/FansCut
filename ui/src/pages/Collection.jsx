@@ -7,6 +7,49 @@ import { movieTag, quality } from './LibraryPage.jsx';
 import { SuggestionTile, TimelineTile } from './Discover.jsx';
 import { newCutTo } from './NewCut.jsx';
 import { useApi } from '../lib/store.js';
+import { hmm, tagName, useTagNames } from './Sets.jsx';
+
+// Per film: runtime, automatic scenes, tagged ranges, tag names and how many of your cuts use it.
+function FilmsTable({ data }) {
+  const scenes = useApi(`/scenes/films?${new URLSearchParams({ collection: data.id || data.name })}`, { quiet: true });
+  const rows = useApi('/scenes/tags', { quiet: true });
+  const names = useTagNames();
+  const info = new Map((scenes.data?.films || []).map((f) => [f.key, f]));
+  const tagsOf = new Map();
+  for (const r of rows.data?.tags || []) {
+    if (r.status === 'rejected') continue;
+    if (!tagsOf.has(r.film_key)) tagsOf.set(r.film_key, new Set());
+    for (const t of r.tags || []) tagsOf.get(r.film_key).add(t);
+  }
+  const cuts = (data.cuts || []).filter((c) => c.kind !== 'playlist');
+  const dash = <span className="muted">—</span>;
+  return (
+    <div className="scroll-x">
+      <table className="table">
+        <thead><tr><th>Film</th><th className="num">Runtime</th><th className="num">Scenes</th><th className="num">Tagged</th><th>Tags</th><th className="num">In cuts</th></tr></thead>
+        <tbody>
+          {data.films.map((m) => {
+            const f = info.get(m.key);
+            const tagged = f?.tags ? f.tags.accepted + f.tags.proposed : null;
+            const tags = [...(tagsOf.get(m.key) || [])].map((t) => tagName(t, names)).sort();
+            const inCuts = m.tmdb_id ? cuts.filter((c) => (c.tmdb_ids || []).includes(m.tmdb_id)).length : 0;
+            const secs = f?.duration ?? (m.minutes != null ? m.minutes * 60 : null);
+            return (
+              <tr key={m.key}>
+                <td><Link to={`/movies/${enc(m.key)}`}>{m.title}</Link>{m.year ? <span className="muted"> {m.year}</span> : null}</td>
+                <td className="num mono">{secs != null ? hmm(secs) : dash}</td>
+                <td className="num">{f?.scenes ?? dash}</td>
+                <td className="num">{tagged ?? dash}</td>
+                <td>{tags.length ? <span title={tags.join(', ')}>{tags.slice(0, 3).join(', ')}{tags.length > 3 ? <span className="muted"> +{tags.length - 3}</span> : null}</span> : dash}</td>
+                <td className="num">{inCuts || <span className="muted">0</span>}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 // A film on a shelf: its real poster, the facts underneath ("Extended · 1080p").
 // `tag` ("NAME · 3") only goes in the tooltip: no text on the art.
@@ -78,6 +121,10 @@ export function CollectionPage() {
         <div className="shelf">
           {data.films.map((m, i) => <FilmTile key={m.key} m={m} tag={`${data.name} · ${i + 1}`} />)}
         </div>
+      </Section>
+
+      <Section id="films-table-h" title="Scenes and tags">
+        <FilmsTable data={data} />
       </Section>
 
       {shows.length > 0 && (
