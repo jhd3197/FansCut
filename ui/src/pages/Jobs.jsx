@@ -1,11 +1,13 @@
-// Background work: what's running now, what finished, and the files builds left behind.
+// Jobs: what needs you, what is running, what waits, what finished.
+// Rendered files (keep / delete / clean up) sit under More.
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAct, usePoll } from '../lib/hooks.js';
 import { enc } from '../components/kit.jsx';
-import { ConfirmButton, Dialog, Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
+import { Dialog, Empty, ErrorBox, Loading, Notice } from '../components/ui.jsx';
 import { useApi } from '../lib/store.js';
+import './Jobs.css';
 
 const ACTIVE = ['queued', 'running'];
 
@@ -61,21 +63,52 @@ export function stages(job) {
   }
 }
 
-const KIND = { timeline_render: 'Build', timeline_sync: 'Sync', render: 'Render' };
-const jobName = (j) => (KIND[j.kind] ? `${KIND[j.kind]} · ${j.title.replace(/^(Render|Sync) /, '')}` : j.title);
+const KIND = {
+  timeline_render: 'Build', timeline_sync: 'Sync', render: 'Render', detect: 'Find OP/ED', find_similar: 'Search',
+  scene_index: 'Analyse', scene_signals: 'Analyse', scene_label: 'Tag', scene_tag: 'Tag',
+};
+const BUILDS = ['timeline_render', 'render'];
+// The job's subject without the verb the server puts in front ("Render X" -> "X").
+const jobTitle = (j) => j.title.replace(/^(Render|Sync|Index scenes of|Measure signals of|Tag|Search) /, '');
+const jobKind = (j) => KIND[j.kind] || 'Job';
 
-// Where a finished job's result is best looked at.
-export function jobLink(job) {
+// Where a job's result is best looked at: [[to, label], ...], first one first.
+export function jobLinks(job) {
   const p = job.payload || {};
-  if (job.kind === 'timeline_sync' && p.timeline_id) return [`/cuts/${enc(p.timeline_id)}/build`, 'Review'];
-  if (job.kind === 'timeline_render' && p.timeline_id) return [`/cuts/${enc(p.timeline_id)}`, 'Open'];
-  if (job.kind === 'detect' && p.series_key) {
-    return [p.season != null ? `/series/${enc(p.series_key)}/season/${p.season}` : `/series/${enc(p.series_key)}`, 'Open'];
+  if (job.kind === 'timeline_sync' && p.timeline_id) return [[`/cuts/${enc(p.timeline_id)}/build`, 'Review']];
+  if (job.kind === 'timeline_render' && p.timeline_id) return [[`/cuts/${enc(p.timeline_id)}`, 'Open cut']];
+  if (job.kind.startsWith('scene_') && p.key) {
+    return [[`/movies/${enc(p.key)}/scenes`, 'Scenes and tags'], [`/movies/${enc(p.key)}`, 'Open film']];
   }
-  if (job.kind === 'find_similar' && p.series_key && p.episode_id) return [`/series/${enc(p.series_key)}/episode/${enc(p.episode_id)}`, 'Open'];
-  if (p.series_key) return [`/series/${enc(p.series_key)}`, 'Open'];
-  return null;
+  if (job.kind === 'detect' && p.series_key) {
+    return [[p.season != null ? `/series/${enc(p.series_key)}/season/${p.season}` : `/series/${enc(p.series_key)}`, 'Open']];
+  }
+  if (job.kind === 'find_similar' && p.series_key && p.episode_id) return [[`/series/${enc(p.series_key)}/episode/${enc(p.episode_id)}`, 'Open']];
+  if (p.series_key) return [[`/series/${enc(p.series_key)}`, 'Open']];
+  return [];
 }
+export const jobLink = (job) => jobLinks(job)[0] || null;
+
+// The mono line under a running job: kind, where it is, time left.
+export function runningLine(job, left) {
+  const steps = stages(job);
+  const i = steps.findIndex((s) => s[1] === 'Running');
+  const where = job.phase?.i
+    ? [`step ${job.phase.i} of ${job.phase.n || BUILD_PHASES.length}`, job.phase.detail || job.phase.name].filter(Boolean).join(', ')
+    : i >= 0 ? `step ${i + 1} of ${steps.length}, ${steps[i][0].toLowerCase()}` : job.message || 'starting';
+  return [jobKind(job), where, left].filter(Boolean).join(' · ');
+}
+
+const BuildIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2" /><path d="M3 10h18M8 6l-2 4M13 6l-2 4M18 6l-2 4" /></svg>
+);
+const ScanIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4M3 12h18" /></svg>
+);
+const DoneIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+);
+const kindIcon = (j) => (BUILDS.includes(j.kind) ? <BuildIcon /> : <ScanIcon />);
 
 // Seconds left, from the first progress this page saw ({t, p}) to now; null
 // until there's enough to go on (10 s and 2 points of progress).
@@ -109,90 +142,7 @@ function timeLeft(job, now = Date.now()) {
   return fmtLeft(etaSeconds(first, now, p));
 }
 
-function Running({ job, queued, onCancel, busy }) {
-  const pct = Math.round(Math.min(Math.max(job.progress || 0, 0), 1) * 100);
-  const left = timeLeft(job);
-  const steps = stages(job);
-  return (
-    <section aria-label="Running" className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 700 }}>{jobName(job)}</h2>
-          <span className="muted" style={{ fontSize: 13, overflowWrap: 'anywhere' }}>
-            {job.status === 'queued' ? 'Waiting for the job before it' : job.message || 'Starting'}
-          </span>
-        </div>
-        <div className="row">
-          <span className="mono" style={{ fontSize: 14 }}>{pct}%{left && <span className="muted" style={{ fontFamily: 'var(--font)', fontSize: 13 }}> · {left}</span>}</span>
-          <button className="btn" type="button" disabled={busy} onClick={() => onCancel(job)}>Cancel</button>
-        </div>
-      </div>
-      <div role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`${job.title} progress`}
-        style={{ height: 6, borderRadius: 3, background: 'var(--raised)', overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: 'var(--accent)', transition: 'width .3s' }} />
-      </div>
-      {steps.length > 0 && (
-        <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(150px, 100%), 1fr))', gap: 10, fontSize: 13 }}>
-          {steps.map(([name, st, detail]) => (
-            <li key={name} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <span className={st === 'Done' ? 'c-ready' : st === 'Running' ? 'c-accent' : 'muted'}>{st}</span>
-              <span>{name}</span>
-              {detail && <span className="tiny muted" style={{ overflowWrap: 'anywhere' }}>{detail}</span>}
-            </li>
-          ))}
-        </ol>
-      )}
-      {queued.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid var(--raised)', paddingTop: 12 }}>
-          <span className="tiny muted">Up next</span>
-          {queued.map((q) => (
-            <div key={q.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}>
-              <span>{q.title}</span>
-              <button className="btn btn-sm btn-ghost" type="button" disabled={busy} onClick={() => onCancel(q)}>Cancel</button>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function Recent({ jobs, onRemove, busy }) {
-  return (
-    <section aria-labelledby="recent-h" className="section" style={{ gap: 12 }}>
-      <h2 id="recent-h">Recent</h2>
-      {jobs.length === 0 ? <Empty>No finished jobs yet.</Empty> : (
-        <div className="scroll-x" style={{ border: '1px solid var(--line)', borderRadius: 10 }}>
-          <table className="table" style={{ minWidth: 640 }}>
-            <thead><tr><th>Job</th><th>Result</th><th>Finished</th><th /></tr></thead>
-            <tbody>
-              {jobs.map((j) => {
-                const link = j.status === 'done' ? jobLink(j) : null;
-                const result = j.result?.message || j.message || j.status;
-                const cls = j.status === 'failed' ? 'c-danger' : j.status === 'cancelled' ? 'muted' : '';
-                return (
-                  <tr key={j.id}>
-                    <td>{jobName(j)}</td>
-                    <td className={cls} style={{ color: cls ? undefined : 'var(--text2)', overflowWrap: 'anywhere' }}>
-                      {j.status === 'failed' ? `Failed: ${result}` : j.status === 'cancelled' ? 'Cancelled' : result}
-                    </td>
-                    <td className="mono muted" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{when(j.updated_at || j.created_at)}</td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {link && <Link to={link[0]}>{link[1]}</Link>}
-                      <ConfirmButton className="btn btn-sm btn-ghost" disabled={busy} onConfirm={() => onRemove(j)} confirmText="Remove?">Remove</ConfirmButton>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function Renders({ act, busy, version }) {
+function Renders({ act, busy }) {
   const { data, error, reload } = useApi('/renders');
   const [doomed, setDoomed] = useState(null);
   const renders = data?.renders || [];
@@ -260,23 +210,123 @@ export function Jobs() {
   const active = jobs.filter((j) => ACTIVE.includes(j.status));
   usePoll(reload, 2000, active.length > 0);
   const call = (path, method, ok) => act(async () => { await api(path, { method }); await reload(); }, ok);
-  // oldest active first: that's the one the worker is on (or will pick next)
-  const ordered = [...active].reverse();
-  const current = ordered.find((j) => j.status === 'running') || ordered[0];
-  const queued = ordered.filter((j) => j !== current);
-  const done = jobs.filter((j) => !ACTIVE.includes(j.status));
+  // newest first from the API; the queue reads oldest first (the next one the worker takes)
+  const running = jobs.filter((j) => j.status === 'running').reverse();
+  const waiting = jobs.filter((j) => j.status === 'queued').reverse();
+  const failed = jobs.filter((j) => j.status === 'failed');
+  const done = jobs.filter((j) => j.status === 'done' || j.status === 'cancelled');
+  const summary = [`${running.length} running`, `${waiting.length} waiting`,
+    failed.length ? `${failed.length} need${failed.length === 1 ? 's' : ''} you` : null].filter(Boolean).join(' · ');
+  const cancel = (j) => call(`/jobs/${j.id}/cancel`, 'POST', j.status === 'queued' ? `Removed ${jobTitle(j)}` : 'Cancelling');
+  const remove = (j) => call(`/jobs/${j.id}`, 'DELETE');
 
   return (
-    <div className="page" style={{ maxWidth: 1100 }}>
+    <div className="page jobs">
+      <header className="jobs-head">
+        <h1>Jobs</h1>
+        {data && <span className="mono jobs-summary">{summary}</span>}
+        <button type="button" className="btn" disabled title="Not yet">Pause all</button>
+      </header>
       <Notice msg={msg} onClose={clear} />
       <ErrorBox error={error} onRetry={reload} />
-      {loading && <Loading />}
-      {data && !current && (
-        <section aria-label="Running" className="card muted">Nothing running. Builds, syncs and OP/ED detection run here one at a time.</section>
+      {loading && !data && <Loading />}
+
+      {failed.length > 0 && (
+        <section aria-labelledby="jobs-needs">
+          <h2 id="jobs-needs" className="lab jobs-lab is-look">Needs you</h2>
+          <div className="jobs-list">
+            {failed.map((j, i) => (
+              <div key={j.id} className="job is-failed">
+                <span className="job-icon">{kindIcon(j)}</span>
+                <div className="job-body">
+                  <div className="job-title">{jobTitle(j)}</div>
+                  <div className="job-error">{j.message || 'Failed'}</div>
+                  <div className="mono job-sub">{jobKind(j)} · stopped at {Math.round((j.progress || 0) * 100)}% · {when(j.updated_at || j.created_at)}</div>
+                </div>
+                <div className="job-acts">
+                  <button type="button" className={`btn${i === 0 ? ' btn-primary' : ''}`} disabled={busy}
+                    onClick={() => call(`/jobs/${j.id}/retry`, 'POST', `Queued ${jobTitle(j)} again`)}>Retry</button>
+                  <Link className="btn" to="/logs?level=ERROR">Logs</Link>
+                  <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => remove(j)}>Remove</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
-      {current && <Running job={current} queued={queued} busy={busy} onCancel={(j) => call(`/jobs/${j.id}/cancel`, 'POST', 'Cancelling')} />}
-      {data && <Recent jobs={done} busy={busy} onRemove={(j) => call(`/jobs/${j.id}`, 'DELETE')} />}
-      <Renders act={act} busy={busy} version={done.length} />
+
+      <section aria-labelledby="jobs-running">
+        <h2 id="jobs-running" className="lab jobs-lab">Running now</h2>
+        <div className="jobs-list">
+          {running.map((j) => {
+            const pct = Math.round(Math.min(Math.max(j.progress || 0, 0), 1) * 100);
+            const open = jobLink(j);
+            return (
+              <div key={j.id} className="job">
+                <span className="job-icon is-on">{kindIcon(j)}</span>
+                <div className="job-body">
+                  <div className="job-line"><span className="job-title">{jobTitle(j)}</span><span className="mono job-pct">{pct}%</span></div>
+                  <div className="mono job-sub">{runningLine(j, timeLeft(j))}</div>
+                  <div className="job-bar" role="progressbar" aria-label={jobTitle(j)} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+                    <div style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+                <div className="job-acts">
+                  {open && <Link className="btn" to={open[0]}>Open</Link>}
+                  <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => cancel(j)}>Cancel</button>
+                </div>
+              </div>
+            );
+          })}
+          {data && running.length === 0 && <div className="jobs-none">Nothing is running.</div>}
+        </div>
+      </section>
+
+      {waiting.length > 0 && (
+        <section aria-labelledby="jobs-waiting">
+          <h2 id="jobs-waiting" className="jobs-lab"><span className="lab">Waiting</span> <span className="mono jobs-n">{waiting.length}</span></h2>
+          <ol className="jobs-queue">
+            {waiting.map((j, i) => (
+              <li key={j.id}>
+                <span className="mono jobs-n">{i + 1}</span>
+                <span className="job-body">
+                  <span className="job-title">{jobTitle(j)}</span>
+                  <span className="mono job-sub">{jobKind(j)}</span>
+                </span>
+                <button type="button" className="btn btn-sm btn-quiet" disabled={busy} onClick={() => cancel(j)}>Remove</button>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      {done.length > 0 && (
+        <section aria-labelledby="jobs-done">
+          <h2 id="jobs-done" className="lab jobs-lab">Done</h2>
+          <div className="jobs-list">
+            {done.map((j) => (
+              <div key={j.id} className="job">
+                <span className={`job-icon${j.status === 'done' ? ' is-on' : ''}`}>{j.status === 'done' ? <DoneIcon /> : kindIcon(j)}</span>
+                <div className="job-body">
+                  <div className="job-title">{jobTitle(j)}</div>
+                  <div className="mono job-sub">
+                    {[jobKind(j), j.status === 'cancelled' ? 'cancelled' : j.result?.message || j.message, when(j.updated_at || j.created_at)].filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+                <div className="job-acts">
+                  {j.status === 'done' && jobLinks(j).map(([to, label]) => <Link key={to} className="btn" to={to}>{label}</Link>)}
+                  <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => remove(j)}>Remove</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <details className="jobs-more">
+        <summary className="lab">More</summary>
+        <Renders act={act} busy={busy} />
+      </details>
     </div>
   );
 }

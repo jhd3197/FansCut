@@ -63,6 +63,15 @@ def cancel_job(core: CoreDep, job_id: str) -> dict[str, Any]:
     return core.worker.cancel(job_id)
 
 
+@router.post("/jobs/{job_id}/retry", response_model=Job)
+def retry_job(core: CoreDep, job_id: str) -> dict[str, Any]:
+    """Queue a failed or cancelled job again, same payload."""
+    try:
+        return core.worker.retry(job_id)
+    except ValueError as e:
+        raise FansCutError(str(e)) from e
+
+
 @router.delete("/jobs/{job_id}")
 def delete_job(core: CoreDep, job_id: str) -> dict[str, bool]:
     core.jobs.delete(job_id)

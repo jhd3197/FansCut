@@ -200,6 +200,15 @@ class Worker:
             w.set()
         return job
 
+    def retry(self, jid: str) -> dict[str, Any]:
+        """Queue a failed or cancelled job again with the same payload; the old row goes."""
+        job = self.store.get(jid)
+        if job["status"] not in ("failed", "cancelled"):
+            raise ValueError("only a failed or cancelled job can be retried")
+        fresh = self.submit(job["kind"], job["title"], job["payload"])
+        self.store.delete(jid)
+        return fresh
+
     def cancel(self, jid: str) -> dict[str, Any]:
         job = self.store.get(jid)
         if job["status"] == "queued":

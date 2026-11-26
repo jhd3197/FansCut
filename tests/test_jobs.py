@@ -178,3 +178,26 @@ def test_on_finish_called_with_the_finished_job():
     worker.submit("k", "t", {})
     worker.run_pending()
     assert got[0]["status"] == "done"
+
+
+def test_retry_requeues_a_failed_job_and_drops_the_old_row():
+    calls = []
+
+    def flaky(payload, _c):
+        calls.append(payload["x"])
+        if len(calls) == 1:
+            raise RuntimeError("first try fails")
+        return {"message": "ok"}
+
+    store, worker = make({"flaky": flaky})
+    jid = worker.submit("flaky", "Flaky", {"x": 7})["id"]
+    with pytest.raises(ValueError, match="failed or cancelled"):
+        worker.retry(jid)  # still queued
+    worker.run_pending()
+    assert store.get(jid)["status"] == "failed"
+    fresh = worker.retry(jid)
+    assert fresh["id"] != jid and fresh["status"] == "queued" and fresh["payload"] == {"x": 7}
+    with pytest.raises(NotFoundError):
+        store.get(jid)
+    worker.run_pending()
+    assert store.get(fresh["id"])["status"] == "done" and calls == [7, 7]
