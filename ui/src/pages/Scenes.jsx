@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { api } from '../lib/api.js';
-import { useAct, useLoad, usePoll } from '../lib/hooks.js';
+import { useAct, useLoad, usePageTitle, usePoll } from '../lib/hooks.js';
 import { fmtTime } from '../lib/time.js';
 import { Empty, ErrorBox, Loading, Notice, Progress } from '../components/ui.jsx';
 import { Crumbs, enc } from '../components/kit.jsx';
+import {
+  AtPlayhead, ClipVideo, TagLink, clipUrl, q, sceneFrameUrl, sheetUrl, shownTags, tagLabel, useTagNames, visibleRows,
+} from '../components/ScenePlayer.jsx';
 
-const q = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v != null && v !== '')).toString();
-export const frameUrl = (key, t, height = 240) => `/api/scenes/frame?${q({ key, t: t.toFixed(2), height })}`;
-const sheetUrl = (key, start, end, cols = 4, rows = 2) =>
-  `/api/scenes/sheet?${q({ key, start: start.toFixed(2), end: end.toFixed(2), cols, rows, height: 180 })}`;
-const clipUrl = (key, start, end) => `/api/scenes/clip?${q({ key, start: start.toFixed(2), end: end.toFixed(2) })}`;
+export const frameUrl = sceneFrameUrl;
 
 // The camera cut before/after t (for nudging edges).
 export function prevCut(shots, t) {
@@ -60,7 +59,7 @@ function JobLine({ job }) {
 }
 
 // Full-film strip: automatic scenes, tags (by status) and dialogue ticks; click to move the playhead.
-function Strip({ doc, tags, sel, t, onSeek }) {
+function Strip({ doc, tags, sel, t, names, onSeek }) {
   const dur = doc.duration || 1;
   const pct = (x) => `${(x / dur) * 100}%`;
   const click = (e) => {
@@ -80,7 +79,7 @@ function Strip({ doc, tags, sel, t, onSeek }) {
       <div className="sc-lane" aria-label="Tags">
         <span className="sc-lane-name">Tags</span>
         {tags.filter((x) => x.status !== 'rejected').map((x) => (
-          <span key={x.id} title={`${x.tags.join(', ')} ${fmtTime(x.start)}–${fmtTime(x.end)}`}
+          <span key={x.id} title={`${shownTags(x).map((g) => tagLabel(names, g)).join(', ')} ${fmtTime(x.start)}–${fmtTime(x.end)}`}
             className={`sc-blk sc-tag-${x.status} ${sel?.id === x.id ? 'sc-sel' : ''}`}
             style={{ left: pct(x.start), width: `max(3px, ${pct(x.end - x.start)})` }} />
         ))}
@@ -95,7 +94,7 @@ function Strip({ doc, tags, sel, t, onSeek }) {
   );
 }
 
-function TagCard({ x, active, onPick, onSet, onDelete }) {
+function TagCard({ x, names, active, onPick, onSet, onDelete }) {
   return (
     <div className={`sc-card ${active ? 'sc-card-on' : ''}`} onClick={onPick} role="button" tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter') onPick(); }}>
@@ -104,7 +103,7 @@ function TagCard({ x, active, onPick, onSet, onDelete }) {
         <span className={`tag sc-st-${x.status}`}>{x.status}</span>
       </div>
       <div className="row wrap" style={{ gap: 4 }}>
-        {x.tags.map((g) => <span key={g} className="chip">{g}</span>)}
+        {shownTags(x).map((g) => <TagLink key={g} id={g} names={names} />)}
       </div>
       {x.summary && <span className="tiny">{x.summary}</span>}
       {x.people.length > 0 && (
@@ -223,7 +222,7 @@ export function ScenesPage() {
     if (opened.current !== key) {
       opened.current = key;
       const now = new URLSearchParams(window.location.search);
-      const all = d.tags || [];
+      const all = visibleRows(d.tags);
       const first = all.find((x) => x.status === 'proposed') || all.find((x) => x.status === 'accepted');
       if (first && !now.get('scene') && !now.get('t')) {
         patch({ scene: first.id, t: first.start, tab: first.status === 'proposed' ? null : 'tags' });
@@ -234,11 +233,16 @@ export function ScenesPage() {
   const settings = useLoad(() => api('/settings').catch(() => null));
   const { act, msg, busy, clear } = useAct();
   const [play, setPlay] = useState(false);
+  const [clipT, setClipT] = useState(null); // film time of the playing clip
+  const [running, setRunning] = useState(false);
+  const names = useTagNames();
+  usePageTitle(data?.film ? `${data.film.title} scenes` : null);
   const onDone = useCallback(() => { reload(); }, [reload]);
   const [job, setJob] = useJob(key, onDone);
 
   const doc = data?.index;
-  const tags = useMemo(() => data?.tags || [], [data]);
+  // measured `fc:` rows are signals, not tags: never listed
+  const tags = useMemo(() => visibleRows(data?.tags), [data]);
   const proposals = tags.filter((x) => x.status === 'proposed');
   const current = tags.find((x) => x.id === sel) || null;
   const scenes = doc?.scenes;
@@ -250,6 +254,16 @@ export function ScenesPage() {
     const s = t ? sceneAt(t) : null;
     return s ? [s.start, s.end] : null;
   }, [current, range, t, sceneAt]);
+  // the still shows the playhead when it is inside the range, else the range's start
+  const still = view ? (t > view[0] && t < view[1] ? t : view[0] + 0.5) : t;
+  const at = play && clipT != null ? clipT : still;
+  const togglePlay = useCallback(() => {
+    // stopping leaves the still where the clip was
+    if (play && clipT != null) patch({ t: clipT });
+    setPlay(!play);
+    setClipT(null);
+    setRunning(false);
+  }, [play, clipT, patch]);
   const seek = useCallback((time) => {
     patch({ t: time, scene: null });
     setPlay(false);
@@ -286,13 +300,13 @@ export function ScenesPage() {
         if (end > current.start + 1) setTag(current, { end });
       } else if (e.key === ' ' && view) {
         e.preventDefault();
-        setPlay((p) => !p);
+        togglePlay();
       } else return;
       e.preventDefault();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [proposals, tags, sel, current, doc, view, pick, setTag]);
+  }, [proposals, tags, sel, current, doc, view, pick, setTag, togglePlay]);
 
   if (error && !data) return <div className="page"><Crumbs items={[['Library', '/library'], [key]]} /><ErrorBox error={error} onRetry={reload} /></div>;
   if (loading || !data) return <div className="page"><Loading /></div>;
@@ -325,15 +339,8 @@ export function ScenesPage() {
   return (
     <div className="page page-wide" style={{ gap: 20 }}>
       <Crumbs items={crumbs} />
-      <div className="toolbar">
-        <div className="stack" style={{ gap: 4 }}>
-          <h1 className="display" style={{ fontSize: 26 }}>{f.title} <span className="muted" style={{ fontSize: 18 }}>{f.year}</span></h1>
-          <span className="mono muted tiny">
-            {doc
-              ? `${doc.scenes.length} scenes · ${doc.shots.length} shots · subtitles: ${doc.subtitles.kind} (${doc.subtitles.lines} lines) · ${tags.length} tags`
-              : 'Not indexed yet'}
-          </span>
-        </div>
+      <div className="toolbar scp-bar">
+        {doc ? <AtPlayhead fkey={key} t={at} playing={play && running} rows={tags} names={names} /> : <span />}
         <div className="row wrap">
           {col && <Link className="btn" to={`/collections/${enc(col.id)}/scenes`}>{col.name}: all scenes</Link>}
           <button type="button" className="btn" disabled={busy || !f.on_disk} onClick={() => startIndex(false)}>
@@ -357,19 +364,20 @@ export function ScenesPage() {
           <div className="stack" style={{ gap: 14, minWidth: 0 }}>
             <div className="sc-stage">
               {view && play
-                ? <video key={`${view[0]}-${view[1]}`} src={clipUrl(key, view[0], view[1])} controls autoPlay />
-                : <img src={frameUrl(key, view ? view[0] + 0.5 : t, 480)} alt={`Frame at ${fmtTime(t)}`} />}
+                ? <ClipVideo src={clipUrl(key, view[0], view[1])} offset={view[0]} onTime={setClipT} onRunning={setRunning}
+                  onEnded={() => setRunning(false)} />
+                : <img src={sceneFrameUrl(key, still, 480)} alt={`Frame at ${fmtTime(still)}`} />}
             </div>
             <div className="row wrap" style={{ justifyContent: 'space-between' }}>
               <span className="mono tiny">
                 {view ? `${fmtTime(view[0])}–${fmtTime(view[1])} (${Math.round(view[1] - view[0])}s)` : fmtTime(t)}
-                {current && <span className="muted"> · {current.tags.join(', ')}</span>}
+                {current && <span className="muted"> · {shownTags(current).map((g) => tagLabel(names, g)).join(', ')}</span>}
               </span>
               <div className="row">
-                {view && <button type="button" className="btn btn-sm" onClick={() => setPlay((p) => !p)}>{play ? 'Show frames' : 'Play range'} <kbd>Space</kbd></button>}
+                {view && <button type="button" className="btn btn-sm" onClick={togglePlay}>{play ? 'Show frames' : 'Play range'} <kbd>Space</kbd></button>}
               </div>
             </div>
-            <Strip doc={doc} tags={tags} sel={current} t={view ? view[0] : t} onSeek={seek} />
+            <Strip doc={doc} tags={tags} sel={current} t={at} names={names} onSeek={seek} />
             {view && <img className="sc-sheet" src={sheetUrl(key, view[0], view[1])} alt="Frames across the range" />}
             {view && lines.length > 0 && (
               <div className="sc-lines">
@@ -393,7 +401,7 @@ export function ScenesPage() {
                 {listed.length === 0
                   ? <span className="tiny muted">{tab === 'proposed' ? 'No proposals. Use Add to run the AI or tag a range yourself.' : 'No accepted or rejected tags yet.'}</span>
                   : listed.map((x) => (
-                    <TagCard key={x.id} x={x} active={x.id === sel} onPick={() => pick(x)}
+                    <TagCard key={x.id} x={x} names={names} active={x.id === sel} onPick={() => pick(x)}
                       onSet={(c) => setTag(x, c)} onDelete={() => del(x)} />
                   ))}
                 <span className="tiny dim">Keys: J/K next and previous, A accept, R reject, [ ] widen to the next cut, Shift+[ ] narrow.</span>
@@ -405,7 +413,7 @@ export function ScenesPage() {
                 <AIForm onRun={runAI} busy={busy} configured={aiReady} />
               </div>
             )}
-            {tab === 'xray' && <XRay fkey={key} t={view ? view[0] + 1 : t} cast={data.cast} />}
+            {tab === 'xray' && <XRay fkey={key} t={at} cast={data.cast} />}
           </aside>
         </div>
       )}

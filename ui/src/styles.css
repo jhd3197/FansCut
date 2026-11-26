@@ -461,3 +461,25 @@ kbd { font: 500 10px/1 var(--mono); padding: 2px 4px; border: 1px solid var(--li
   .reel-pp { grid-template-columns: minmax(0, 1fr); }
   .reel-pp > .stack:first-child { position: static; max-width: 260px; }
 }
+
+/* scenes player */
+.scp-bar { align-items: flex-start; min-height: 44px; }
+.scp-now { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; min-width: 0; }
+.scp-people { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; }
+.scp-people a { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text); text-decoration: none; }
+.scp-people a:hover b { color: var(--accent); }
+.scp-people img, .scp-noface { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex: none; background: var(--panel2); border: 2px solid var(--accent); }
+.scp-people .scp-maybe img, .scp-people .scp-maybe .scp-noface { border: 2px dashed var(--apricot); }
+.scp-noface { display: inline-flex; align-items: center; justify-content: center; color: var(--dim); font-weight: 700; }
+.scp-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.scp-chip { display: inline-flex; }
+.scp-strip button[aria-current="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+.scp-prog { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); pointer-events: none; }
+.scp-segs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.scp-segs li { display: flex; flex-direction: column; gap: 10px; border: 1px solid transparent; border-radius: 8px; }
+.scp-segs li[aria-current="true"] { border-color: var(--accent); background: var(--panel); padding-bottom: 12px; }
+.scp-segs li[aria-current="true"] > :not(button) { margin: 0 12px; }
+.scp-seg { all: unset; cursor: pointer; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 8px 12px; border-radius: 8px; }
+.scp-seg:hover { background: var(--panel2); }
+.scp-seg:focus-visible { outline: 2px solid var(--accent); }
+.scp-seg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
