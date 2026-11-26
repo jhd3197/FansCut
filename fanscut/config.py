@@ -285,6 +285,8 @@ class PostersCfg(BaseModel):
     title: bool = True  # title on the poster
     stills: Literal[2, 4, 6] = 4  # stills per scene
     weights: PosterWeights = Field(default_factory=PosterWeights)
+    ai_model: str = "openai/gpt-image-2"  # draws posters from stills; empty = off
+    ai_quality: Literal["low", "medium", "high"] = "medium"
 
 
 class Config(BaseModel):
