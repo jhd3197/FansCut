@@ -1,0 +1,96 @@
+/* The film page (/movies/:key): analysed, and not analysed yet. Scoped under .film. */
+.film { max-width: 1180px; gap: 30px; }
+.film .dim { color: var(--dim); }
+.film .linkish { background: none; border: 0; padding: 0; color: var(--link); font: inherit; font-size: 12px; cursor: pointer; margin-left: auto; }
+.film .linkish:hover { color: var(--sky-text); text-decoration: underline; }
+
+/* head */
+.film-hero { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 24px 28px; }
+.film-poster-art { flex: 0 0 200px; }
+.film-hero-body { flex: 999 1 420px; min-width: 0; }
+.film-title { font: 700 36px/1.1 var(--display); text-wrap: balance; }
+.film-meta { margin-top: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: var(--dim); }
+.film-buttons { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+.film-facts { margin: 22px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 14px 28px; font-size: 13px; }
+.film-facts dd { margin: 3px 0 0; overflow-wrap: anywhere; }
+.film-facts .wide { grid-column: 1 / -1; }
+.film-file { font-size: 11.5px; color: var(--dim); }
+.film-ok::before { content: ''; display: inline-block; width: 8px; height: 4px; margin: 0 8px 3px 1px; border: solid var(--sky); border-width: 0 0 2px 2px; transform: rotate(-45deg); }
+.film-badge { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 11px; font: 700 11px var(--font); }
+.film-badge.is-no { border: 1px solid var(--apricot); color: var(--apricot); }
+.film-badge.is-run { border: 1px solid var(--sky); color: var(--sky-soft); }
+
+/* sections */
+.film-section { display: flex; flex-direction: column; gap: 12px; }
+.film-section-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 10px; }
+.film-section-head .mono { font-size: 12px; }
+.film-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 176px)); gap: 20px; }
+.film-grid-sm { grid-template-columns: repeat(auto-fill, minmax(min(126px, 100%), 1fr)); gap: 16px; }
+.film-here .tile .pst { box-shadow: 0 0 0 2px var(--page), 0 0 0 4px var(--sky); border-radius: 8px; }
+
+/* make something */
+.film-make { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); gap: 16px; }
+.film-make-card { display: flex; flex-direction: column; gap: 10px; padding: 16px; background: var(--panel); border: 1px solid var(--deep-line); border-radius: var(--radius); }
+.film-make-card h3 { font-size: 17px; font-weight: 600; }
+.film-make-card.is-ai h3 { font-size: 19px; margin-top: 2px; }
+.film-make-card.is-ai > :last-child, .film-make-card.is-blank > :last-child { margin-top: auto; }
+.film-make-card.is-blank { background: transparent; border: 1px dashed var(--border); }
+.film-ai { color: var(--sky); }
+
+/* inside the film */
+.film-inside { display: flex; flex-direction: column; gap: 18px; border: 1px solid var(--deep-line); padding: 18px 20px 22px; }
+.film-inside-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.film-inside-head .mono { font-size: 12px; }
+.film-match { color: var(--soft); }
+.film-pct { color: var(--sky); font-size: 15px !important; }
+
+.film-map-hours { position: relative; height: 12px; }
+.film-map-hours span { position: absolute; top: 0; font-size: 10px; color: var(--faint); transform: translateX(-50%); }
+.film-map-hours span:first-child { transform: none; }
+.film-map-bar { position: relative; height: 36px; margin-top: 10px; }
+.film-map-bar > span { position: absolute; top: 0; bottom: 0; border-radius: 1px; background: var(--deep-line); transition: background .12s; }
+.film-map-bar > span.is-tagged { background: var(--border-hover); }
+.film-map-bar > span.is-lit { background: var(--sky); }
+.film-map-bar > span.is-dim { background: var(--deep-line); }
+.film-map-bar > span.film-map-used { top: -7px; bottom: auto; height: 3px; border-radius: 2px; background: var(--apricot); }
+.film-legend { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 12px; color: var(--dim); }
+.film-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.film-legend i { width: 14px; height: 3px; border-radius: 2px; background: var(--apricot); }
+
+.film-group-label { display: flex; align-items: baseline; gap: 8px; padding-bottom: 8px; }
+.film-group-label .mono { font-size: 11px; color: var(--faint); }
+.film-cast { display: flex; flex-wrap: wrap; gap: 8px; }
+.film-person { display: inline-flex; align-items: center; gap: 9px; height: 46px; padding: 0 15px 0 5px; border-radius: 23px; border: 1px solid var(--border); color: var(--text); font-size: 13px; }
+.film-person:hover, .film-person:focus-visible { border-color: var(--border-hover); color: var(--text); text-decoration: none; }
+.film-person img, .film-face { flex: none; width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: var(--hover); }
+.film-face { display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+.film-person b { display: block; font-weight: 600; line-height: 1.2; }
+.film-person .sub { display: block; font-size: 11px; line-height: 1.25; color: var(--faint); }
+
+.film-families { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 18px 28px; }
+.film-families .tags-row { gap: 5px; }
+.film-tag { height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid var(--border); color: var(--soft); font: 500 12px var(--font); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.film-tag em { font: normal 11px var(--mono); color: var(--faint); }
+.film-tag:hover, .film-tag:focus-visible { border-color: var(--border-hover); color: var(--text); text-decoration: none; }
+
+/* not analysed yet */
+.film-strip { position: relative; height: 36px; border-radius: 4px; overflow: hidden; border: 1px dashed var(--border); }
+.film-strip > div { position: absolute; inset: 0 auto 0 0; transition: width .3s; background: repeating-linear-gradient(90deg, var(--sky) 0 5px, var(--hover) 5px 7px, var(--border-hover) 7px 16px, var(--hover) 16px 18px); }
+.film-steps { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 12px; }
+.film-step { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 10px; background: var(--page); border: 1px solid var(--deep-line); }
+.film-step.is-running, .film-step.is-queued { border-color: var(--sky); }
+.film-step-n { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; font-size: 11px; background: var(--raised); color: var(--dim); }
+.film-step.is-done .film-step-n { background: var(--sky); color: var(--on-sky); font-weight: 700; }
+.film-step.is-running .film-step-n { border: 2px solid var(--sky); color: var(--text); background: transparent; }
+.film-step-body { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.film-step-body b { font-size: 14px; font-weight: 600; }
+.film-step-body .dim { font-size: 12px; }
+.film-step-state { margin-top: 4px; font: 12px var(--mono); color: var(--soft); }
+.film-step-body .btn { margin-top: 8px; }
+.film-needs { margin-top: 8px; gap: 8px; }
+.film-needs span { display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 15px; font-size: 13px; border: 1px dashed var(--border); color: var(--dim); }
+.film-state { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 11.5px; font-weight: 600; }
+.film-state::before { content: ''; width: 7px; height: 7px; border-radius: 50%; box-sizing: border-box; }
+.film-state.is-ok { color: var(--soft); } .film-state.is-ok::before { background: var(--sky); }
+.film-state.is-no { color: var(--apricot); } .film-state.is-no::before { border: 1.5px solid var(--apricot); }
+.film-state.is-run { color: var(--sky-soft); } .film-state.is-run::before { border: 1.5px solid var(--sky); }

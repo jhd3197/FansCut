@@ -229,3 +229,19 @@ class TimelineBody(BaseModel):
 def to_timeline(core: CoreDep, body: TimelineBody) -> dict[str, Any]:
     """Accepted scenes with a tag across a collection, as a timeline cut."""
     return core.scenes.to_timeline(body.collection, body.tag, body.title, body.films)
+
+
+@router.get("/analysis")
+def analysis(core: CoreDep, key: str) -> dict[str, Any]:
+    """The film's analysis steps (shots, faces, speech, tags), each with its job."""
+    from ..scenes import analysis as an
+
+    return an.status(core, key)
+
+
+@router.post("/analyse", status_code=202)
+def analyse(core: CoreDep, body: KeyBody) -> dict[str, Any]:
+    """Queue every missing analysis step: index, then signals and tags after it."""
+    from ..scenes import analysis as an
+
+    return an.start(core, body.key)

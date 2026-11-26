@@ -7,9 +7,8 @@ import logoWhite from './brand/logo-white.svg';
 import { Discover } from './pages/Discover.jsx';
 import { LibraryPage } from './pages/LibraryPage.jsx';
 import { CollectionPage } from './pages/Collection.jsx';
-import { MoviePage } from './pages/Movie.jsx';
+import { MovieCastRedirect, MoviePage } from './pages/Movie.jsx';
 import { ScenesPage } from './pages/Scenes.jsx';
-import { MovieCast } from './pages/MovieCast.jsx';
 import { SetDetail, Sets } from './pages/Sets.jsx';
 import { CollectionScenesPage } from './pages/CollectionScenes.jsx';
 import { ShowPage } from './pages/Show.jsx';
@@ -184,7 +183,7 @@ export function App() {
           <Route path="/collections/:id/scenes" element={<CollectionScenesPage />} />
           <Route path="/movies/:key" element={<MoviePage />} />
           <Route path="/movies/:key/scenes" element={<ScenesPage />} />
-          <Route path="/movies/:key/cast" element={<MovieCast />} />
+          <Route path="/movies/:key/cast" element={<MovieCastRedirect />} />
           <Route path="/sets" element={<Sets />} />
           <Route path="/sets/:tag" element={<SetDetail />} />
           <Route path="/series/:key" element={<ShowPage />} />
