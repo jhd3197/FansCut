@@ -1,9 +1,9 @@
-# Timeline recipes
+# Timeline cuts
 
-Beyond per-episode cuts, a **timeline recipe** rebuilds a show in any order:
+Beyond per-episode cuts, a **timeline cut** rebuilds a show in any order:
 any range of any episode, grouped into parts, rendered as a new show Plex can
 serve (`<Series> (<Edit>)/Season 01/…`, with .nfo files and chapters). The
-recipe is media-free JSON: source keys in Plex/TVDB numbering, times in
+cut is media-free JSON: source keys in Plex/TVDB numbering, times in
 seconds, ordering, and **anchors**: lossy audio/video fingerprints of each
 cut point (8 s of binarised audio features and/or 4 fps dHash frames; neither
 can be turned back into content).
@@ -20,10 +20,10 @@ can be turned back into content).
 
 ## The editor
 
-The editor (Timelines, then Open) authors recipes from scratch: parts and
+The editor (Timelines, then Open) authors cuts from scratch: parts and
 segments with drag-to-reorder, preview playback, an AI outline from pasted
 chronology notes, and "Export + anchors" to share the result.
-`fanscut recipe validate --file` checks a recipe offline. Cuts are listed for
+`fanscut recipe validate --file` checks a cut file offline. Cuts are listed for
 everyone in the [fanscut-community](https://github.com/jhd3197/fanscut-community)
 index, whose CI checks each entry.
 

@@ -45,9 +45,9 @@ nav:
   - Using FansCut:
       - Filler data: filler-data.md
       - OP/ED and recap trimming: trimming.md
-      - Cut recipes: cut-recipes.md
-      - AI recipes: ai-recipes.md
-      - Timeline recipes: timelines.md
+      - Cut files: cut-files.md
+      - AI cuts from notes: ai-cuts.md
+      - Timeline cuts: timelines.md
       - Scene tagging and X-Ray: scene-tagging.md
       - Discover and community cuts: discover.md
       - Library health: library-health.md

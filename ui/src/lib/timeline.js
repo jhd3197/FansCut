@@ -123,7 +123,7 @@ export function recipeIssues(doc) {
     if (!part.segments?.length) out.push({ pi, si: null, text: `${part.title || `Part ${pi + 1}`} has no segments (dropped on save)` });
     (part.segments || []).forEach((seg, si) => {
       const source = doc.sources?.[seg.src];
-      if (!source) out.push({ pi, si, text: `${seg.src} is not one of the recipe's sources` });
+      if (!source) out.push({ pi, si, text: `${seg.src} is not one of the cut's sources` });
       const err = checkRange(seg.start, seg.end, source?.duration);
       if (err) out.push({ pi, si, text: `${seg.src}: ${err.replace('episode', 'source')}` });
     });

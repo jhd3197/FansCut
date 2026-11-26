@@ -689,7 +689,7 @@ export function Settings() {
 
           {active === 'ai' && (<section id="ai" aria-labelledby="ai-h">
             <h2 id="ai-h" className="sh">AI</h2>
-            <p className="muted tiny" style={{ margin: '0 0 8px' }}>Turns cut notes into recipes and tags scenes. Models go through Prompture: claude/…, google/…, ollama/…, or a bare name for the OpenAI-compatible endpoint in Base URL.</p>
+            <p className="muted tiny" style={{ margin: '0 0 8px' }}>Turns cut notes into cuts and tags scenes. Models go through Prompture: claude/…, google/…, ollama/…, or a bare name for the OpenAI-compatible endpoint in Base URL.</p>
             {text('ai.model', 'Model', 'Provider and name, e.g. claude/claude-opus-5-5 or ollama/qwen3:8b.', { placeholder: 'ollama/qwen3:8b', className: 'inp mono' })}
             {text('ai.vision_model', 'Vision model', 'Looks at frame grids when tagging scenes. Empty uses Model.', { placeholder: 'ollama/qwen3-vl:8b', className: 'inp mono' })}
             {text('ai.base_url', 'Base URL', 'Only for a bare model name (OpenAI-compatible) or a remote Ollama.', { placeholder: 'http://localhost:11434/v1', className: 'inp mono' })}

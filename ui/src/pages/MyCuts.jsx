@@ -247,7 +247,7 @@ export function MyCuts() {
       {doomed && (
         <Dialog title={`Delete ${doomed.title}?`} onClose={() => setDoomed(null)}>
           <p className="muted" style={{ margin: 0 }}>
-            This removes the recipe and its matched cut points. Files already built stay where they are.
+            This removes the cut and its matched cut points. Files already built stay where they are.
           </p>
           <div className="row" style={{ justifyContent: 'flex-end' }}>
             <button type="button" className="btn" onClick={() => setDoomed(null)}>Keep it</button>
