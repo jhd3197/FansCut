@@ -36,9 +36,9 @@ const Build = lazy(() => import('./pages/Build.jsx').then((m) => ({ default: m.B
 const TimelineEdit = lazy(() => import('./pages/TimelineEdit.jsx').then((m) => ({ default: m.TimelineEdit })));
 import { useApi } from './lib/store.js';
 
-// The Framehouse logo (brand kit: white horizontal logo, for the Deep Teal sidebar).
+// The white horizontal logo on the dark sidebar.
 function Logo() {
-  return <img src={logoWhite} alt="FansCut" width="160" height="39" />;
+  return <img src={logoWhite} alt="FansCut" width="107" height="26" />;
 }
 
 // Nav counts: ready suggestions, cuts, running jobs, open health findings.

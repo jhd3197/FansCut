@@ -18,8 +18,8 @@ const PALETTES = [
   ['#14182A', '#1E2440', '#7FA8F0', '#E6ECFA'],
 ];
 
-// One colour per source film or show in a cut, in order of first use.
-export const SRC_COLOURS = ['#7FA8F0', '#B9A3F2', '#6CC5CC', '#F2A93B', '#E98CC0', '#3FA37A'];
+// One colour per source film or show in a cut, in order of first use (the v2 film colours).
+export { FILM_COLOURS as SRC_COLOURS } from './v2.jsx';
 
 export function hash(text) {
   let h = 2166136261;
