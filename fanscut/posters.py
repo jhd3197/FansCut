@@ -230,7 +230,7 @@ class Posters:
                 key = films.get(src.get("tmdb"))
                 if not key:
                     continue
-                for row in self.core.scenes.store.tags([key]):
+                for row in self.core.scenes.tags([key]):
                     if row["status"] == "rejected":
                         continue
                     if row["start"] < seg["end"] and row["end"] > seg["start"]:
@@ -281,7 +281,7 @@ class Posters:
         out: list[tuple[str, float]] = []
         for src, t in refs:
             key = films.get((sources.get(src) or {}).get("tmdb"))
-            sig = self.core.scenes.store.signals(key) if key else None
+            sig = self.core.scenes.signals_of(key) if key else None
             ranges = ((sig or {}).get("signals") or {}).get("no-face") or []
             if any(a <= t < b for a, b in ranges):
                 out.append((src, t))

@@ -1,6 +1,6 @@
-# Cut recipes
+# Cut files
 
-A recipe holds your choices for a series and no video data. Export from the
+A cut file holds your choices for a series and no video data. Export from the
 series page; import onto a series in another library and it's applied by
 season + episode number (episodes it can't find are reported and skipped).
 
@@ -26,6 +26,6 @@ season + episode number (episodes it can't find are reported and skipped).
   given: the "my own cut" mode. They beat the preset and the trims.
 - Schema 1 files (no `segments`) still import.
 
-To write a recipe from published cut notes instead of by hand, see
-[AI recipes](ai-recipes.md). To reorder a show rather than cut it, see
-[Timeline recipes](timelines.md).
+To write a cut file from published cut notes instead of by hand, see
+[AI cuts from notes](ai-cuts.md). To reorder a show rather than cut it, see
+[Timeline cuts](timelines.md).

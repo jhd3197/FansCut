@@ -27,11 +27,11 @@ def test_tagging_session_through_the_tools(tools):
 
     started = m.index_film(key)
     job_id = re.search(r"job (\w+)", started).group(1)
-    tools.core.worker.run_pending()
+    tools.run()  # the embedded Marcarr's job
     assert "done" in m.job_status(job_id)
 
     over = m.film_overview(key)
-    assert "3 shots" in over and "subtitles: sidecar (3 lines)" in over
+    assert "3 shots" in over and "subtitles: sidecar (4 lines)" in over
     assert m.read_dialogue(key, 0, 10).splitlines()[0] == "[0:00:01] Happy Christmas, Harry."
     assert m.camera_cuts(key, 0, 30).count("\n") == 2
 

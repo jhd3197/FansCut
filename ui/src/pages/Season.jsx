@@ -191,7 +191,7 @@ export function SeasonPage() {
       <div className="toolbar">
         <Crumbs items={[['Library', '/library'], [series.title, showTo], [seasonName(season)]]} />
         <div className="row">
-          <button type="button" className="btn" onClick={() => setDialog('recipe')}>Recipe</button>
+          <button type="button" className="btn" onClick={() => setDialog('recipe')}>Cut file</button>
           <button type="button" className="btn btn-primary" onClick={() => setDialog('build')} disabled={!rows.length}>Build cut</button>
         </div>
       </div>

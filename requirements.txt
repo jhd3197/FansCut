@@ -1,11 +1,14 @@
 # Runtime dependencies. Keep in sync with pyproject.toml.
-# After changing this file, refresh the lock the Docker image installs:
-#   uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes -o requirements.lock
+# After changing this file, refresh the lock the Docker image installs. A URL line
+# (Marcarr) can't be hash-pinned: leave it out and add its dependencies instead:
+#   grep -v " @ " requirements.txt > lock.in && echo "prompture[openai]>=1.19.2" >> lock.in
+#   uv pip compile lock.in --universal --python-version 3.11 --generate-hashes -o requirements.lock
 requests>=2.31
 PyYAML>=6.0
 fastapi>=0.110
 uvicorn>=0.27
 pydantic>=2
 numpy>=1.26
-prompture[media]>=1.19.1
+prompture[media]>=1.19.2
 pillow>=10.1                 # contact sheets for scene tagging
+marcarr @ https://github.com/jhd3197/marcarr/archive/refs/heads/main.tar.gz  # scene analysis, embedded

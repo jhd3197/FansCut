@@ -224,8 +224,16 @@ class AICfg(BaseModel):
     timeout: int = 120
 
 
-FAMILIES = ("occasion", "weather", "place", "action", "beat", "people", "mood", "creature",
-            "element", "content")
+# The tag families of Marcarr's shared tag list, in its order.
+FAMILIES = ("occasion", "weather", "time", "place", "action", "beat", "people", "mood",
+            "creature", "element", "content")
+
+
+class MarcarrCfg(BaseModel):
+    """Scene analysis runs in an embedded Marcarr (fanscut/scenes/link.py)."""
+
+    data_dir: str = ""  # its database and caches; empty = <data_dir>/marcarr
+    faces: bool = True  # match faces to the cast (needs opencv-python-headless)
 
 
 class ScenesCfg(BaseModel):
@@ -309,6 +317,7 @@ class Config(BaseModel):
     ai: AICfg = Field(default_factory=AICfg)
     community: CommunityCfg = Field(default_factory=CommunityCfg)
     scenes: ScenesCfg = Field(default_factory=ScenesCfg)
+    marcarr: MarcarrCfg = Field(default_factory=MarcarrCfg)
     markers: MarkersCfg = Field(default_factory=MarkersCfg)
     posters: PostersCfg = Field(default_factory=PostersCfg)
 

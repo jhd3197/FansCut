@@ -51,8 +51,8 @@ There's also a small CLI:
 fanscut serve | scan | doctor | fillers refresh | recipe ai
 ```
 
-`fanscut recipe validate --file` checks a timeline recipe offline (see
-[Timeline recipes](timelines.md)).
+`fanscut recipe validate --file` checks a timeline cut offline (see
+[Timeline cuts](timelines.md)).
 
 ## Next steps
 

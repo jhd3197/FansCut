@@ -72,7 +72,7 @@ function Copies({ doc, missing, report, colour }) {
   const srcs = Object.keys(doc.sources);
   const offsets = srcs.map((src) => median((report?.sources?.[src]?.boundaries || []).map((b) => b.offset).filter((o) => o != null)));
   const same = report && srcs.every((src, i) => report.sources?.[src]?.matched && offsets[i] != null && Math.abs(offsets[i]) < 0.05);
-  const note = !report ? 'Not matched yet' : same ? 'Same release as the recipe’s author' : 'Offsets are corrected per file';
+  const note = !report ? 'Not matched yet' : same ? 'Same release as the cut’s author' : 'Offsets are corrected per file';
   return (
     <section aria-labelledby="i-src" className="card" style={{ overflow: 'hidden', padding: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 16px', gap: 10, flexWrap: 'wrap' }}>
@@ -194,7 +194,7 @@ function Review({ tid, doc, weak, checked, onCheck, onPreview, editTo, onSaved }
       )}
       {unanchored > 0 && (
         <p className="tiny muted" style={{ margin: 0 }}>
-          {unanchored} cut point{unanchored === 1 ? '' : 's'} carry no fingerprints, so the recipe’s times are used as they are.
+          {unanchored} cut point{unanchored === 1 ? '' : 's'} carry no fingerprints, so the cut’s times are used as they are.
         </p>
       )}
     </section>
@@ -350,7 +350,7 @@ export function Build() {
         <section aria-labelledby="i-sync" className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <h2 id="i-sync">Find cut points</h2>
           <p style={{ margin: 0, color: 'var(--text2)', fontSize: 13 }}>
-            FansCut listens to your copies and lines up every cut point in the recipe with them. Nothing is cut yet.
+            FansCut listens to your copies and lines up every cut point in the cut with them. Nothing is cut yet.
           </p>
           {syncing && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -439,7 +439,7 @@ export function Build() {
             <label className="check">
               <input type="checkbox" checked={rebuild ?? Boolean(tl.data.auto_rebuild)}
                 onChange={(e) => { const on = e.target.checked; setRebuild(on); act(() => api(`/timelines/${enc(id)}/options`, { method: 'PUT', body: { auto_rebuild: on } })); }} />
-              When the recipe changes, rebuild only the parts that changed
+              When the cut changes, rebuild only the parts that changed
             </label>
           )}
           {plex && <span className="tiny muted">Change what happens in Plex under <Link to="/settings?section=plex-out">Settings → Add to Plex</Link>.</span>}

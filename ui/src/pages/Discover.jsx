@@ -109,7 +109,7 @@ export const STATUS_CLASS = { ready: 'c-ready', partly: 'c-warn', missing: 'c-da
 // One sentence on what installing it makes.
 export function suggestionWhat(s) {
   return s.detail?.template || {
-    recipe: 'A community recipe: scenes from files you own, cut and joined into one new file.',
+    recipe: 'A community cut: scenes from files you own, cut and joined into one new file.',
     collection_merge: 'One film made from every entry in the collection, in release order.',
     watch_order: 'A Plex playlist of the films in order. Nothing is rendered.',
     canon_cut: 'The show with filler episodes left out, rendered as new files.',

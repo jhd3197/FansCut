@@ -42,17 +42,17 @@ To get it running, start with [Install](install.md).
   `/api/webhooks/sonarr?apikey=<key>` and new episodes queue detection and a
   render automatically (off by default). Scheduled tasks and job notifications
   live on the same page. See [Automation](automation.md).
-- **AI recipes**: paste the cut notes people publish (what they cut and why,
-  never the video) and a configured LLM turns them into a recipe you review
-  before applying. See [AI recipes](ai-recipes.md).
+- **AI cuts from notes**: paste the cut notes people publish (what they cut and why,
+  never the video) and a configured LLM turns them into a cut you review
+  before applying. See [AI cuts from notes](ai-cuts.md).
 - **Scene tagging and X-Ray**: index a film's camera cuts and dialogue, tag
   scenes by hand or let an AI propose them (also from Claude Code through
   `fanscut mcp`), see who is on screen, and turn a tag across a collection
   into a cut. See [Scene tagging](scene-tagging.md).
-- **Recipes**: export your choices for a series as a small JSON file and import
-  them somewhere else. See [Cut recipes](cut-recipes.md).
-- **Timeline recipes**: rebuild a show (or films) in any order, synced to your
-  own files. See [Timeline recipes](timelines.md).
+- **Cut files**: export your choices for a series as a small JSON file and import
+  them somewhere else. See [Cut files](cut-files.md).
+- **Timeline cuts**: rebuild a show (or films) in any order, synced to your
+  own files. See [Timeline cuts](timelines.md).
 - **Discover**: what your library is one click away from, plus community cuts.
   See [Discover and community cuts](discover.md).
 - **Library health**: finds files that would spoil a cut. See

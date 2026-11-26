@@ -4,7 +4,7 @@
 
 Discover (the home page) lists what your library is one click away from:
 
-- community timeline recipes dropped into `<data_dir>/recipes`;
+- community timeline cuts dropped into `<data_dir>/recipes`;
 - a merged film and a watch-order playlist for any Plex collection you own two
   or more films of;
 - a canon cut for every matched show with known filler.
