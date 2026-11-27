@@ -10,8 +10,14 @@ Every AI suggestion arrives as a proposal that you accept or reject.
 
 The analysis runs in [Marcarr](https://github.com/jhd3197/marcarr), a server of
 its own that FansCut calls over HTTP. Marcarr finds the shots, subtitle lines,
-scenes, measured signals, cast, faces and tags; FansCut keeps its own cut tags
-(`fc:filler`, `fc:recap`) and cuts the frames and clips its players show.
+scenes, measured signals, cast, faces and tags. It also keeps the tag list and
+every tag, FansCut's cut tags (`fc:filler`, `fc:recap`) included; FansCut cuts
+the frames and clips its players show.
+
+Cut tags made before Marcarr kept them are still in FansCut's database and are
+still shown. Copy them to Marcarr once with `POST /api/scenes/tags/move`
+(`{"dry_run": true}` only counts). Rows copied are marked, not deleted; a film
+Marcarr does not have yet is skipped and can be moved by running it again.
 
 ```yaml
 marcarr:

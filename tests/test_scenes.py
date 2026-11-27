@@ -7,6 +7,7 @@ FansCut's link at it, so every call goes through Marcarr's HTTP API.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -58,12 +59,32 @@ def test_cut_tags_keep_their_prefix():
         st.norm_tag("fc:")
 
 
-def test_vocab_ships_with_the_package():
+@pytest.fixture
+def marcarr_list(tmp_path):
+    """The tag list read from a Marcarr (no film needed), kept in a file like the app does."""
+    from marcarr.config import Config as MarcarrConfig
+    from marcarr.core import Core as MarcarrCore
+    from marcarr.server import create_app as marcarr_app
+
+    from fanscut.scenes import vocab
+
+    mcfg = MarcarrConfig.model_validate({"server": {"data_dir": str(tmp_path / "marcarr")},
+                                         "setup_done": True})
+    m = MarcarrCore(mcfg, tmp_path / "marcarr.yaml", start_worker=False)
+    http = TestClient(marcarr_app(m))
+    vocab.use(lambda: http.get("/api/v1/tags/vocabulary").json(), lambda: tmp_path / "tags.json")
+    yield http
+    vocab.use(None)
+    m.close()
+
+
+def test_vocab_comes_from_marcarr(marcarr_list, tmp_path):
     from fanscut.config import FAMILIES
     from fanscut.scenes import vocab
 
     data = vocab.load()
     assert data["version"] >= 2 and len(data["tags"]) >= 130
+    assert (tmp_path / "tags.json").is_file()  # kept for when Marcarr does not answer
     assert list(FAMILIES) == vocab.families()  # Settings validates against the same list
     assert {t["family"] for t in vocab.content_tags(["mood", "content"])} == \
         set(vocab.families()) - {"mood", "content"}
@@ -74,6 +95,30 @@ def test_vocab_ships_with_the_package():
     assert {t["id"] for t in vocab.cut_tags("person")} == {"fc:filler", "fc:spoiler"}
     for t in [*data["tags"], *data["cut_tags"]]:  # every id is a valid stored tag
         assert st.norm_tag(t["id"]) == t["id"]
+    # a custom tag made in Marcarr ("My tags") is named here too, once the list is read again
+    assert vocab.get("wand-duel") is None and vocab.name("wand-duel") == "Wand duel"
+    marcarr_list.post("/api/v1/tags/mine", json={"name": "Wand Duel!", "id": "wand-duel", "family": "action"})
+    vocab.forget()
+    assert vocab.name("wand-duel") == "Wand Duel!" and vocab.public()["mine"][0]["family"] == "action"
+
+
+def test_vocab_without_marcarr(tmp_path):
+    from fanscut.scenes import vocab
+
+    def down():
+        raise OSError("no Marcarr")
+
+    try:
+        vocab.use(down, lambda: tmp_path / "tags.json")
+        assert vocab.load()["tags"] == [] and vocab.families() == []  # never read: empty
+        assert vocab.name("fc:filler") == "Filler" and vocab.get("christmas") is None
+        saved = {"version": 2, "families": ["occasion"], "cut_tags": [],
+                 "tags": [{"id": "christmas", "name": "Christmas", "family": "occasion"}]}
+        (tmp_path / "tags.json").write_text(json.dumps(saved), encoding="utf-8")
+        vocab.forget()
+        assert vocab.name("christmas") == "Christmas"  # the last list read is used
+    finally:
+        vocab.use(None)
 
 
 def test_store_round_trip(db):
@@ -164,9 +209,8 @@ def test_the_link_reports_what_marcarr_says(cfg):
 def test_vocab_api_and_cut_tag_counts(cfg, tmp_path):
     with TestClient(create_app(cfg, tmp_path / "config.yaml", start_worker=False)) as c:
         v = c.get("/api/scenes/vocab").json()
-        assert v["version"] >= 2 and len(v["families"]) == 11
-        assert {t["detect"] for t in v["cut_tags"]} == {"auto", "ai", "person"}
-        store = c.app.state.core.scenes.store
+        assert v["version"] == 0 and v["tags"] == []  # no Marcarr set up: no list yet
+        store = c.app.state.core.scenes.store  # a cut tag made before Marcarr kept them
         store.add_tag("radarr:1", 671, 10, 40, ["fc:filler"], [], source="user")
         counts = {t["tag"]: t for t in c.get("/api/scenes/tag-counts").json()["tags"]}
         assert counts["fc:filler"]["smart"] and counts["fc:filler"]["name"] == "Filler"
@@ -286,9 +330,19 @@ def test_scene_api_end_to_end(sc, monkeypatch):
     assert t["end"] == pytest.approx(10.0, abs=0.1)
     assert t["id"].startswith("tag_")
     assert sc.m.store.tag(t["id"])["source"] == "fanscut"  # Marcarr knows it came from FansCut
-    # a cut tag stays in FansCut
-    fc = sc.post("/api/scenes/tags", json={"key": key, "start": 20, "end": 30, "tags": ["fc:filler"]}).json()
-    assert not fc["id"].startswith("tag_")
+    # a cut tag is kept in Marcarr too, at the exact times given
+    fc = sc.post("/api/scenes/tags", json={"key": key, "start": 20.4, "end": 29.5, "tags": ["fc:filler"]}).json()
+    assert fc["id"].startswith("tag_") and (fc["start"], fc["end"]) == (20.4, 29.5)
+    assert (fc["status"], fc["tags"], fc["source"]) == ("accepted", ["fc:filler"], "user")
+    assert sc.m.store.tag(fc["id"])["tag"] == "fc:filler"
+    assert sc.core.scenes.store.tags() == []  # nothing new is written to FansCut's own table
+    names = sc.get("/api/scenes/vocab").json()
+    assert {t["id"] for t in names["cut_tags"]} >= {"fc:filler", "fc:spoiler"} and len(names["families"]) == 11
+    both = sc.post("/api/scenes/tags", json={"key": key, "start": 12, "end": 18,
+                                             "tags": ["snow", "fc:spoiler"], "status": "proposed"}).json()
+    assert both["tags"] == ["snow", "fc:spoiler"] and len(both["ids"]) == 2
+    for tid in both["ids"]:
+        assert sc.delete(f"/api/scenes/tags/{tid}").status_code == 204
 
     # The cast (Plex or TMDB in real use) is Marcarr's.
     sc.m.store.save_cast("movie:tmdb:671", "test", [
@@ -333,6 +387,37 @@ def test_scene_api_end_to_end(sc, monkeypatch):
     gone = [sc.delete(f"/api/scenes/tags/{t['id']}").status_code for t in (kept, fc)]
     assert gone == [204, 204]
     assert sc.get("/api/scenes/tags", params={"key": key}).json()["tags"] == []
+
+
+@needs_ffmpeg
+def test_cut_tags_made_before_move_to_marcarr(sc):
+    key = sc.key
+    store = sc.core.scenes.store
+    old = store.add_tag(key, 671, 3.5, 8.25, ["fc:filler", "fc:recap"], [{"character": "Harry"}],
+                        "a detour", source="user", status="accepted", evidence=["a flashback"])
+    store.add_tag(key, 671, 21, 27, ["fc:spoiler"], [], source="ai:x", status="rejected", confidence=0.4)
+    store.add_tag("radarr:999", 1, 0, 5, ["fc:filler"], [], status="accepted")  # a film that is gone
+
+    dry = sc.post("/api/scenes/tags/move", json={"dry_run": True}).json()
+    assert (dry["moved"], len(dry["skipped"]), dry["dry_run"]) == (2, 1, True)
+    assert sc.m.store.tags() == [] and len(store.tags()) == 3  # nothing sent, nothing marked
+
+    got = sc.post("/api/scenes/tags/move", json={}).json()
+    assert got["moved"] == 2 and got["moved_before"] == 0
+    assert got["skipped"] == [{"id": got["skipped"][0]["id"], "film_key": "radarr:999",
+                               "tags": ["fc:filler"], "why": "the film is not in the library"}]
+    there = {r["tag"]: r for r in sc.m.store.tags()}
+    assert set(there) == {"fc:filler", "fc:recap", "fc:spoiler"}
+    assert (there["fc:filler"]["start"], there["fc:filler"]["end"]) == (3.5, 8.25)
+    assert there["fc:filler"]["status"] == "accepted" and there["fc:spoiler"]["status"] == "rejected"
+    assert there["fc:filler"]["summary"] == "a detour" and there["fc:filler"]["source"] == "fanscut"
+    assert there["fc:filler"]["evidence"]["seen"] == ["a flashback"]
+    # the rows moved stay in FansCut's database, marked; only the skipped one is still listed
+    assert [r["film_key"] for r in store.tags()] == ["radarr:999"]
+    assert store.tag(old["id"])["moved_at"] and store.moved() == 2
+    again = sc.post("/api/scenes/tags/move", json={}).json()
+    assert again["moved"] == 0 and again["moved_before"] == 2 and len(again["skipped"]) == 1
+    assert len(sc.m.store.tags()) == 3  # nothing is copied twice
 
 
 @needs_ffmpeg

@@ -197,6 +197,17 @@ def ai_tag(core: CoreDep, body: AIBody) -> dict[str, Any]:
     return core.scenes.submit_ai(body.key, body.tag, body.description, body.verify, body.sweep)
 
 
+class MoveBody(BaseModel):
+    dry_run: bool = False
+
+
+@router.post("/tags/move")
+def move_cut_tags(core: CoreDep, body: MoveBody) -> dict[str, Any]:
+    """Copy the cut tags FansCut made before Marcarr kept them into Marcarr (once).
+    Rows copied are marked, not deleted; `dry_run` only counts."""
+    return core.scenes.move_cut_tags(body.dry_run)
+
+
 @router.post("/tidy")
 def tidy(core: CoreDep, body: KeyBody) -> dict[str, Any]:
     """Accept AI moments at or above Settings' threshold and merge duplicate moments."""

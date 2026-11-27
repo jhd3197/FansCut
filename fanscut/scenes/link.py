@@ -3,8 +3,9 @@ signals, cast, faces and tags). FansCut talks to it over its HTTP API
 (``marcarr.url``, with ``marcarr.api_key`` when it asks for one).
 
 A FansCut film is the Marcarr title ``movie:tmdb:<id>``: Marcarr knows a film once
-it has scanned it from Plex. FansCut keeps what is its own: cut tags (``fc:``),
-and the frames, contact sheets and clips it cuts from the file.
+it has scanned it from Plex. Marcarr keeps the tag list and every tag, FansCut's
+cut tags (``fc:``) included. FansCut keeps the frames, contact sheets and clips it
+cuts from the file.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from urllib.parse import quote
 import requests
 
 from ..errors import ClientError, FansCutError, NotFoundError
+from . import vocab
 
 TITLES_FOR = 20.0  # seconds a listing of Marcarr's titles is reused
 log = logging.getLogger(__name__)
@@ -58,6 +60,7 @@ class Link:
     def forget(self) -> None:
         with self._lock:
             self._titles = None
+        vocab.forget()
 
     @property
     def base(self) -> str:

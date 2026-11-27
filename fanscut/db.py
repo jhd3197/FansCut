@@ -258,8 +258,14 @@ def _v12() -> str:
     return "ALTER TABLE scene_tags ADD COLUMN evidence TEXT NOT NULL DEFAULT '[]';"
 
 
+def _v13() -> str:
+    # Cut tags now live in Marcarr. A row copied there keeps its place here with the
+    # time it moved, so the copy can be checked before anything is thrown away.
+    return "ALTER TABLE scene_tags ADD COLUMN moved_at TEXT;"
+
+
 MIGRATIONS: list[Callable[[], str]] = [_v1, _v2, _v3, _v4, _v5, _v6, _v7, _v8, _v9, _v10, _v11,
-                                       _v12]
+                                       _v12, _v13]
 
 
 class Database:

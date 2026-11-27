@@ -2,9 +2,9 @@
 
 The analysis itself (shots, subtitles, scenes, signals, cast, faces and the AI
 tagger) runs in Marcarr, which FansCut calls over HTTP (link.py). This service
-turns Marcarr's answers into the shapes FansCut's pages read. FansCut keeps its
-own cut tags (``fc:``), and the frames, contact sheets and clips it cuts from the
-file for its players.
+turns Marcarr's answers into the shapes FansCut's pages read. The tag list and
+every tag live in Marcarr, FansCut's cut tags (``fc:``) included; FansCut keeps the
+frames, contact sheets and clips it cuts from the file for its players.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..errors import FansCutError, NotFoundError
 from . import store as st
+from . import vocab
 from .link import Link, quoted, title_id
 from .text import match_person, speech
 
@@ -49,12 +50,16 @@ def _slug(text: str) -> str:
 class SceneService:
     def __init__(self, core: Core):
         self.core = core
-        self.store = st.SceneStore(core.db)  # FansCut's cut tags (fc:)
+        self.store = st.SceneStore(core.db)  # cut tags made before Marcarr kept them
         self.link = Link(lambda: self.core.cfg)
+        vocab.use(
+            lambda: self.link.get("/tags/vocabulary"), lambda: self.core.cfg.data_dir / "tags.json"
+        )
         self._clip_lock = threading.Lock()
         self._clip_locks: dict[str, threading.Lock] = {}
 
     def close(self) -> None:
+        vocab.use(None)
         self.link.close()
 
     # -- films --------------------------------------------------------------------
@@ -224,8 +229,6 @@ class SceneService:
         """Tag a film with the whole tag list: Marcarr's tags step, with the families,
         AI model and searches set in Marcarr. *families*, *sweep* and *mode* are
         checked and kept for old callers."""
-        from . import vocab
-
         self._index_or_fail(key)
         if mode not in ("full", "focused"):
             raise FansCutError("mode is full or focused")
@@ -242,8 +245,6 @@ class SceneService:
     ) -> dict[str, Any]:
         """Look for one tag. A tag outside the list becomes a Marcarr custom tag of this
         film first ("My tags"), with *description* as its hint; then the tags step runs."""
-        from . import vocab
-
         film = self.film(key)
         self._index_or_fail(key)
         t = st.norm_tag(tag)
@@ -259,10 +260,12 @@ class SceneService:
                         "scope": title_id(film),
                     },
                 )
+                vocab.forget()
         return self._run(key, ["tags"])
 
     def tidy(self, key: str) -> dict[str, int]:
-        """Merge duplicate cut-tag moments (Marcarr keeps sure AI tags by itself)."""
+        """Merge duplicate moments among the cut tags still kept here (Marcarr keeps
+        sure AI tags by itself)."""
         return self.store.tidy(key, self.core.cfg.scenes.auto_accept)
 
     def job(self, jid: str) -> dict[str, Any] | None:
@@ -511,11 +514,10 @@ class SceneService:
     def tags(
         self, film_keys: list[str] | None = None, tag: str | None = None, status: str | None = None
     ) -> list[dict[str, Any]]:
-        """Tagged moments: Marcarr's content tags and FansCut's own cut tags together."""
+        """Tagged moments: Marcarr's tags (content and cut tags), and the cut tags made
+        here before Marcarr kept them that have not been moved yet."""
         local = self.store.tags(film_keys, tag, status)
         want = st.norm_tag(tag) if tag else None
-        if want and want.startswith(st.SMART):
-            return local
         movies = self._movies()
         if film_keys is not None:  # unknown keys (a film gone from the library) have none
             by_key = {m.key: m for m in movies}
@@ -538,8 +540,6 @@ class SceneService:
         return sorted([*out, *local], key=lambda r: (r["film_key"], r["start"]))
 
     def tag_counts(self) -> list[dict[str, Any]]:
-        from . import vocab
-
         counts: dict[str, dict[str, int]] = {}
         for r in self.tags():
             for t in r["tags"]:
@@ -557,9 +557,9 @@ class SceneService:
         ]
 
     def add_tag(self, key: str, body: dict[str, Any], source: str = "user") -> dict[str, Any]:
-        """Tag a range. Content tags go to Marcarr (which snaps them to camera cuts), cut
-        tags (fc:) stay in FansCut; a person's tag is kept at once. Returns the first
-        moment made."""
+        """Tag a range, in Marcarr. Content tags are snapped to camera cuts; cut tags
+        (fc:) keep the exact times given. A person's tag is kept at once. Returns the
+        first moment made."""
         film = self.film(key)
         tags = st.clean_tags(body.get("tags"))
         content = [t for t in tags if not t.startswith(st.SMART)]
@@ -571,55 +571,90 @@ class SceneService:
             raise FansCutError(f"status must be one of {', '.join(st.STATUSES)}")
         conf = body.get("confidence")
         conf = float(conf) if conf is not None else None
-        src = str(body.get("source") or source)
         evidence = [str(x) for x in body.get("evidence") or []]
-        out: dict[str, Any] | None = None
-        if content:
-            vid = self.link.video_or_fail(film)
-            tid = title_id(film)
-            made = self.link.post(
-                f"/videos/{vid}/tags",
-                {
-                    "tags": content,
-                    "start": a,
-                    "end": b,
-                    "snap": bool(body.get("snap", True)),
-                    "people": self._person_ids(tid, people),
-                    "evidence": {"seen": evidence},
-                    "summary": str(body.get("summary") or ""),
-                    "confidence": conf,
-                    "status": status if status != "rejected" else "proposed",
-                },
-            )
-            made = made if isinstance(made, list) else [made]
-            if status != "proposed":  # an app proposes; FansCut's person decides here
-                verb = "keep" if status == "accepted" else "drop"
-                made = [
-                    self.link.post(f"/tags/{r['id']}/{verb}") if r["status"] != status else r
-                    for r in made
-                ]
-            out = {
-                **self._row(made[0], film, self._people_out(tid)),
-                "tags": content,
-                "ids": [r["id"] for r in made],
-            }
-        if smart:
-            row = self.store.add_tag(
-                key,
-                film.tmdb_id,
-                a,
-                b,
-                smart,
-                people,
-                str(body.get("summary") or ""),
-                source=src,
-                status=status,
-                confidence=conf,
-                evidence=evidence,
-            )
-            out = out or row
-        assert out is not None
-        return out
+        vid = self.link.video_or_fail(film)
+        made = self._send_tags(
+            film, vid, content, a, b, bool(body.get("snap", True)), people, evidence,
+            str(body.get("summary") or ""), conf, status,
+        ) + self._send_tags(
+            film, vid, smart, a, b, False, people, evidence,
+            str(body.get("summary") or ""), conf, status,
+        )
+        return {
+            **self._row(made[0], film, self._people_out(title_id(film))),
+            "tags": [r["tag"] for r in made],
+            "ids": [r["id"] for r in made],
+        }
+
+    def _send_tags(
+        self,
+        film: Any,
+        vid: str,
+        tags: list[str],
+        a: float,
+        b: float,
+        snap: bool,
+        people: list[dict[str, str]],
+        evidence: list[str],
+        summary: str,
+        conf: float | None,
+        status: str,
+    ) -> list[dict[str, Any]]:
+        """Add *tags* on one range in Marcarr and settle their status; the rows made."""
+        if not tags:
+            return []
+        made = self.link.post(
+            f"/videos/{vid}/tags",
+            {
+                "tags": tags,
+                "start": a,
+                "end": b,
+                "snap": snap,
+                "people": self._person_ids(title_id(film), people),
+                "evidence": {"seen": evidence},
+                "summary": summary,
+                "confidence": conf,
+                "status": status if status != "rejected" else "proposed",
+            },
+        )
+        made = made if isinstance(made, list) else [made]
+        if status != "proposed":  # an app proposes; FansCut's person decides here
+            verb = "keep" if status == "accepted" else "drop"
+            made = [
+                self.link.post(f"/tags/{r['id']}/{verb}") if r["status"] != status else r
+                for r in made
+            ]
+        return made
+
+    def move_cut_tags(self, dry_run: bool = False) -> dict[str, Any]:
+        """Copy the cut tags made here before Marcarr kept them into Marcarr, once.
+
+        Each row copied is marked moved and stays in the database; nothing is deleted.
+        A row whose film is gone from the library, or is not in Marcarr yet, is left
+        as it is and listed under ``skipped``: run this again once Marcarr has the film.
+        With *dry_run* nothing is sent or marked."""
+        moved, skipped = 0, []
+        films = {m.key: m for m in self._movies()}
+        for row in self.store.tags():
+            film = films.get(row["film_key"])
+            vid = self.link.video(film) if film is not None else None
+            if film is None or not vid:
+                why = "the film is not in the library"
+                if film is not None:
+                    why = "Marcarr does not have the film yet"
+                skipped.append(
+                    {"id": row["id"], "film_key": row["film_key"], "tags": row["tags"], "why": why}
+                )
+                continue
+            if not dry_run:
+                self._send_tags(
+                    film, vid, row["tags"], row["start"], row["end"], False, row["people"],
+                    row["evidence"], row["summary"], row["confidence"], row["status"],
+                )
+                self.store.mark_moved(row["id"])
+            moved += 1
+        return {"moved": moved, "skipped": skipped, "dry_run": dry_run,
+                "moved_before": self.store.moved() - (0 if dry_run else moved)}
 
     def _marcarr_tag(self, tid: str) -> dict[str, Any] | None:
         """A Marcarr tag by id (Marcarr's ids start ``tag_``, FansCut's are plain hex)."""

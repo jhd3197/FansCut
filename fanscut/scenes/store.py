@@ -1,5 +1,9 @@
-"""SQLite storage for FansCut's own cut tags (``fc:``). Everything else about a
-film's scenes (index, signals, cast, content tags) lives in Marcarr (link.py)."""
+"""SQLite storage of the cut tags (``fc:``) FansCut made before Marcarr kept them.
+
+Every tag of a film's scenes now lives in Marcarr (link.py), cut tags included.
+The rows here are the ones made earlier: they are still shown and can be edited
+until ``SceneService.move_cut_tags`` copies them to Marcarr, which marks each row
+moved (``moved_at``) and leaves it in place."""
 
 from __future__ import annotations
 
@@ -247,10 +251,19 @@ class SceneStore:
                 merged += 1
         return {"auto_accepted": accepted, "merged": merged}
 
+    def mark_moved(self, tid: str) -> None:
+        """This row is in Marcarr now: it is no longer listed here."""
+        self.db.execute("UPDATE scene_tags SET moved_at = ? WHERE id = ?", (_now(), tid))
+
+    def moved(self) -> int:
+        r = self.db.one("SELECT COUNT(*) AS n FROM scene_tags WHERE moved_at IS NOT NULL")
+        return int(r["n"]) if r else 0
+
     def tags(
         self, film_keys: list[str] | None = None, tag: str | None = None, status: str | None = None
     ) -> list[dict[str, Any]]:
-        sql, args = "SELECT * FROM scene_tags WHERE 1=1", []
+        """The tags still kept here (the ones moved to Marcarr are left out)."""
+        sql, args = "SELECT * FROM scene_tags WHERE moved_at IS NULL", []
         if film_keys is not None:
             if not film_keys:
                 return []
@@ -276,7 +289,7 @@ class SceneStore:
 
     def tag_counts(self) -> list[dict[str, Any]]:
         counts: dict[str, dict[str, int]] = {}
-        for r in self.db.query("SELECT tags, status FROM scene_tags"):
+        for r in self.db.query("SELECT tags, status FROM scene_tags WHERE moved_at IS NULL"):
             for t in json.loads(r["tags"]):
                 c = counts.setdefault(t, {"proposed": 0, "accepted": 0, "rejected": 0})
                 c[r["status"]] += 1

@@ -262,8 +262,10 @@ class ScenesCfg(BaseModel):
     def _closely(cls, v: list[str]) -> list[str]:
         from .scenes import vocab
 
-        known = {t["id"] for t in vocab.content_tags()}
-        bad = [t for t in v if t not in known]
+        # The list comes from Marcarr; before it has been read once there is nothing
+        # to check against, and Marcarr ignores a tag it does not know.
+        known = {t["id"] for t in [*vocab.content_tags(), *vocab.custom_tags()]}
+        bad = [t for t in v if t not in known] if known else []
         if bad:
             raise ValueError(f"unknown tag: {', '.join(bad)}")
         return list(dict.fromkeys(v))
