@@ -1,4 +1,4 @@
-"""The shared tag list, from Marcarr (``marcarr.stages.vocab``, see docs/markers.md).
+"""The shared tag list (``tags_v1.json``, the same list Marcarr ships; see docs/markers.md).
 
 Content tags have plain ids (``christmas``); FansCut's own cut tags carry
 ``fc:`` (``fc:filler``). The app shows names only, never the prefix.
@@ -8,20 +8,22 @@ are not tags and are never shown as tags.
 
 from __future__ import annotations
 
+import json
 from functools import cache
+from importlib import resources
 from typing import Any
 
-from marcarr.stages import vocab as _m
-
-SMART = _m.SMART
+SMART = "fc:"
 
 
+@cache
 def load() -> dict[str, Any]:
-    return _m.load()
+    raw = resources.files("fanscut.scenes").joinpath("tags_v1.json").read_text(encoding="utf-8")
+    return json.loads(raw)
 
 
 def families() -> list[str]:
-    return _m.families()
+    return list(load()["families"])
 
 
 def content_tags(families_off: list[str] | tuple[str, ...] = ()) -> list[dict[str, Any]]:

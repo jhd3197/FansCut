@@ -1,7 +1,8 @@
-"""Scene tagging: cut tags, the shared tag list, and the API over the embedded Marcarr.
+"""Scene tagging: cut tags, the shared tag list, and the API over Marcarr's.
 
 The analysis itself (subtitles, scene grouping, the AI pass, faces, signals) is
-Marcarr's and tested there; these tests check FansCut's side of it.
+Marcarr's and tested there. These tests run a real Marcarr app in-process and point
+FansCut's link at it, so every call goes through Marcarr's HTTP API.
 """
 
 from __future__ import annotations
@@ -57,7 +58,7 @@ def test_cut_tags_keep_their_prefix():
         st.norm_tag("fc:")
 
 
-def test_vocab_comes_from_marcarr():
+def test_vocab_ships_with_the_package():
     from fanscut.config import FAMILIES
     from fanscut.scenes import vocab
 
@@ -115,21 +116,49 @@ def test_films_become_marcarr_titles():
         "local:fanscut:foldermovie-inception-2010"
 
 
-def test_marcarr_settings_follow_fanscut(cfg, tmp_path):
-    cfg.ai.model = "ollama/qwen"
-    cfg.ai.vision_model = "ollama/qwen-vl"
-    cfg.scenes.families_off = ["content"]
-    cfg.scenes.auto_accept = 0.8
-    cfg.scenes.signals = False
-    cfg.catalogues.tmdb_api_key = "k"
-    m = link.marcarr_config(cfg)
-    assert m.ai.enabled and m.ai.model == "ollama/qwen" and m.ai.vision_model == "ollama/qwen-vl"
-    assert m.ai.auto_accept == 0.8 and m.tags.families_off == ["content"]
-    assert m.analysis.steps["signals"] is False and m.analysis.on_new is False
-    assert m.catalogues.tmdb_api_key == "k"
-    assert m.data_dir == cfg.data_dir / "marcarr"
-    cfg.marcarr.data_dir = str(tmp_path / "elsewhere")
-    assert link.marcarr_config(cfg).data_dir == tmp_path / "elsewhere"
+def test_the_link_reports_what_marcarr_says(cfg):
+    import requests
+
+    from fanscut.errors import ClientError, FansCutError, NotFoundError
+
+    class Reply:
+        def __init__(self, status, body=None):
+            self.status_code, self._body = status, body
+            self.content = b"x" if body is not None else b""
+            self.text = ""
+
+        def json(self):
+            return self._body
+
+    sent = []
+
+    class Http:
+        def __init__(self, reply):
+            self.reply = reply
+
+        def request(self, method, path, **kw):
+            sent.append((method, path, kw))
+            if isinstance(self.reply, Exception):
+                raise self.reply
+            return self.reply
+
+    from fanscut.config import Config
+
+    assert Config().marcarr.url == "http://127.0.0.1:7470"
+    cfg.marcarr.api_key = "mk_test"
+    ln = link.Link(lambda: cfg)
+    ln.use(Http(Reply(200, {"ok": 1})))
+    assert ln.get("/status", skip=None, x=1) == {"ok": 1}
+    method, path, kw = sent[-1]
+    assert (method, path, kw["params"]) == ("GET", "/status", {"x": 1})
+    assert kw["headers"] == {"X-Marcarr-Client": "fanscut", "X-Api-Key": "mk_test"}
+    for status, err in ((404, NotFoundError), (403, ClientError), (500, ClientError), (400, FansCutError)):
+        ln.use(Http(Reply(status, {"detail": "nope"})))
+        with pytest.raises(err):
+            ln.get("/x")
+    ln.use(Http(requests.ConnectionError("refused")))
+    with pytest.raises(ClientError, match="did not answer"):
+        ln.get("/x")
 
 
 def test_vocab_api_and_cut_tag_counts(cfg, tmp_path):
@@ -164,17 +193,45 @@ def film_dir(tmp_path_factory):
 
 
 @pytest.fixture
-def sc(cfg, tmp_path, film_dir, monkeypatch):
+def marcarr(tmp_path, film_dir):
+    """A Marcarr with the test film, as if it had scanned it from Plex."""
+    from marcarr.config import Config as MarcarrConfig
+    from marcarr.core import Core as MarcarrCore
+
+    mcfg = MarcarrConfig.model_validate({"server": {"data_dir": str(tmp_path / "marcarr")},
+                                         "setup_done": True})
+    m = MarcarrCore(mcfg, tmp_path / "marcarr.yaml", start_worker=False)
+    m.store.upsert_title({"id": "movie:tmdb:671", "type": "movie", "name": "Snow Film",
+                          "sort_name": "snow film", "year": 2001, "tmdb_id": 671})
+    m.library.add_file("movie:tmdb:671", str(film_dir / "Snow Film (2001) {tmdb-671}" / "film.mkv"))
+    yield m
+    m.close()
+
+
+def marcarr_ai(m) -> None:
+    """Turn Marcarr's AI on (its tags step is off without a model)."""
+    m.cfg = m.cfg.model_copy(update={"ai": m.cfg.ai.model_copy(update={"enabled": True, "model": "ollama/test"})})
+    m.forget_caps()
+
+
+@pytest.fixture
+def sc(cfg, tmp_path, film_dir, marcarr, monkeypatch):
+    from marcarr.server import create_app as marcarr_app
+
     cfg.library.movies.path = str(film_dir)
     cfg.catalogues.offline = True
     cfg.scenes.signals = False  # measuring needs no model, but takes a while; its own check below
+    cfg.marcarr.url = "http://marcarr.test"  # where photos are linked; calls go to the app below
     monkeypatch.setattr("fanscut.browse._collections_of", lambda m: ["Snow Saga"])
     with TestClient(create_app(cfg, tmp_path / "config.yaml", start_worker=False)) as c:
         c.core = c.app.state.core  # type: ignore[attr-defined]
+        c.core.scenes.link.use(TestClient(marcarr_app(marcarr), base_url="http://marcarr/api/v1"))
         film = c.get("/api/scenes/films").json()["films"][0]
         assert film["franchises"] == ["Snow Saga"] and film["indexed"] is False
+        assert film["in_marcarr"] is True
         c.key = film["key"]
-        c.run = c.core.scenes.marcarr.worker.run_pending  # Marcarr's jobs, by hand
+        c.m = marcarr
+        c.run = marcarr.worker.run_pending  # Marcarr's jobs, by hand
         yield c
 
 
@@ -228,23 +285,23 @@ def test_scene_api_end_to_end(sc, monkeypatch):
     assert (t["status"], t["tags"], t["source"]) == ("accepted", ["christmas"], "user")
     assert t["end"] == pytest.approx(10.0, abs=0.1)
     assert t["id"].startswith("tag_")
-    assert sc.core.scenes.marcarr.store.tag(t["id"])["source"] == "person"
+    assert sc.m.store.tag(t["id"])["source"] == "fanscut"  # Marcarr knows it came from FansCut
     # a cut tag stays in FansCut
     fc = sc.post("/api/scenes/tags", json={"key": key, "start": 20, "end": 30, "tags": ["fc:filler"]}).json()
     assert not fc["id"].startswith("tag_")
 
     # The cast (Plex or TMDB in real use) is Marcarr's.
-    sc.core.scenes.marcarr.store.save_cast("movie:tmdb:671", "test", [
+    sc.m.store.save_cast("movie:tmdb:671", "test", [
         {"name": "Daniel Radcliffe", "character": "Harry Potter", "photo": "h.jpg"}])
     cast = sc.get("/api/scenes/cast", params={"key": key}).json()["cast"]
-    assert cast == [{"name": "Daniel Radcliffe", "character": "Harry Potter", "photo": "h.jpg",
+    photo = "http://marcarr.test/api/v1/people/harry-potter/photo"  # Marcarr serves it
+    assert cast == [{"name": "Daniel Radcliffe", "character": "Harry Potter", "photo": photo,
                      "id": "harry-potter"}]
 
     # The AI: Marcarr's tags step, with its model calls faked.
-    sc.core.cfg.ai.model = "ollama/test"
-    sc.core.scenes.link.apply_config(sc.core.cfg)
+    marcarr_ai(sc.m)
     _fake_ai(monkeypatch)
-    sc.core.scenes.marcarr.store.delete_tag(t["id"])  # so the AI's christmas is not a duplicate
+    sc.m.store.delete_tag(t["id"])  # so the AI's christmas is not a duplicate
     job = sc.post("/api/scenes/label", json={"key": key}).json()
     sc.run()
     assert sc.get(f"/api/jobs/{job['id']}").json()["status"] == "done"
@@ -258,7 +315,7 @@ def test_scene_api_end_to_end(sc, monkeypatch):
     assert kept["status"] == "accepted" and kept["film_key"] == key
     xr = sc.get("/api/scenes/xray", params={"key": key, "t": 5}).json()
     assert xr["tags"][0]["tags"] == ["christmas"]
-    assert xr["people"][0]["character"] == "Harry Potter" and xr["people"][0]["photo"] == "h.jpg"
+    assert xr["people"][0]["character"] == "Harry Potter" and xr["people"][0]["photo"] == photo
     faces = sc.get("/api/scenes/faces", params={"key": key, "t": 5}).json()
     assert faces["faces"] == [] and faces["width"] == 320  # no face models in tests
 
@@ -282,8 +339,6 @@ def test_scene_api_end_to_end(sc, monkeypatch):
 @needs_prompture_video
 def test_signals_are_measured_by_marcarr(sc):
     key = sc.key
-    sc.core.cfg.scenes.signals = True
-    sc.core.scenes.link.apply_config(sc.core.cfg)
     assert sc.get("/api/scenes/signals", params={"key": key}).status_code == 404
     assert sc.post("/api/scenes/signals", json={"key": key}).status_code == 400  # needs the index
     sc.post("/api/scenes/index", json={"key": key})

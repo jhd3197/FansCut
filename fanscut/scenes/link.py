@@ -1,26 +1,27 @@
-"""Marcarr inside FansCut: the scene analysis (shots, subtitles, scenes, signals,
-cast, faces, tags) runs in an embedded Marcarr, which keeps its own database under
-``<data_dir>/marcarr``. FansCut keeps what is its own: the film list, cut tags
-(``fc:``), frames, contact sheets and clips cut from the file.
+"""The link to Marcarr: the server that analyses the films (shots, subtitles, scenes,
+signals, cast, faces and tags). FansCut talks to it over its HTTP API
+(``marcarr.url``, with ``marcarr.api_key`` when it asks for one).
 
-A FansCut film becomes a Marcarr title (``movie:tmdb:<id>``, or
-``local:fanscut:<slug>`` for a film with no TMDB id) and its file a Marcarr video.
-The Marcarr settings follow FansCut's (AI model, TMDB key, Plex, tag families).
+A FansCut film is the Marcarr title ``movie:tmdb:<id>``: Marcarr knows a film once
+it has scanned it from Plex. FansCut keeps what is its own: cut tags (``fc:``),
+and the frames, contact sheets and clips it cuts from the file.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+import time
+from typing import Any
+from urllib.parse import quote
 
-from ..errors import FansCutError
+import requests
 
-if TYPE_CHECKING:
-    from marcarr.core import Core as MarcarrCore
+from ..errors import ClientError, FansCutError, NotFoundError
 
-    from ..config import Config
+TITLES_FOR = 20.0  # seconds a listing of Marcarr's titles is reused
+log = logging.getLogger(__name__)
 
 
 def title_id(film: Any) -> str:
@@ -31,114 +32,139 @@ def title_id(film: Any) -> str:
     return f"local:fanscut:{slug}"
 
 
-def marcarr_config(cfg: Config) -> Any:
-    """Marcarr's settings, worked out from FansCut's."""
-    from marcarr.config import Config as MConfig
-
-    ai, sc = cfg.ai, cfg.scenes
-    data = Path(cfg.marcarr.data_dir) if cfg.marcarr.data_dir else cfg.data_dir / "marcarr"
-    off = [f for f in sc.families_off if f]
-    steps = {"signals": bool(sc.signals), "faces": bool(cfg.marcarr.faces)}
-    plex = cfg.library.plex
-    return MConfig.model_validate(
-        {
-            "server": {"data_dir": str(data)},
-            "setup_done": True,
-            "plex": {"url": plex.url or "", "token": plex.token or ""},
-            "ai": {
-                "enabled": bool(ai.model),
-                "model": ai.model,
-                "vision_model": ai.vision_model,
-                "base_url": ai.base_url,
-                "api_key": ai.api_key,
-                "timeout": ai.timeout,
-                "auto_accept": sc.auto_accept,
-            },
-            "tags": {"families_off": off, "search_closely": list(sc.search_closely)},
-            "analysis": {"steps": steps, "on_new": False},
-            "catalogues": {"tmdb_api_key": cfg.catalogues.tmdb_api_key},
-            "ffmpeg": {"binary": cfg.ffmpeg.binary, "probe_binary": cfg.ffmpeg.probe_binary},
-        }
-    )
+def quoted(tid: str) -> str:
+    return quote(tid, safe="")
 
 
 class Link:
-    """The embedded Marcarr, started on first use."""
+    """Marcarr's API, called from FansCut."""
 
     def __init__(self, get_cfg: Any):
         self._get_cfg = get_cfg
-        self._core: MarcarrCore | None = None
+        self._http: Any = None  # tests: a client bound to a Marcarr app
+        self._session = requests.Session()
+        self._titles: tuple[float, dict[str, dict[str, Any]]] | None = None
         self._lock = threading.Lock()
-        self._run_worker = False
-        self._videos: dict[tuple[str, str, float, int], str] = {}
 
-    @property
-    def core(self) -> MarcarrCore:
-        with self._lock:
-            if self._core is None:
-                try:
-                    from marcarr.core import Core
-                except ImportError as exc:  # pragma: no cover - a broken install
-                    raise FansCutError("scene analysis needs Marcarr: pip install marcarr") from exc
-                mcfg = marcarr_config(self._get_cfg())
-                self._core = Core(
-                    mcfg, mcfg.data_dir / "config.yaml", start_worker=self._run_worker
-                )
-            return self._core
-
-    def start_worker(self) -> None:
-        """Run Marcarr's jobs in the background (the server does; tests run them by hand)."""
-        self._run_worker = True
-        if self._core is not None:
-            self._core.worker.start()
-
-    def apply_config(self, cfg: Config) -> None:
-        """FansCut's settings changed: Marcarr's follow (kept in memory, never written)."""
-        if self._core is not None:
-            self._core.cfg = marcarr_config(cfg)
-            self._core.forget_caps()
+    def use(self, http: Any) -> None:
+        """Send requests through *http* instead (tests): anything with ``request()``
+        whose base URL already ends in ``/api/v1``."""
+        self._http = http
+        self.forget()
 
     def close(self) -> None:
+        self._session.close()
+
+    def forget(self) -> None:
         with self._lock:
-            if self._core is not None:
-                self._core.close()
-                self._core = None
+            self._titles = None
+
+    @property
+    def base(self) -> str:
+        return str(self._get_cfg().marcarr.url or "").rstrip("/")
+
+    # -- calls ---------------------------------------------------------------------
+    def call(
+        self, method: str, path: str, *, params: dict[str, Any] | None = None, json: Any = None
+    ) -> Any:
+        cfg = self._get_cfg().marcarr
+        headers = {"X-Marcarr-Client": "fanscut"}
+        if cfg.api_key:
+            headers["X-Api-Key"] = cfg.api_key
+        params = {k: v for k, v in (params or {}).items() if v is not None}
+        try:
+            if self._http is not None:
+                r = self._http.request(method, path, params=params, json=json, headers=headers)
+            else:
+                if not self.base:
+                    raise FansCutError("set Marcarr's address in Settings (marcarr.url)")
+                r = self._session.request(
+                    method,
+                    self.base + "/api/v1" + path,
+                    params=params,
+                    json=json,
+                    headers=headers,
+                    timeout=cfg.timeout,
+                )
+        except requests.RequestException as exc:
+            raise ClientError(f"Marcarr at {self.base} did not answer: {exc}") from exc
+        if r.status_code == 404:
+            raise NotFoundError(self._detail(r) or f"Marcarr has no {path}")
+        if r.status_code in (401, 403):
+            raise ClientError(
+                f"Marcarr refused FansCut ({r.status_code}): set marcarr.api_key "
+                "to a key with the read, propose, review and run scopes",
+                r.status_code,
+            )
+        if r.status_code >= 500:
+            raise ClientError(f"Marcarr failed ({r.status_code}): {self._detail(r)}", r.status_code)
+        if r.status_code >= 400:
+            raise FansCutError(self._detail(r) or f"Marcarr said {r.status_code}")
+        if r.status_code == 204 or not r.content:
+            return None
+        return r.json()
+
+    @staticmethod
+    def _detail(r: Any) -> str:
+        try:
+            d = r.json()
+        except ValueError:
+            return str(r.text or "")[:300]
+        return str(d.get("detail") or "") if isinstance(d, dict) else ""
+
+    def get(self, path: str, **params: Any) -> Any:
+        return self.call("GET", path, params=params)
+
+    def post(self, path: str, body: Any = None) -> Any:
+        return self.call("POST", path, json=body if body is not None else {})
 
     # -- films and videos ----------------------------------------------------------
-    def video(self, film: Any, register: bool = False) -> str | None:
-        """The Marcarr video of a film's file. Only a lookup unless *register*: telling
-        Marcarr about a file reads parts of it, so it waits until analysis is asked for."""
-        m = self.core
-        tid = title_id(film)
-        path = getattr(film, "file", None) or ""
-        if register:
-            if not path or not Path(path).is_file():
-                raise FansCutError(f"{film.title} has no file on disk")
-            st = Path(path).stat()
-            slot = (tid, path, st.st_mtime, st.st_size)
-            if slot in self._videos:
-                return self._videos[slot]
-            self._upsert_title(film, tid)
-            vid = m.library.add_file(tid, path)
-            self._videos[slot] = vid
-            return vid
-        cur = m.store.current_video(tid)
-        return cur["id"] if cur else None
+    def titles(self) -> dict[str, dict[str, Any]]:
+        """Marcarr's titles by id (a listing reused for a few seconds). Empty when
+        Marcarr can't be reached, so lists show what FansCut has on its own."""
+        with self._lock:
+            if self._titles and time.monotonic() - self._titles[0] < TITLES_FOR:
+                return self._titles[1]
+        if self._http is None and not self.base:
+            return {}  # no Marcarr set up
+        try:
+            out = self._list_titles()
+        except ClientError as exc:  # remembered too, so a page doesn't wait on it again and again
+            log.warning("scene data from Marcarr is not available: %s", exc)
+            out = {}
+        with self._lock:
+            self._titles = (time.monotonic(), out)
+        return out
 
-    def _upsert_title(self, film: Any, tid: str) -> None:
-        key = str(film.key)
-        plex_key = key.split(":", 1)[1] if key.startswith("plexmovie:") else None
-        name = film.title or key
-        self.core.store.upsert_title(
-            {
-                "id": tid,
-                "type": "movie",
-                "name": name,
-                "sort_name": name.lower(),
-                "year": film.year,
-                "tmdb_id": film.tmdb_id,
-                "plex_key": plex_key,
-                "duration": film.duration,
-                "file": getattr(film, "file", "") or "",
-            }
-        )
+    def _list_titles(self) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        page = 1
+        while True:
+            d = self.get("/titles", type="movie", per_page=500, page=page)
+            for t in d.get("items") or []:
+                out[t["id"]] = t
+            if page * 500 >= int(d.get("total") or 0):
+                break
+            page += 1
+        return out
+
+    def summary(self, film: Any) -> dict[str, Any] | None:
+        return self.titles().get(title_id(film))
+
+    def video(self, film: Any) -> str | None:
+        """The Marcarr video of a film, or None when Marcarr doesn't have it."""
+        t = self.summary(film)
+        return t.get("video_id") if t else None
+
+    def video_or_fail(self, film: Any) -> str:
+        vid = self.video(film)
+        if vid:
+            return vid
+        self.forget()  # it may have just been scanned
+        vid = self.video(film)
+        if not vid:
+            raise FansCutError(
+                f"Marcarr doesn't have {film.title} yet: it picks films up from Plex "
+                "on its next library scan"
+            )
+        return vid

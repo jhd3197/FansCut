@@ -149,7 +149,6 @@ def create_app(cfg: Config | None = None, config_path: Path | str | None = None,
         if start_worker:
             core.worker.start()
             core.scheduler.start()
-            core.scenes.link.start_worker()  # the embedded Marcarr runs its analysis jobs
         core.sweep_renders()
         yield
         core.scheduler.stop()

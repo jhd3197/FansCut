@@ -41,6 +41,7 @@ def cfg(tmp_path: Path) -> Config:
     c.paths.output_dir = str(tmp_path / "output")
     c.fillers.dir = str(tmp_path / "fillers")
     shutil.copytree(FIXTURES / "fillers", c.fillers.dir)
+    c.marcarr.url = ""  # no Marcarr: tests that need one bind the link to an in-process app
     return c
 
 

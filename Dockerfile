@@ -28,9 +28,6 @@ WORKDIR /app
 # pulls in, so two builds of one commit install the same bytes.
 COPY requirements.lock .
 RUN --mount=type=cache,target=/root/.cache/pip pip install --require-hashes -r requirements.lock
-# Marcarr (the embedded scene analysis) comes from GitHub, so it can't be hash-pinned;
-# its dependencies are in the lock above.
-RUN pip install --no-cache-dir --no-deps "marcarr @ https://github.com/jhd3197/marcarr/archive/refs/heads/main.tar.gz"
 
 COPY pyproject.toml README.md ./
 COPY fanscut ./fanscut

@@ -174,7 +174,7 @@ class Core:
                 http_jikan=CachedHttp(self.db, 0.4, cat.cache_days, cat.offline, self.session),
                 http_anilist=CachedHttp(self.db, 0.8, cat.cache_days, cat.offline, self.session))
             self._fillers: anifiller.FillerIndex | None = None
-            self.scenes.link.apply_config(cfg)  # Marcarr's settings follow FansCut's
+            self.scenes.link.forget()  # Marcarr's address may have changed
 
     # -- filler data ----------------------------------------------------------
     @property

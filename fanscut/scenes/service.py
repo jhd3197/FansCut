@@ -1,10 +1,10 @@
 """Scene tagging for the API, the MCP server and the posters: one place over Core.
 
 The analysis itself (shots, subtitles, scenes, signals, cast, faces and the AI
-tagger) runs in the embedded Marcarr (link.py). This service turns FansCut films
-into Marcarr videos and Marcarr's answers back into the shapes FansCut's pages
-read. FansCut keeps its own cut tags (``fc:``), and the frames, contact sheets
-and clips it cuts from the file for its players.
+tagger) runs in Marcarr, which FansCut calls over HTTP (link.py). This service
+turns Marcarr's answers into the shapes FansCut's pages read. FansCut keeps its
+own cut tags (``fc:``), and the frames, contact sheets and clips it cuts from the
+file for its players.
 """
 
 from __future__ import annotations
@@ -18,7 +18,8 @@ from typing import TYPE_CHECKING, Any
 
 from ..errors import FansCutError, NotFoundError
 from . import store as st
-from .link import Link, title_id
+from .link import Link, quoted, title_id
+from .text import match_person, speech
 
 if TYPE_CHECKING:
     from ..core import Core
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 MAX_CLIP = 300.0
 MAX_SHEET_TILES = 24
 INDEX_STEPS = ["shots", "subtitles", "scenes"]
+NEEDS_RUN = ("notrun", "rerun", "failed")  # Marcarr step states with work left
 
 
 def _evidence_texts(ev: dict[str, Any]) -> list[str]:
@@ -52,11 +54,6 @@ class SceneService:
         self._clip_lock = threading.Lock()
         self._clip_locks: dict[str, threading.Lock] = {}
 
-    @property
-    def marcarr(self) -> Any:
-        """The embedded Marcarr's Core."""
-        return self.link.core
-
     def close(self) -> None:
         self.link.close()
 
@@ -77,8 +74,12 @@ class SceneService:
             raise NotFoundError(f"{m.title} has no file on disk")
         return m, m.file
 
-    def _video(self, key: str, register: bool = False) -> str | None:
-        return self.link.video(self.film(key), register=register)
+    def _video(self, key: str) -> str | None:
+        return self.link.video(self.film(key))
+
+    def _info(self, vid: str) -> dict[str, Any]:
+        """Marcarr's video: step states and details, counts, subtitle source."""
+        return dict(self.link.get(f"/videos/{vid}"))
 
     def _doc(self, key: str) -> dict[str, Any] | None:
         """The film's index (shots, subtitle lines, automatic scenes) once Marcarr has
@@ -86,14 +87,24 @@ class SceneService:
         vid = self._video(key)
         if vid is None:
             return None
-        m = self.marcarr
-        if not m.store.result(vid, "scenes"):
+        info = self._info(vid)
+        if info["steps"].get("scenes") != "done":
             return None
-        doc = m.pipeline.index_doc(vid)
-        subs = m.store.result(vid, "subtitles") or {}
-        src = subs.get("source") or {}
-        doc["subtitles"] = {**src, "kind": src.get("kind") or "none", "lines": len(doc["lines"])}
-        return doc
+        a = self.link.get(f"/videos/{vid}/analysis")
+        v = a["video"]
+        lines = a.get("subtitles") or []
+        kind = (info.get("subtitles") or {}).get("kind") or "none"
+        return {
+            "duration": v.get("duration"),
+            "width": v.get("width"),
+            "height": v.get("height"),
+            "shots": a.get("shots") or [],
+            "lines": lines,
+            "scenes": [
+                {"start": s["start"], "end": s["end"], "n": s["n"]} for s in a.get("scenes") or []
+            ],
+            "subtitles": {"kind": kind, "lines": len(lines)},
+        }
 
     def _index_or_fail(self, key: str) -> dict[str, Any]:
         doc = self._doc(key)
@@ -107,14 +118,15 @@ class SceneService:
         movies = self._movies()
         if collection:
             collection = resolve_collection(movies, collection)
-        rows = self.tags([m.key for m in movies])
+        titles = self.link.titles()
         out = []
         for m in movies:
             cols = _collections_of(m)
             if collection and collection not in cols:
                 continue
-            doc_scenes = self._scene_count(m)
-            mine = [t for t in rows if t["film_key"] == m.key]
+            t = titles.get(title_id(m)) or {}
+            steps = t.get("steps") or {}
+            indexed = steps.get("scenes") == "done"
             out.append(
                 {
                     "key": m.key,
@@ -126,22 +138,16 @@ class SceneService:
                     "collections": cols,
                     # what a cut may span: Plex smart lists ("Popular on My Server") aren't
                     "franchises": [c for c in cols if not NOT_A_FRANCHISE.search(c)],
-                    "indexed": doc_scenes is not None,
-                    "scenes": doc_scenes,
+                    "in_marcarr": bool(t.get("video_id")),
+                    "indexed": indexed,
+                    "scenes": None,
                     "tags": {
-                        "proposed": sum(t["status"] == "proposed" for t in mine),
-                        "accepted": sum(t["status"] == "accepted" for t in mine),
+                        "proposed": int(t.get("to_review") or 0),
+                        "accepted": 0,
                     },
                 }
             )
         return sorted(out, key=lambda f: (f["year"] or 0, f["title"]))
-
-    def _scene_count(self, film: Any) -> int | None:
-        vid = self.link.video(film)
-        if vid is None:
-            return None
-        doc = self.marcarr.store.result(vid, "scenes")
-        return len(doc.get("scenes") or []) if doc else None
 
     def overview(self, key: str, with_lines: bool = True) -> dict[str, Any]:
         m = self.film(key)
@@ -171,29 +177,38 @@ class SceneService:
         }
 
     # -- analysis jobs (run by Marcarr) -------------------------------------------------
-    def _run(self, key: str, steps: list[str]) -> dict[str, Any]:
-        m, _ = self._file(key)
-        vid = self.link.video(m, register=True)
-        assert vid is not None
-        out = self.marcarr.pipeline.submit(vid, steps)
+    def _run(self, key: str, steps: list[str] | None) -> dict[str, Any]:
+        """Ask Marcarr to run *steps* (None: every step it has left) on the film."""
+        film = self.film(key)
+        vid = self.link.video_or_fail(film)
+        if steps is None:
+            info = self._info(vid)
+            steps = [s for s, state in info["steps"].items() if state in NEEDS_RUN]
+            if not steps:
+                return {
+                    "id": None,
+                    "kind": "marcarr",
+                    "title": f"Analyse {film.title}",
+                    "status": "done",
+                    "video": vid,
+                    "steps": [],
+                    "position": 0,
+                }
+        out = self.link.post(f"/videos/{vid}/run", {"steps": steps})
+        self.link.forget()
         return {
             "id": out.get("job"),
             "kind": "marcarr",
-            "title": f"Analyse {m.title}",
-            "status": "queued" if out["queued"] else "done",
+            "title": f"Analyse {film.title}",
+            "status": "queued" if out.get("queued") else "done",
             "video": vid,
             "steps": out.get("steps") or [],
             "position": out.get("position", 0),
         }
 
     def submit_index(self, key: str, transcribe: bool = False) -> dict[str, Any]:
-        """Shots, subtitle lines and automatic scenes; with signals measured after
-        when Settings ask for it. *transcribe*: no text subtitles, so hear the audio."""
-        if transcribe:
-            m = self.marcarr
-            m.cfg = m.cfg.model_copy(
-                update={"analysis": m.cfg.analysis.model_copy(update={"transcribe": True})}
-            )
+        """Shots, subtitle lines and automatic scenes (Marcarr follows on with the rest
+        its settings ask for). *transcribe* is Marcarr's setting now."""
         steps = [*INDEX_STEPS, "cast"]
         if self.core.cfg.scenes.signals:
             steps.append("signals")
@@ -206,57 +221,44 @@ class SceneService:
     def submit_label(
         self, key: str, families: list[str] | None = None, sweep: bool = False, mode: str = "full"
     ) -> dict[str, Any]:
-        """Tag a film with the whole tag list (Marcarr's tags step). *sweep* and *mode*
-        are kept for old callers: Marcarr always looks at quiet stretches and searches
-        the Settings tags closely."""
+        """Tag a film with the whole tag list: Marcarr's tags step, with the families,
+        AI model and searches set in Marcarr. *families*, *sweep* and *mode* are
+        checked and kept for old callers."""
         from . import vocab
 
-        self._file(key)
         self._index_or_fail(key)
-        if not self.core.cfg.ai.model:
-            raise FansCutError("set an AI model in Settings first")
         if mode not in ("full", "focused"):
             raise FansCutError("mode is full or focused")
-        known = vocab.families()
         if families is not None:
-            bad = [f for f in families if f not in known]
+            bad = [f for f in families if f not in vocab.families()]
             if bad:
                 raise FansCutError(f"unknown tag family: {', '.join(bad)}")
             if not families:
                 raise FansCutError("pick at least one tag family")
-            m = self.marcarr
-            off = [f for f in known if f not in families]
-            m.cfg = m.cfg.model_copy(
-                update={"tags": m.cfg.tags.model_copy(update={"families_off": off})}
-            )
         return self._run(key, ["tags"])
 
     def submit_ai(
         self, key: str, tag: str, description: str = "", verify: bool = True, sweep: bool = False
     ) -> dict[str, Any]:
-        """Search a film closely for one tag. A tag outside the list becomes a Marcarr
-        custom tag of this film, with *description* as its hint."""
+        """Look for one tag. A tag outside the list becomes a Marcarr custom tag of this
+        film first ("My tags"), with *description* as its hint; then the tags step runs."""
         from . import vocab
 
-        film, _ = self._file(key)
+        film = self.film(key)
         self._index_or_fail(key)
         t = st.norm_tag(tag)
-        if not self.core.cfg.ai.model:
-            raise FansCutError("set an AI model in Settings first")
-        m = self.marcarr
-        if vocab.get(t):
-            closely = list(dict.fromkeys([*m.cfg.tags.search_closely, t]))
-            m.cfg = m.cfg.model_copy(
-                update={"tags": m.cfg.tags.model_copy(update={"search_closely": closely})}
-            )
-        elif not any(x["id"] == t for x in m.store.custom_tags()):
-            self.link.video(film, register=True)
-            m.store.add_custom_tag(
-                t.replace("-", " ").title(),
-                tag_id=t,
-                hint=description[:300],
-                title_id=title_id(film),
-            )
+        if not vocab.get(t):
+            mine = self.link.get("/tags").get("mine") or []
+            if not any(x["id"] == t for x in mine):
+                self.link.post(
+                    "/tags/mine",
+                    {
+                        "name": t.replace("-", " ").capitalize(),
+                        "id": t,
+                        "hint": description[:300],
+                        "scope": title_id(film),
+                    },
+                )
         return self._run(key, ["tags"])
 
     def tidy(self, key: str) -> dict[str, int]:
@@ -266,15 +268,26 @@ class SceneService:
     def job(self, jid: str) -> dict[str, Any] | None:
         """A Marcarr analysis job, shaped like a FansCut job (for /api/jobs/{id})."""
         try:
-            j = self.marcarr.jobs.get(jid)
-        except Exception:  # noqa: BLE001 - not one of Marcarr's
+            rows = self.link.get("/jobs", limit=500)
+        except FansCutError:
             return None
-        return dict(j) if j else None
+        return next((dict(j) for j in rows if j.get("id") == jid), None)
+
+    def cancel_job(self, jid: str) -> dict[str, Any]:
+        return dict(self.link.post(f"/jobs/{jid}/cancel"))
 
     # -- signals (measured, never tags) ---------------------------------------------
     def signals_of(self, key: str) -> dict[str, Any] | None:
         vid = self._video(key)
-        return self.marcarr.store.result(vid, "signals") if vid else None
+        if not vid:
+            return None
+        rows = self.link.get(f"/videos/{vid}/signals").get("items") or []
+        if not rows:
+            return None
+        out: dict[str, list[list[float]]] = {}
+        for r in rows:
+            out.setdefault(r["signal"], []).append([r["start"], r["end"]])
+        return {"signals": out}
 
     def signals(self, key: str) -> dict[str, Any]:
         found = self.signals_of(key)
@@ -284,17 +297,15 @@ class SceneService:
 
     # -- looking at the film ------------------------------------------------------
     def transcript(
-        self, key: str, start: float = 0, end: float | None = None, speech: bool = False
+        self, key: str, start: float = 0, end: float | None = None, speech_only: bool = False
     ) -> list[dict[str, Any]]:
-        """Subtitle lines in [start, end]; *speech* leaves sound descriptions out."""
-        from marcarr.stages.signals import speech as is_speech
-
+        """Subtitle lines in [start, end]; *speech_only* leaves sound descriptions out."""
         doc = self._index_or_fail(key)
         hi = end if end is not None else float("inf")
         return [
             x
             for x in doc.get("lines") or []
-            if x["end"] > start and x["start"] < hi and (not speech or is_speech(x["text"]))
+            if x["end"] > start and x["start"] < hi and (not speech_only or speech(x["text"]))
         ]
 
     def shots(self, key: str, start: float = 0, end: float | None = None) -> list[list[float]]:
@@ -409,31 +420,39 @@ class SceneService:
         tmp.replace(out)
 
     # -- cast and people ----------------------------------------------------------------
+    def _photo(self, url: str | None) -> str:
+        """A Marcarr photo URL a browser on FansCut's page can open."""
+        if not url:
+            return ""
+        return url if url.startswith("http") or not self.link.base else self.link.base + url
+
     def _cast_rows(self, tid: str) -> list[dict[str, Any]]:
         """Marcarr's cast of a title in FansCut's shape: {name (the actor), character,
         photo, id}."""
+        try:
+            t = self.link.get(f"/titles/{quoted(tid)}")
+        except NotFoundError:
+            return []
         return [
             {
                 "name": c.get("actor") or "",
                 "character": c.get("character") or "",
-                "photo": c.get("photo") or "",
-                "id": c["person"],
+                "photo": self._photo(c.get("photo")),
+                "id": c["id"],
             }
-            for c in self.marcarr.store.cast(tid)
+            for c in t.get("cast") or []
         ]
 
     def get_cast(self, key: str, refresh: bool = False) -> list[dict[str, Any]]:
         film = self.film(key)
-        tid = title_id(film)
-        m = self.marcarr
-        if not refresh and m.store.cast(tid):
-            return self._cast_rows(tid)
-        self.link._upsert_title(film, tid)
-        source, people = m.pipeline.fetch_cast(tid)
-        if not people:
-            raise FansCutError("no cast source: the film isn't in Plex and no TMDB API key is set")
-        m.store.save_cast(tid, source, people)
-        return self._cast_rows(tid)
+        rows = self._cast_rows(title_id(film))
+        if refresh or not rows:
+            vid = self.link.video(film)
+            if vid is None:
+                raise FansCutError(f"Marcarr doesn't have {film.title} yet, so it has no cast")
+            if refresh:
+                self.link.post(f"/videos/{vid}/run", {"steps": ["cast"]})
+        return rows
 
     def _people_out(self, tid: str) -> dict[str, dict[str, str]]:
         """Person id -> {name, character} for the tags of a title."""
@@ -444,8 +463,6 @@ class SceneService:
     def _person_ids(self, tid: str, people: list[dict[str, str]]) -> list[str]:
         """FansCut's people ({name, character}) -> Marcarr person ids: a cast member
         when one matches, else the name as an id."""
-        from marcarr.stages.cast import match_person
-
         cast = [
             {"name": c["name"], "character": c["character"], "person": c["id"]}
             for c in self._cast_rows(tid)
@@ -482,7 +499,8 @@ class SceneService:
             "tags": [r["tag"]],
             "people": [people.get(p) or self._readable(p) for p in r["people"]],
             "summary": r["summary"],
-            "source": "user" if r["source"] == "person" else r["source"],
+            # made in FansCut (a person here) or in Marcarr's own pages: a person's
+            "source": "user" if r["source"] in ("person", "fanscut") else r["source_detail"],
             "status": r["status"],
             "confidence": r["confidence"],
             "evidence": _evidence_texts(r["evidence"]),
@@ -502,13 +520,18 @@ class SceneService:
         if film_keys is not None:  # unknown keys (a film gone from the library) have none
             by_key = {m.key: m for m in movies}
             movies = [by_key[k] for k in film_keys if k in by_key]
-        m = self.marcarr
+        titles = self.link.titles() if movies else {}
         out = []
         for film in movies:
-            vid = self.link.video(film)
-            if vid is None:
+            t = titles.get(title_id(film)) or {}
+            # only films Marcarr has tagged or been told about can have tags there
+            if not t.get("video_id") or (t.get("steps") or {}).get("scenes") != "done":
                 continue
-            rows = m.store.tags(video=vid, tag=want, status=status)
+            rows = (
+                self.link.get(f"/videos/{t['video_id']}/tags", status=status or "all").get("items")
+                or []
+            )
+            rows = [r for r in rows if not want or r["tag"] == want]
             if rows:
                 people = self._people_out(title_id(film))
                 out += [self._row(r, film, people) for r in rows]
@@ -534,20 +557,14 @@ class SceneService:
         ]
 
     def add_tag(self, key: str, body: dict[str, Any], source: str = "user") -> dict[str, Any]:
-        """Tag a range. Content tags go to Marcarr, cut tags (fc:) stay in FansCut; a
-        person's tag is kept at once. Returns the first moment made."""
-        from marcarr.stages import index as idx
-
+        """Tag a range. Content tags go to Marcarr (which snaps them to camera cuts), cut
+        tags (fc:) stay in FansCut; a person's tag is kept at once. Returns the first
+        moment made."""
         film = self.film(key)
         tags = st.clean_tags(body.get("tags"))
         content = [t for t in tags if not t.startswith(st.SMART)]
         smart = [t for t in tags if t.startswith(st.SMART)]
-        doc = self._doc(key)
-        a, b = st.clean_range(
-            body.get("start"), body.get("end"), (doc or {}).get("duration") or film.duration
-        )
-        if doc and doc.get("shots") and body.get("snap", True):
-            a, b = idx.snap(doc, a), idx.snap(doc, b)
+        a, b = st.clean_range(body.get("start"), body.get("end"), film.duration)
         people = st.clean_people(body.get("people"))
         status = body.get("status") or ("accepted" if source == "user" else "proposed")
         if status not in st.STATUSES:
@@ -558,29 +575,31 @@ class SceneService:
         evidence = [str(x) for x in body.get("evidence") or []]
         out: dict[str, Any] | None = None
         if content:
-            vid = self.link.video(film, register=True)
+            vid = self.link.video_or_fail(film)
             tid = title_id(film)
-            ids = self._person_ids(tid, people)
-            names = self._people_out(tid)
-            m = self.marcarr
-            made = [
-                m.store.add_tag(
-                    vid,
-                    tid,
-                    t,
-                    a,
-                    b,
-                    status=status,
-                    source="person" if src == "user" else src,
-                    confidence=conf,
-                    people=ids,
-                    evidence={"seen": evidence},
-                    summary=str(body.get("summary") or ""),
-                )
-                for t in content
-            ]
+            made = self.link.post(
+                f"/videos/{vid}/tags",
+                {
+                    "tags": content,
+                    "start": a,
+                    "end": b,
+                    "snap": bool(body.get("snap", True)),
+                    "people": self._person_ids(tid, people),
+                    "evidence": {"seen": evidence},
+                    "summary": str(body.get("summary") or ""),
+                    "confidence": conf,
+                    "status": status if status != "rejected" else "proposed",
+                },
+            )
+            made = made if isinstance(made, list) else [made]
+            if status != "proposed":  # an app proposes; FansCut's person decides here
+                verb = "keep" if status == "accepted" else "drop"
+                made = [
+                    self.link.post(f"/tags/{r['id']}/{verb}") if r["status"] != status else r
+                    for r in made
+                ]
             out = {
-                **self._row(made[0], film, names),
+                **self._row(made[0], film, self._people_out(tid)),
                 "tags": content,
                 "ids": [r["id"] for r in made],
             }
@@ -603,23 +622,23 @@ class SceneService:
         return out
 
     def _marcarr_tag(self, tid: str) -> dict[str, Any] | None:
+        """A Marcarr tag by id (Marcarr's ids start ``tag_``, FansCut's are plain hex)."""
         if not tid.startswith("tag_"):
             return None
-        try:
-            return dict(self.marcarr.store.tag(tid))
-        except Exception:  # noqa: BLE001 - not a Marcarr tag
-            return None
-
-    def _as_row(self, r: dict[str, Any]) -> dict[str, Any]:
-        film = self._films_by_title().get(r["title_id"])
-        if film is None:
-            raise NotFoundError(f"the film of tag {r['id']} is not in the library")
-        return self._row(r, film, self._people_out(r["title_id"]))
+        for film in self._movies():
+            vid = self.link.video(film)
+            if not vid:
+                continue
+            for r in self.link.get(f"/videos/{vid}/tags", status="all").get("items") or []:
+                if r["id"] == tid:
+                    return {**r, "_film": film}
+        raise NotFoundError(f"scene tag {tid} not found")
 
     def update_tag(self, tid: str, changes: dict[str, Any]) -> dict[str, Any]:
         cur = self._marcarr_tag(tid)
         if cur is None:
             return self.store.update_tag(tid, changes)
+        film = cur["_film"]
         fields: dict[str, Any] = {}
         if "start" in changes or "end" in changes:
             fields["start"], fields["end"] = st.clean_range(
@@ -628,19 +647,21 @@ class SceneService:
         if "tags" in changes:
             fields["tag"] = st.clean_tags(changes["tags"])[0]
         if "people" in changes:
-            fields["people"] = self._person_ids(cur["title_id"], st.clean_people(changes["people"]))
+            fields["people"] = self._person_ids(title_id(film), st.clean_people(changes["people"]))
         if "summary" in changes:
             fields["summary"] = str(changes["summary"] or "")[: st.MAX_SUMMARY]
+        row = self.link.call("PATCH", f"/tags/{tid}", json=fields) if fields else cur
         if "status" in changes:
-            if changes["status"] not in st.STATUSES:
+            status = changes["status"]
+            if status not in st.STATUSES:
                 raise FansCutError(f"status must be one of {', '.join(st.STATUSES)}")
-            fields["status"] = changes["status"]
-        row = self.marcarr.store.update_tag(tid, **fields) if fields else cur
-        return self._as_row(row)
+            verb = {"accepted": "keep", "rejected": "drop", "proposed": "undo"}[status]
+            row = self.link.post(f"/tags/{tid}/{verb}")
+        return self._row(row, film, self._people_out(title_id(film)))
 
     def delete_tag(self, tid: str) -> None:
-        if self._marcarr_tag(tid) is not None:
-            self.marcarr.store.delete_tag(tid)
+        if tid.startswith("tag_"):
+            self.link.call("DELETE", f"/tags/{tid}")
         else:
             self.store.delete_tag(tid)
 
@@ -650,58 +671,52 @@ class SceneService:
         scene), as boxes in fractions of the frame, named from the cast."""
         film = self.film(key)
         vid = self.link.video(film)
-        m = self.marcarr
         if vid is None:
             raise FansCutError("this film's faces haven't been looked at yet: analyse it first")
-        v = m.store.video(vid)
+        info = self._info(vid)
         cast = {c["id"]: c for c in self._cast_rows(title_id(film))}
-        near = sorted(
-            m.store.faces(video=vid, start=t - 2, end=t + 2), key=lambda f: abs(f["at"] - t)
-        )
-        sure = m.cfg.faces.sure
+        rows = self.link.get(f"/videos/{vid}/faces").get("items") or []
+        near = sorted((f for f in rows if abs(f["at"] - t) <= 2), key=lambda f: abs(f["at"] - t))
         best: dict[str, dict[str, Any]] = {}
         for f in near:
-            if f["confirmed"] == 0:
+            if f["confirmed"] is False:
                 continue
-            slot = f["person_id"] or f["id"]
+            slot = f["person"] or f["id"]
             if slot in best:
                 continue
-            c = cast.get(f["person_id"] or "") or {}
-            known = bool(f["person_id"])
+            known = bool(f["person"])
+            c = cast.get(f["person"] or "") or {}
             best[slot] = {
                 "box": f["box"],
-                "score": round(f["score"], 2),
+                "score": f["score"],
                 "name": c.get("name") if known else None,
                 "character": c.get("character")
-                or (self._readable(f["person_id"])["character"] if known else ""),
+                or (self._readable(f["person"])["character"] if known else ""),
                 "photo": c.get("photo") or "",
-                "match": round(f["score"], 2) if known else None,
-                "sure": known and (f["confirmed"] == 1 or f["score"] >= sure),
+                "match": f["score"] if known else None,
+                "sure": known and (f["confirmed"] is True or f["score"] >= 0.45),
                 "at": f["at"],
             }
         return {
             "t": t,
-            "width": v["width"] or 0,
-            "height": v["height"] or 0,
+            "width": info.get("width") or 0,
+            "height": info.get("height") or 0,
             "faces": list(best.values()),
         }
 
     def xray(self, key: str, t: float) -> dict[str, Any]:
         """Who is on screen at *t* (Marcarr's scene there) and the tags covering it, with
         each person's other kept scenes."""
-        from marcarr.views import Views
-
         film = self.film(key)
         here = [
             x for x in self.tags([key]) if x["status"] != "rejected" and x["start"] <= t < x["end"]
         ]
         vid = self.link.video(film)
         cast = {c["id"]: c for c in self._cast_rows(title_id(film))}
-        scenes = Views(self.marcarr).scenes(vid) if vid else []
+        scenes = (self.link.get(f"/videos/{vid}/scenes").get("items") or []) if vid else []
         now = next((s for s in scenes if s["start"] <= t < s["end"]), None)
-        ids = list(now["seen"] if now else [])
         people: list[dict[str, Any]] = []
-        for pid in ids:
+        for pid in (now.get("seen") or now.get("people") or []) if now else []:
             c = cast.get(pid) or {
                 "name": "",
                 "character": self._readable(pid)["character"],
@@ -714,7 +729,7 @@ class SceneService:
                     "tags": [r["tag"] for r in s["tags"] if r["status"] == "accepted"],
                 }
                 for s in scenes
-                if pid in s["seen"] and s is not now
+                if pid in (s.get("seen") or s.get("people") or []) and s is not now
             ]
             people.append(
                 {
@@ -803,7 +818,7 @@ class SceneService:
                 continue
             m = self.film(f["key"])
             src = f"M{f['tmdb_id']}"
-            dur = m.duration or (self._doc(f["key"]) or {}).get("duration")
+            dur = m.duration
             sources[src] = {
                 "kind": "movie",
                 "tmdb": f["tmdb_id"],

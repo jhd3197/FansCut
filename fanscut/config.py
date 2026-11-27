@@ -34,6 +34,8 @@ ENV_FIELDS = {
     "FANSCUT_AI_API_KEY": "ai.api_key",
     "FANSCUT_GITHUB_TOKEN": "community.github_token",
     "FANSCUT_TMDB_API_KEY": "catalogues.tmdb_api_key",
+    "FANSCUT_MARCARR_URL": "marcarr.url",
+    "FANSCUT_MARCARR_API_KEY": "marcarr.api_key",
 }
 
 
@@ -230,10 +232,11 @@ FAMILIES = ("occasion", "weather", "time", "place", "action", "beat", "people", 
 
 
 class MarcarrCfg(BaseModel):
-    """Scene analysis runs in an embedded Marcarr (fanscut/scenes/link.py)."""
+    """The Marcarr server that analyses the films (fanscut/scenes/link.py)."""
 
-    data_dir: str = ""  # its database and caches; empty = <data_dir>/marcarr
-    faces: bool = True  # match faces to the cast (needs opencv-python-headless)
+    url: str = "http://127.0.0.1:7470"
+    api_key: str = Secret()  # Marcarr > Settings > Connected apps; empty when it needs none
+    timeout: float = 30.0
 
 
 class ScenesCfg(BaseModel):

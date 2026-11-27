@@ -72,7 +72,7 @@ def cancel_job(core: CoreDep, job_id: str) -> dict[str, Any]:
     except NotFoundError:
         if core.scenes.job(job_id) is None:
             raise
-        return core.scenes.marcarr.worker.cancel(job_id)
+        return core.scenes.cancel_job(job_id)
     return core.worker.cancel(job_id)
 
 

@@ -8,20 +8,28 @@ Every AI suggestion arrives as a proposal that you accept or reject.
 
 ## Marcarr does the analysis
 
-The analysis runs in [Marcarr](https://github.com/jhd3197/marcarr), which
-FansCut installs and runs inside itself: no second service to set up. Marcarr
-finds the shots, subtitle lines, scenes, measured signals, cast, faces and
-tags; FansCut keeps its own cut tags (`fc:filler`, `fc:recap`) and cuts the
-frames and clips its players show. Marcarr's database and caches live in
-`<data_dir>/marcarr` (`marcarr.data_dir` moves them), and its settings follow
-FansCut's: `ai.*`, `catalogues.tmdb_api_key`, the Plex server under
-`library.plex` (for cast), and `scenes.families_off`, `scenes.search_closely`,
-`scenes.auto_accept` and `scenes.signals`. `marcarr.faces: false` skips
-matching faces to the cast.
+The analysis runs in [Marcarr](https://github.com/jhd3197/marcarr), a server of
+its own that FansCut calls over HTTP. Marcarr finds the shots, subtitle lines,
+scenes, measured signals, cast, faces and tags; FansCut keeps its own cut tags
+(`fc:filler`, `fc:recap`) and cuts the frames and clips its players show.
 
-A film becomes a Marcarr title (`movie:tmdb:<id>`, or `local:fanscut:<key>`
-without a TMDB id). Analysis jobs show on the film's steps and through
-`/api/jobs/{id}`.
+```yaml
+marcarr:
+  url: http://127.0.0.1:7470   # or FANSCUT_MARCARR_URL
+  api_key: ""                  # or FANSCUT_MARCARR_API_KEY
+```
+
+Marcarr needs a key only when its `server.require_key` is on, or FansCut runs on
+another machine: add one under Marcarr's Settings > Connected apps with the
+read, propose, review and run scopes (FansCut keeps and drops tags for the
+person using it). The AI model, tag families and which tags to search closely
+are Marcarr's settings.
+
+A film is the Marcarr title `movie:tmdb:<id>`, so Marcarr has it once it has
+scanned it from Plex. A film Marcarr doesn't have yet shows as not indexed, and
+**Index** says so. When Marcarr can't be reached, lists show FansCut's own cut
+tags; analysis and content tags wait until it is back. Analysis jobs show on
+the film's steps and through `/api/jobs/{id}`.
 
 ## Index a film
 
@@ -133,9 +141,9 @@ travel as a `key` query parameter.
 
 ## Limits
 
-- Face matching needs `opencv-python-headless` (`pip install "fanscut[faces]"`)
-  and looks at a few frames per scene, so the face boxes at the playhead are
-  from the nearest frame Marcarr looked at.
+- Face matching is Marcarr's (it needs `opencv-python-headless` there) and looks
+  at a few frames per scene, so the face boxes at the playhead are from the
+  nearest frame Marcarr looked at.
 - HDR frames come out without tone mapping: flat colours, still readable.
 - Clips for **Play range** are capped at 5 minutes and cached under
   `<data_dir>/scenes`.

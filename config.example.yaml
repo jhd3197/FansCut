@@ -91,6 +91,11 @@ ai:                      # cuts from notes and scene tagging, through Prompture
   api_key: ""            # prefer the FANSCUT_AI_API_KEY env var over this file
   timeout: 120
 
+marcarr:                 # the Marcarr server that analyses films (shots, scenes, faces, tags)
+  url: http://127.0.0.1:7470   # FANSCUT_MARCARR_URL; "" = no scene analysis
+  api_key: ""            # Marcarr > Settings > Connected apps (read, propose, review, run); FANSCUT_MARCARR_API_KEY
+  timeout: 30
+
 cut:                     # defaults for every series; each series can override
   preset: canon_only     # canon_only | canon_mixed | everything | custom
   unknown_policy: keep   # episodes with no label: keep | skip

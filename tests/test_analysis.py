@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from tests.conftest import needs_ffmpeg, needs_prompture_video
-from tests.test_scenes import film_dir, sc  # noqa: F401 - fixtures
+from tests.test_scenes import film_dir, marcarr, marcarr_ai, sc  # noqa: F401 - fixtures
 
 
 def _states(c, key):
@@ -18,7 +18,7 @@ def test_analysis_steps_and_queueing(sc):  # noqa: F811
     res, states = _states(sc, key)
     assert [s["id"] for s in res["steps"]] == ["shots", "faces", "speech", "tags"]
     assert states == {"shots": "todo", "faces": "todo", "speech": "todo", "tags": "off"}
-    assert res["analysed"] is False and res["ai"] is False and res["video"] is None
+    assert res["analysed"] is False and res["ai"] is False and res["video"]
 
     # one Marcarr job runs every step that is left
     out = sc.post("/api/scenes/analyse", json={"key": key}).json()
@@ -35,7 +35,6 @@ def test_analysis_steps_and_queueing(sc):  # noqa: F811
     assert next(s for s in res["steps"] if s["id"] == "shots")["detail"] == "3 shots, 1 scene"
     assert states["tags"] == "off" and res["analysed"] is False  # no AI model
 
-    sc.core.cfg.ai.model = "ollama/test"
-    sc.core.scenes.link.apply_config(sc.core.cfg)
+    marcarr_ai(sc.m)
     res, states = _states(sc, key)
     assert states["tags"] == "todo" and res["ai"] is True
